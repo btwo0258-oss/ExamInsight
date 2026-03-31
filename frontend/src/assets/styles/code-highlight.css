@@ -1,0 +1,9 @@
+.code-block {
+  position: relative;
+}
+
+.code-block__copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}

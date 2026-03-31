@@ -1,0 +1,25 @@
+.markdown {
+  line-height: 1.6;
+  font-size: 14px;
+}
+
+.markdown p {
+  margin: 0 0 10px;
+}
+
+.markdown pre {
+  margin: 10px 0;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.04);
+  overflow: auto;
+}
+
+:root[data-theme='dark'] .markdown pre {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.markdown code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+}

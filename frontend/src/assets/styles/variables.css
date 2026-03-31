@@ -1,0 +1,37 @@
+:root {
+  --color-primary: #333333;
+  --color-bg: #FFFFFC;
+  --color-surface: #fffffc;
+  --color-sidebar: #FFFFFC;
+  --color-text: #333333;
+  --color-text-muted: #666666;
+  --color-border: #e6e6e6;
+  --color-accent: #333333;
+  --color-danger: #ef4444;
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+
+  --sidebar-width: 320px;
+  --chat-width: clamp(340px, 62vw, 920px);
+  --header-height: 60px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+
+  --shadow-sm: 0 1px 8px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+:root[data-theme='dark'] {
+  --color-primary: #fffffc;
+  --color-bg: #0f0f10;
+  --color-surface: #151518;
+  --color-sidebar: #151518;
+  --color-text: #f0f0ee;
+  --color-text-muted: #b7b7b3;
+  --color-border: #2a2a2e;
+  --color-accent: #fffffc;
+
+  --shadow-sm: 0 1px 10px rgba(0, 0, 0, 0.35);
+}

@@ -1,0 +1,155 @@
+<script setup lang="ts">
+// @ts-nocheck
+import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { useModelStore } from '@/stores/model'
+
+const modelStore = useModelStore()
+const isOpen = ref(false)
+
+const models = computed(() => {
+  if (modelStore.list.length >= 2) return modelStore.list
+  return [
+    { name: 'qwen-plus', displayName: 'Qwen Plus', description: '最强大的推理能力' },
+    { name: 'gpt-4o', displayName: 'GPT-4 Omni', description: '适合日常任务' }
+  ]
+})
+
+const currentModelName = computed(() => {
+  const m = models.value.find(item => item.name === modelStore.currentModel)
+  return m ? (m.displayName || m.name) : '选择模型'
+})
+
+function toggleDropdown() {
+  isOpen.value = !isOpen.value
+}
+
+function selectModel(model: { name: string; displayName?: string }) {
+  modelStore.setCurrent(model.name)
+  isOpen.value = false
+}
+
+const closeDropdown = (e: MouseEvent) => {
+  if (!(e.target as HTMLElement).closest('.model-switch')) {
+    isOpen.value = false
+  }
+}
+
+onMounted(() => document.addEventListener('click', closeDropdown))
+onUnmounted(() => document.removeEventListener('click', closeDropdown))
+</script>
+
+<template>
+  <div class="model-switch">
+    <button class="model-trigger" @click.stop="toggleDropdown" type="button">
+      <span>{{ currentModelName }}</span>
+      <svg class="chevron" viewBox="0 0 24 24" width="14" :class="{ rotate: isOpen }">
+        <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+
+    <transition name="slide-up">
+      <div v-if="isOpen" class="dropdown-menu">
+        <div 
+          v-for="(model, index) in models" 
+          :key="model.name" 
+          class="menu-item"
+          :class="{ active: modelStore.currentModel === model.name }"
+          @click="selectModel(model)"
+        >
+          <div class="item-info">
+            <div class="item-name">{{ model.displayName }}</div>
+            <div class="item-desc">{{ index === 0 ? '最强大的推理能力' : '适合日常对话' }}</div>
+          </div>
+          <div v-if="modelStore.currentModel === model.name" class="check-icon">✓</div>
+        </div>
+      </div>
+    </transition>
+  </div>
+</template>
+
+<style scoped>
+.model-switch {
+  position: relative;
+  display: inline-block;
+}
+
+.model-trigger {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #71717a;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.model-trigger:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: #18181b;
+}
+
+.chevron {
+  transition: transform 0.2s;
+  opacity: 0.6;
+}
+
+.chevron.rotate {
+  transform: rotate(180deg);
+}
+
+.dropdown-menu {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 0;
+  width: 260px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.1);
+  padding: 8px;
+  /* 确保 z-index 足够大，能够遮盖对话框/输入框容器 */
+  z-index: 2000; 
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.menu-item:hover, .menu-item.active {
+  background: #f4f4f5;
+}
+
+.item-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #18181b;
+}
+
+.item-desc {
+  font-size: 12px;
+  color: #71717a;
+}
+
+.check-icon {
+  color: #10a37f;
+  font-weight: bold;
+}
+
+.slide-up-enter-active, .slide-up-leave-active {
+  transition: opacity 0.2s, transform 0.2s;
+}
+.slide-up-enter-from, .slide-up-leave-to {
+  opacity: 0;
+  transform: translateY(10px);
+}
+</style>
