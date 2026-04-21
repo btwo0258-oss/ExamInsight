@@ -42,6 +42,7 @@ public class KnowledgeBaseServiceImpl extends ServiceImpl<KnowledgeBaseMapper, K
         kb.setDocCount(0);
         kb.setChunkCount(0);
         kb.setMindMapCount(0);
+        kb.setExamAnalysisId(req.getExamAnalysisId());
         kb.setStatus(0);
         kb.setCreateTime(java.time.LocalDateTime.now());
         kb.setUpdateTime(java.time.LocalDateTime.now());
@@ -139,5 +140,15 @@ public class KnowledgeBaseServiceImpl extends ServiceImpl<KnowledgeBaseMapper, K
         if (!kb.getUserId().equals(userId)) {
             throw new IllegalArgumentException("无权操作该知识库");
         }
+    }
+
+    @Override
+    public KnowledgeBase getByExamAnalysisId(Long userId, Long examAnalysisId) {
+        return this.getOne(new LambdaQueryWrapper<KnowledgeBase>()
+                .eq(KnowledgeBase::getUserId, userId)
+                .eq(KnowledgeBase::getExamAnalysisId, examAnalysisId)
+                .eq(KnowledgeBase::getStatus, 0)
+                .orderByDesc(KnowledgeBase::getUpdateTime)
+                .last("LIMIT 1"));
     }
 }

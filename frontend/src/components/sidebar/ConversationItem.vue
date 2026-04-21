@@ -165,9 +165,9 @@ const menuItems = computed<MenuItem[]>(() => {
       <button 
         class="actions-btn" 
         @click.stop="toggleActions($event)"
-        :class="{ 'actions-btn--active': showActions }"
+        :class="{ 'actions-btn--active': menuOpen }"
       >
-        •••
+        <AppIcon name="more-horizontal" :size="16" />
       </button>
       
       <ContextMenu
@@ -256,16 +256,18 @@ const menuItems = computed<MenuItem[]>(() => {
 }
 
 .actions-btn {
-  background: none;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: none;
-  font-size: 16px;
+  background: transparent;
+  color: var(--color-text-muted);
   cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 4px;
-  color: var(--color-text-secondary);
-  transition: all 0.2s ease;
-  display: block;
-  opacity: 0.6;
+  border-radius: 6px;
+  transition: all 0.2s;
+  opacity: 0;
 }
 
 .actions-btn:hover {

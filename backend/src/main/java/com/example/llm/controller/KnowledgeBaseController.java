@@ -44,4 +44,10 @@ public class KnowledgeBaseController {
         knowledgeBaseService.deleteKnowledgeBase(UserContext.getUserId(), id);
         return Result.success("删除成功", null);
     }
+
+    @GetMapping("/by-exam-analysis/{examAnalysisId}")
+    public Result<KnowledgeBase> getByExamAnalysisId(@PathVariable("examAnalysisId") Long examAnalysisId) {
+        KnowledgeBase kb = knowledgeBaseService.getByExamAnalysisId(UserContext.getUserId(), examAnalysisId);
+        return Result.success(kb);
+    }
 }

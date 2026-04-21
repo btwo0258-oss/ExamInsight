@@ -53,6 +53,7 @@ export async function* parseSseTextStream(response: Response): AsyncGenerator<st
       for (const evt of events) {
         if (!evt.data) continue
         if (evt.data === '[DONE]') return
+        if (evt.event === 'error') throw new Error(evt.data)
         if (evt.event && evt.event !== 'message') continue
 
         const text = normalizeChunk(evt.data)

@@ -13,6 +13,7 @@ const authStore = useAuthStore()
 const appState = useAppState()
 const router = useRouter()
 const createOpen = ref(false)
+const isCollapsed = ref(localStorage.getItem('llm.sidebar.kb.collapsed') === 'true')
 
 function handleCreate() {
   if (!authStore.isAuthed) {
@@ -20,6 +21,12 @@ function handleCreate() {
     return
   }
   createOpen.value = true
+}
+
+function toggleCollapse(e: MouseEvent) {
+  e.stopPropagation()
+  isCollapsed.value = !isCollapsed.value
+  localStorage.setItem('llm.sidebar.kb.collapsed', String(isCollapsed.value))
 }
 
 function handleViewList() {
@@ -35,24 +42,35 @@ function handleViewList() {
 
 <template>
   <div class="section">
-    <div class="section__header" @click="handleViewList" style="cursor: pointer;">
-      <span class="section__title">知识库</span>
+    <div class="section__header" @click="handleViewList">
+      <div class="header-left">
+        <AppIcon name="folder" :size="14" color="var(--color-text-muted)" />
+        <span class="section__title">知识库</span>
+      </div>
+      <div class="header-right">
+        <span class="section__count">{{ knowledgeBaseStore.list.length }}</span>
+        <button class="collapse-btn" @click.stop="toggleCollapse">
+          <AppIcon :name="isCollapsed ? 'chevron-right' : 'chevron-down'" :size="14" />
+        </button>
+      </div>
     </div>
 
-    <div class="section__create">
-      <button class="create-button" @click="handleCreate">
-        <AppIcon name="plus" :size="16" />
-        <span class="create-text">新建知识库</span>
-      </button>
-    </div>
+    <template v-if="!isCollapsed">
+      <!-- <div class="section__create">
+        <button class="create-button" @click="handleCreate">
+          <AppIcon name="plus" :size="16" />
+          <span class="create-text">新建知识库</span>
+        </button>
+      </div> -->
 
-    <div class="section__list">
-      <KnowledgeBaseItem
-        v-for="kb in knowledgeBaseStore.list"
-        :key="kb.id"
-        :knowledge-base="kb"
-      />
-    </div>
+      <div class="section__list">
+        <KnowledgeBaseItem
+          v-for="kb in knowledgeBaseStore.list"
+          :key="kb.id"
+          :knowledge-base="kb"
+        />
+      </div>
+    </template>
 
     <KnowledgeBaseCreate 
       :open="createOpen" 
@@ -71,12 +89,51 @@ function handleViewList() {
 .section__header {
   padding: 4px 8px;
   margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background-color 0.2s;
+}
+
+.section__header:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+:root[data-theme='dark'] .section__header:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.header-left, .header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .section__title {
   font-size: 12px;
   font-weight: 700;
   color: var(--color-text-muted);
+}
+
+.section__count {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  background: var(--color-bg-alt);
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+
+.collapse-btn {
+  background: transparent;
+  border: none;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  cursor: pointer;
 }
 
 .section__create {

@@ -1,44 +1,53 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
+import { nextTick, ref, watch } from "vue";
 
-import MessageBubble from './MessageBubble.vue'
-import type { ChatMessage } from '@/stores/message'
+import MessageBubble from "./MessageBubble.vue";
+import type { ChatMessage } from "@/stores/message";
 
 type Props = {
-  conversationId: number | null
-  messages: ChatMessage[]
-}
+  conversationId: number | null;
+  messages: ChatMessage[];
+};
 
-const props = defineProps<Props>()
+const props = defineProps<Props>();
+const emit = defineEmits<{
+  generateMindmap: [messageId: string, content: string];
+}>();
 
-const wrap = ref<HTMLDivElement | null>(null)
-const autoScroll = ref(true)
+const wrap = ref<HTMLDivElement | null>(null);
+const autoScroll = ref(true);
 
 function onScroll() {
-  const el = wrap.value
-  if (!el) return
-  const distance = el.scrollHeight - el.scrollTop - el.clientHeight
-  autoScroll.value = distance < 120
+  const el = wrap.value;
+  if (!el) return;
+  const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+  autoScroll.value = distance < 120;
 }
 
 async function scrollToBottom() {
-  await nextTick()
-  const el = wrap.value
-  if (!el) return
-  el.scrollTop = el.scrollHeight
+  await nextTick();
+  const el = wrap.value;
+  if (!el) return;
+  el.scrollTop = el.scrollHeight;
 }
 
 watch(
   () => {
-    const last = props.messages[props.messages.length - 1]
-    return [wrap.value, autoScroll.value, props.messages.length, last?.content.length ?? 0, last?.streaming ?? false]
+    const last = props.messages[props.messages.length - 1];
+    return [
+      wrap.value,
+      autoScroll.value,
+      props.messages.length,
+      last?.content.length ?? 0,
+      last?.streaming ?? false,
+    ];
   },
   async () => {
-    if (!autoScroll.value) return
-    await scrollToBottom()
+    if (!autoScroll.value) return;
+    await scrollToBottom();
   },
   { deep: false },
-)
+);
 </script>
 
 <template>
@@ -50,6 +59,7 @@ watch(
         :message="m"
         :conversation-id="conversationId"
         :is-streaming="m.streaming"
+        @generate-mindmap="(id, content) => emit('generateMindmap', id, content)"
       />
     </div>
   </div>

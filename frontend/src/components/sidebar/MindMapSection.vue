@@ -15,6 +15,13 @@ const knowledgeBaseStore = useKnowledgeBaseStore()
 const router = useRouter()
 const route = useRoute()
 const createOpen = ref(false)
+const isCollapsed = ref(localStorage.getItem('llm.sidebar.mm.collapsed') === 'true')
+
+function toggleCollapse(e: MouseEvent) {
+  e.stopPropagation()
+  isCollapsed.value = !isCollapsed.value
+  localStorage.setItem('llm.sidebar.mm.collapsed', String(isCollapsed.value))
+}
 
 const hoveredId = ref<number | null>(null)
 const menuOpenId = ref<number | null>(null)
@@ -138,55 +145,66 @@ function getMenuItems(id: number, title: string): MenuItem[] {
 
 <template>
   <div class="section">
-    <div class="section__header" @click="handleViewList" style="cursor: pointer;">
-      <span class="section__title">思维导图</span>
-    </div>
-
-    <div class="section__create">
-      <button class="create-button" @click="handleCreate">
-        <AppIcon name="plus" :size="16" />
-        <span class="create-text">新建思维导图</span>
-      </button>
-    </div>
-
-    <div class="section__list">
-      <div
-        v-for="map in mindMapStore.mindMapList.slice(0, 5)"
-        :key="map.id"
-        class="item"
-        :class="{ 'item--active': route.params.id === String(map.id) }"
-        @click="handleView(map.id)"
-        @mouseenter="hoveredId = map.id"
-        @mouseleave="hoveredId = null"
-      >
-        <div class="item__icon">
-          <AppIcon name="layers" :size="16" color="#8b5cf6" />
-        </div>
-        <span class="item__title">{{ map.title }}</span>
-        
-        <div v-show="mindMapStore.isPinned(map.id) && hoveredId !== map.id && menuOpenId !== map.id" class="item__pin">
-          <AppIcon name="star" :size="12" />
-        </div>
-
-        <button 
-          v-show="hoveredId === map.id || menuOpenId === map.id" 
-          class="item__actions" 
-          :class="{ 'item__actions--active': menuOpenId === map.id }"
-          @click.stop="toggleActions($event, map.id)"
-        >
-          <AppIcon name="more-horizontal" :size="16" />
+    <div class="section__header" @click="handleViewList">
+      <div class="header-left">
+        <AppIcon name="layers" :size="14" color="var(--color-text-muted)" />
+        <span class="section__title">思维导图</span>
+      </div>
+      <div class="header-right">
+        <span class="section__count">{{ mindMapStore.mindMapList.length }}</span>
+        <button class="collapse-btn" @click.stop="toggleCollapse">
+          <AppIcon :name="isCollapsed ? 'chevron-right' : 'chevron-down'" :size="14" />
         </button>
-
-        <ContextMenu
-          v-if="menuOpenId === map.id"
-          :x="menuPos.x"
-          :y="menuPos.y"
-          :items="getMenuItems(map.id, map.title)"
-          @close="closeMenu"
-          @click.stop
-        />
       </div>
     </div>
+
+    <template v-if="!isCollapsed">
+      <!-- <div class="section__create">
+        <button class="create-button" @click="handleCreate">
+          <AppIcon name="plus" :size="16" />
+          <span class="create-text">新建思维导图</span>
+        </button>
+      </div> -->
+
+      <div class="section__list">
+        <div
+          v-for="map in mindMapStore.mindMapList.slice(0, 5)"
+          :key="map.id"
+          class="item"
+          :class="{ 'item--active': route.params.id === String(map.id) }"
+          @click="handleView(map.id)"
+          @mouseenter="hoveredId = map.id"
+          @mouseleave="hoveredId = null"
+        >
+          <div class="item__icon">
+            <AppIcon name="layers" :size="16" color="#8b5cf6" />
+          </div>
+          <span class="item__title">{{ map.title }}</span>
+          
+          <div v-show="mindMapStore.isPinned(map.id) && hoveredId !== map.id && menuOpenId !== map.id" class="item__pin">
+            <AppIcon name="star" :size="12" />
+          </div>
+
+          <button 
+            v-show="hoveredId === map.id || menuOpenId === map.id" 
+            class="item__actions" 
+            :class="{ 'item__actions--active': menuOpenId === map.id }"
+            @click.stop="toggleActions($event, map.id)"
+          >
+            <AppIcon name="more-horizontal" :size="16" />
+          </button>
+
+          <ContextMenu
+            v-if="menuOpenId === map.id"
+            :x="menuPos.x"
+            :y="menuPos.y"
+            :items="getMenuItems(map.id, map.title)"
+            @close="closeMenu"
+            @click.stop
+          />
+        </div>
+      </div>
+    </template>
   </div>
 
   <PromptModal
@@ -218,12 +236,51 @@ function getMenuItems(id: number, title: string): MenuItem[] {
 .section__header {
   padding: 4px 8px;
   margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background-color 0.2s;
+}
+
+.section__header:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+:root[data-theme='dark'] .section__header:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.header-left, .header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .section__title {
   font-size: 12px;
   font-weight: 700;
   color: var(--color-text-muted);
+}
+
+.section__count {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  background: var(--color-bg-alt);
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+
+.collapse-btn {
+  background: transparent;
+  border: none;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  cursor: pointer;
 }
 
 .section__create {

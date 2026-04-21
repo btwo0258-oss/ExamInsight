@@ -1,338 +1,358 @@
 <script setup lang="ts">
 // @ts-nocheck
-import { ref, onMounted, computed, onUnmounted, watch } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
-import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
-import { useDocumentStore } from '@/stores/document'
-import { useConversationStore } from '@/stores/conversation'
-import { useMessageStore } from '@/stores/message'
-import { useMindMapStore } from '@/stores/mindmap'
-import AppButton from '@/components/common/AppButton.vue'
-import KnowledgeBaseCreate from './KnowledgeBaseCreate.vue'
-import AppInput from '@/components/common/AppInput.vue'
-import AppIcon from '@/components/common/AppIcon.vue'
-import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
-import DocumentPreviewModal from './DocumentPreviewModal.vue'
+import { ref, onMounted, computed, onUnmounted, watch } from "vue";
+import { useRouter, useRoute } from "vue-router";
+import { useKnowledgeBaseStore } from "@/stores/knowledgeBase";
+import { useDocumentStore } from "@/stores/document";
+import { useConversationStore } from "@/stores/conversation";
+import { useMessageStore } from "@/stores/message";
+import { useMindMapStore } from "@/stores/mindmap";
+import AppButton from "@/components/common/AppButton.vue";
+import KnowledgeBaseCreate from "./KnowledgeBaseCreate.vue";
+import AppInput from "@/components/common/AppInput.vue";
+import AppIcon from "@/components/common/AppIcon.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
+import DocumentPreviewModal from "./DocumentPreviewModal.vue";
 
-const router = useRouter()
-const route = useRoute()
-const kbStore = useKnowledgeBaseStore()
-const docStore = useDocumentStore()
-const conversationStore = useConversationStore()
-const messageStore = useMessageStore()
-const mindMapStore = useMindMapStore()
+const router = useRouter();
+const route = useRoute();
+const kbStore = useKnowledgeBaseStore();
+const docStore = useDocumentStore();
+const conversationStore = useConversationStore();
+const messageStore = useMessageStore();
+const mindMapStore = useMindMapStore();
 
-const showEditDialog = ref(false)
-const showUploadDialog = ref(false)
-const activeTab = ref('chat')
+const showEditDialog = ref(false);
+const showUploadDialog = ref(false);
+const activeTab = ref("chat");
 
-const activeMenuId = ref<number | null>(null)
+const activeMenuId = ref<number | null>(null);
 
 // 错误弹窗状态
-const showError = ref(false)
-const errorMessage = ref('')
+const showError = ref(false);
+const errorMessage = ref("");
 
 // 删除文档确认状态
-const showDeleteDocConfirm = ref(false)
-const deletingDocId = ref<number | null>(null)
+const showDeleteDocConfirm = ref(false);
+const deletingDocId = ref<number | null>(null);
 
 // 预览弹窗状态
-const showPreview = ref(false)
-const previewDocId = ref<number | null>(null)
-const previewFileName = ref('')
+const showPreview = ref(false);
+const previewDocId = ref<number | null>(null);
+const previewFileName = ref("");
 
 // 对话操作确认状态
-const showConvActionConfirm = ref(false)
-const convActionType = ref<'remove' | 'delete' | 'deleteKB'>('delete')
-const targetConvId = ref<number | null>(null)
+const showConvActionConfirm = ref(false);
+const convActionType = ref<"remove" | "delete" | "deleteKB">("delete");
+const targetConvId = ref<number | null>(null);
 
 const knowledgeBase = computed(() => {
-  return kbStore.list.find(kb => kb.id === Number(route.params.id))
-})
+  return kbStore.list.find((kb) => kb.id === Number(route.params.id));
+});
 
 const convActionTitle = computed(() => {
-  if (convActionType.value === 'deleteKB') return '删除知识库'
-  if (convActionType.value === 'remove') return '从知识库移除'
-  return '删除对话'
-})
+  if (convActionType.value === "deleteKB") return "删除知识库";
+  if (convActionType.value === "remove") return "从知识库移除";
+  return "删除对话";
+});
 
 const convActionMessage = computed(() => {
-  if (convActionType.value === 'deleteKB') return `确定要删除知识库"${knowledgeBase.value?.name}"吗？此操作不可撤销。`
-  if (convActionType.value === 'remove') return '确定要从知识库中移除此对话吗？对话本身不会被删除。'
-  return '确定要删除此对话吗？此操作不可撤销。'
-})
+  if (convActionType.value === "deleteKB")
+    return `确定要删除知识库"${knowledgeBase.value?.name}"吗？此操作不可撤销。`;
+  if (convActionType.value === "remove")
+    return "确定要从知识库中移除此对话吗？对话本身不会被删除。";
+  return "确定要删除此对话吗？此操作不可撤销。";
+});
 
 const documents = computed(() => {
-  return docStore.documents.filter((doc: { kbId: number }) => doc.kbId === Number(route.params.id))
-})
+  return docStore.documents.filter((doc: { kbId: number }) => doc.kbId === Number(route.params.id));
+});
 
 const kbConversations = computed(() => {
-  return conversationStore.list.filter(conv => conv.knowledgeBaseId === Number(route.params.id))
-})
+  return conversationStore.list.filter((conv) => conv.knowledgeBaseId === Number(route.params.id));
+});
 
 const relatedMindMaps = computed(() => {
-  return mindMapStore.mindMapList.filter(map => map.kbId === Number(route.params.id))
-})
+  return mindMapStore.mindMapList.filter((map) => map.kbId === Number(route.params.id));
+});
 
-const showCreateMindMapConfirm = ref(false)
-const newMindMapTitle = ref('')
-const showDeleteMapConfirm = ref(false)
-const deletingMapId = ref<number | null>(null)
+const showCreateMindMapConfirm = ref(false);
+const newMindMapTitle = ref("");
+const showDeleteMapConfirm = ref(false);
+const deletingMapId = ref<number | null>(null);
 
 function handleCreateMindMap() {
-  newMindMapTitle.value = ''
-  showCreateMindMapConfirm.value = true
+  newMindMapTitle.value = "";
+  showCreateMindMapConfirm.value = true;
 }
 
 async function confirmCreateMindMap() {
   if (newMindMapTitle.value.trim()) {
-    const mapId = await mindMapStore.createMap(newMindMapTitle.value.trim(), Number(route.params.id))
-    router.push(`/mindmap/${mapId}`)
+    const mapId = await mindMapStore.createMap(
+      newMindMapTitle.value.trim(),
+      Number(route.params.id),
+    );
+    router.push(`/mindmap/${mapId}`);
   }
-  showCreateMindMapConfirm.value = false
+  showCreateMindMapConfirm.value = false;
 }
 
 function handleDeleteMindMap(id: number) {
-  deletingMapId.value = id
-  showDeleteMapConfirm.value = true
+  deletingMapId.value = id;
+  showDeleteMapConfirm.value = true;
 }
 
 async function confirmDeleteMindMap() {
   if (deletingMapId.value !== null) {
-    await mindMapStore.deleteMap(deletingMapId.value)
-    showDeleteMapConfirm.value = false
-    deletingMapId.value = null
+    await mindMapStore.deleteMap(deletingMapId.value);
+    showDeleteMapConfirm.value = false;
+    deletingMapId.value = null;
   }
 }
 
 function handleClickOutside(e: MouseEvent) {
-  const target = e.target as HTMLElement
-  if (!target.closest('.menu-container')) {
-    activeMenuId.value = null
+  const target = e.target as HTMLElement;
+  if (!target.closest(".menu-container")) {
+    activeMenuId.value = null;
   }
 }
 
 onMounted(async () => {
   if (route.params.id) {
-    await kbStore.fetchAll()
-    await docStore.fetchByKbId(Number(route.params.id))
-    await conversationStore.fetchList()
-    
+    await kbStore.fetchAll();
+    await docStore.fetchByKbId(Number(route.params.id));
+    await conversationStore.fetchList();
+
     // 开始轮询处理中的文档
-    startPolling()
+    startPolling();
   }
-  window.addEventListener('click', handleClickOutside)
-})
+  window.addEventListener("click", handleClickOutside);
+});
 
 watch(
   () => route.params.id,
   async (newId) => {
     if (newId) {
-      await kbStore.fetchAll()
-      await docStore.fetchByKbId(Number(newId))
-      await conversationStore.fetchList()
-      startPolling()
+      await kbStore.fetchAll();
+      await docStore.fetchByKbId(Number(newId));
+      await conversationStore.fetchList();
+      startPolling();
     }
-  }
-)
+  },
+);
 
-let pollingTimer: any = null
+let pollingTimer: any = null;
 function startPolling() {
-  if (pollingTimer) return
+  if (pollingTimer) return;
   pollingTimer = setInterval(async () => {
-    const pendingDocs = documents.value.filter(d => d.status === 'pending')
+    const pendingDocs = documents.value.filter((d) => d.status === "pending");
     if (pendingDocs.length === 0) {
-      stopPolling()
-      return
+      stopPolling();
+      return;
     }
-    
+
     for (const doc of pendingDocs) {
-      await docStore.pollStatus(doc.id)
+      await docStore.pollStatus(doc.id);
     }
-  }, 2000)
+  }, 2000);
 }
 
 function stopPolling() {
   if (pollingTimer) {
-    clearInterval(pollingTimer)
-    pollingTimer = null
+    clearInterval(pollingTimer);
+    pollingTimer = null;
   }
 }
 
 onUnmounted(() => {
-  window.removeEventListener('click', handleClickOutside)
-  stopPolling()
-})
+  window.removeEventListener("click", handleClickOutside);
+  stopPolling();
+});
 
 function handleBack() {
-  router.push('/knowledge')
+  router.push("/knowledge");
 }
 
 function handleEdit() {
-  showEditDialog.value = true
+  showEditDialog.value = true;
 }
 
 async function handleDelete() {
-  if (!knowledgeBase.value) return
-  convActionType.value = 'deleteKB'
-  showConvActionConfirm.value = true
+  if (!knowledgeBase.value) return;
+  convActionType.value = "deleteKB";
+  showConvActionConfirm.value = true;
 }
 
 function handleUpload() {
   // 触发文件上传
-  const input = document.createElement('input')
-  input.type = 'file'
-  input.accept = '.pdf,.docx,.md,.txt'
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".pdf,.docx,.md,.txt";
   input.onchange = (e) => {
-    const file = (e.target as HTMLInputElement).files?.[0]
+    const file = (e.target as HTMLInputElement).files?.[0];
     if (file) {
-      handleFileSelect(file)
+      handleFileSelect(file);
     }
-  }
-  input.click()
+  };
+  input.click();
 }
 
 async function handleFileSelect(file: File) {
-  const maxSize = 100 * 1024 * 1024 // 100MB
+  const maxSize = 100 * 1024 * 1024; // 100MB
   if (file.size > maxSize) {
-    errorMessage.value = '文件大小不能超过 100MB'
-    showError.value = true
-    return
+    errorMessage.value = "文件大小不能超过 100MB";
+    showError.value = true;
+    return;
   }
 
-  const allowedTypes = ['.pdf', '.docx', '.md', '.txt']
-  const extension = file.name.substring(file.name.lastIndexOf('.')).toLowerCase()
+  const allowedTypes = [".pdf", ".docx", ".md", ".txt"];
+  const extension = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
   if (!allowedTypes.includes(extension)) {
-    errorMessage.value = '仅支持 PDF、Word (docx)、Markdown、TXT 格式'
-    showError.value = true
-    return
+    errorMessage.value = "仅支持 PDF、Word (docx)、Markdown、TXT 格式";
+    showError.value = true;
+    return;
   }
 
-  if (!knowledgeBase.value) return
+  if (!knowledgeBase.value) return;
 
   try {
     // upload 内部已经将新文档 unshift 到 documents 列表并更新了数量
-    await docStore.upload(knowledgeBase.value.id, file)
+    await docStore.upload(knowledgeBase.value.id, file);
     // 上传后启动轮询
-    startPolling()
+    startPolling();
   } catch (err) {
-    errorMessage.value = '上传失败'
-    showError.value = true
+    errorMessage.value = "上传失败";
+    showError.value = true;
   }
 }
 
 function handleNewChat() {
-  if (!knowledgeBase.value) return
-  conversationStore.create({ kbId: knowledgeBase.value.id, title: `与${knowledgeBase.value.name}的对话` })
+  if (!knowledgeBase.value) return;
+  conversationStore.create({
+    kbId: knowledgeBase.value.id,
+    title: `与${knowledgeBase.value.name}的对话`,
+  });
+}
+
+function handleExamAnalysis() {
+  if (knowledgeBase.value?.examAnalysisId) {
+    router.push(`/exam-analysis/${knowledgeBase.value.examAnalysisId}`);
+  } else {
+    router.push("/exam-analysis/new");
+  }
 }
 
 async function handleSendMessage(text: string, files?: File[]) {
-  if (!text.trim() && (!files || files.length === 0)) return
-  if (!knowledgeBase.value) return
-  
-  const kbId = knowledgeBase.value.id
-  
+  if (!text.trim() && (!files || files.length === 0)) return;
+  if (!knowledgeBase.value) return;
+
+  const kbId = knowledgeBase.value.id;
+
   // 注意：files 已经在 AppInput 的 @upload 事件中通过 handleFileSelect 上传过了
   // 这里不需要再次调用 handleFileSelect(file)
 
-  // 1. 立即跳转到聊天页面
-  router.push('/chat')
-  
-  // 2. 异步在后台创建会话
-  const conversationId = await messageStore.createConversation({ 
-    knowledgeBaseId: kbId, 
-    firstMessage: text,
-    files: files
-  })
-  
-  // 3. 一旦 ID 到手，立即使用 replace 切换到该对话的路由
-  router.replace(`/chat/${conversationId}`)
+  // 1. 先创建会话
+  const result = await messageStore.createConversation({
+    knowledgeBaseId: kbId,
+  });
+
+  // 2. 将消息存储到 sessionStorage，让聊天页面在挂载后自动发送
+  sessionStorage.setItem(
+    `chat_auto_msg_${result.id}`,
+    JSON.stringify({
+      message: text,
+      files: files?.map((f) => ({ name: f.name, type: f.type, size: f.size })),
+    }),
+  );
+
+  // 3. 立即跳转到聊天页面
+  router.push(`/chat/${result.id}`);
 }
 
 function toggleMenu(e: Event, id: number) {
-  e.stopPropagation()
-  activeMenuId.value = activeMenuId.value === id ? null : id
+  e.stopPropagation();
+  activeMenuId.value = activeMenuId.value === id ? null : id;
 }
 
 async function handleRename(id: number, oldTitle: string) {
-  const newTitle = prompt('重命名对话', oldTitle)
+  const newTitle = prompt("重命名对话", oldTitle);
   if (newTitle && newTitle.trim() && newTitle !== oldTitle) {
-    await conversationStore.rename(id, newTitle.trim())
+    await conversationStore.rename(id, newTitle.trim());
   }
-  activeMenuId.value = null
+  activeMenuId.value = null;
 }
 
 async function handleRemoveFromKB(id: number) {
-  targetConvId.value = id
-  convActionType.value = 'remove'
-  showConvActionConfirm.value = true
-  activeMenuId.value = null
+  targetConvId.value = id;
+  convActionType.value = "remove";
+  showConvActionConfirm.value = true;
+  activeMenuId.value = null;
 }
 
 async function handleDeleteConversation(id: number) {
-  targetConvId.value = id
-  convActionType.value = 'delete'
-  showConvActionConfirm.value = true
-  activeMenuId.value = null
+  targetConvId.value = id;
+  convActionType.value = "delete";
+  showConvActionConfirm.value = true;
+  activeMenuId.value = null;
 }
 
 async function confirmConvAction() {
-  if (convActionType.value === 'deleteKB') {
+  if (convActionType.value === "deleteKB") {
     if (knowledgeBase.value) {
-      await kbStore.remove(knowledgeBase.value.id)
-      router.push('/knowledge')
+      await kbStore.remove(knowledgeBase.value.id);
+      router.push("/knowledge");
     }
   } else if (targetConvId.value !== null) {
-    if (convActionType.value === 'remove') {
-      await conversationStore.moveToKnowledgeBase(targetConvId.value, null)
-    } else if (convActionType.value === 'delete') {
-      await conversationStore.remove(targetConvId.value)
+    if (convActionType.value === "remove") {
+      await conversationStore.moveToKnowledgeBase(targetConvId.value, null);
+    } else if (convActionType.value === "delete") {
+      await conversationStore.remove(targetConvId.value);
     }
   }
-  showConvActionConfirm.value = false
-  targetConvId.value = null
+  showConvActionConfirm.value = false;
+  targetConvId.value = null;
 }
 
 function formatFileSize(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
 }
 
 function getStatusText(status: string): string {
   const statusMap: Record<string, string> = {
-    'pending': '处理中',
-    'completed': '已完成',
-    'failed': '失败'
-  }
-  return statusMap[status] || status
+    pending: "处理中",
+    completed: "已完成",
+    failed: "失败",
+  };
+  return statusMap[status] || status;
 }
 function handleDeleteDocument(docId: number) {
-  deletingDocId.value = docId
-  showDeleteDocConfirm.value = true
+  deletingDocId.value = docId;
+  showDeleteDocConfirm.value = true;
 }
 
 async function handlePreviewDocument(docId: number, fileName: string) {
-  previewDocId.value = docId
-  previewFileName.value = fileName
-  showPreview.value = true
+  previewDocId.value = docId;
+  previewFileName.value = fileName;
+  showPreview.value = true;
 }
 
 async function handleDownloadDocument(docId: number, fileName: string) {
-  await docStore.download(docId, fileName)
+  await docStore.download(docId, fileName);
 }
 
 async function confirmDeleteDocument() {
-  if (deletingDocId.value === null) return
-  
-  const docId = deletingDocId.value
+  if (deletingDocId.value === null) return;
+
+  const docId = deletingDocId.value;
   // store.remove 内部已经处理了文档删除和知识库数量更新
-  await docStore.remove(docId)
-  
-  showDeleteDocConfirm.value = false
-  deletingDocId.value = null
+  await docStore.remove(docId);
+
+  showDeleteDocConfirm.value = false;
+  deletingDocId.value = null;
 }
 </script>
 
@@ -345,33 +365,37 @@ async function confirmDeleteDocument() {
         </AppButton>
         <div class="info">
           <div class="title-with-icon">
-            <div 
+            <div
               class="icon-box"
-              :style="{ 
+              :style="{
                 backgroundColor: knowledgeBase?.color ? knowledgeBase.color + '15' : 'transparent',
-                color: knowledgeBase?.color || 'inherit'
+                color: knowledgeBase?.color || 'inherit',
               }"
             >
               <!-- @ts-ignore -->
-              <AppIcon :name="knowledgeBase?.icon || 'book'" :size="32" :color="knowledgeBase?.color" />
+              <AppIcon
+                :name="knowledgeBase?.icon || 'book'"
+                :size="32"
+                :color="knowledgeBase?.color"
+              />
             </div>
-            <h1 class="title">{{ knowledgeBase?.name || '知识库' }}</h1>
+            <h1 class="title">{{ knowledgeBase?.name || "知识库" }}</h1>
           </div>
-          <p class="description">{{ knowledgeBase?.description || '暂无描述' }}</p>
+          <p class="description">{{ knowledgeBase?.description || "暂无描述" }}</p>
         </div>
       </div>
     </div>
 
     <div class="tabs">
-      <button 
-        class="tab" 
+      <button
+        class="tab"
         :class="{ 'tab--active': activeTab === 'chat' }"
         @click="activeTab = 'chat'"
       >
         聊天
       </button>
-      <button 
-        class="tab" 
+      <button
+        class="tab"
         :class="{ 'tab--active': activeTab === 'source' }"
         @click="activeTab = 'source'"
       >
@@ -388,21 +412,21 @@ async function confirmDeleteDocument() {
           </div>
           <h3 class="empty__title">暂无聊天记录</h3>
           <p class="empty__description">开始与知识库对话</p>
-          <AppButton variant="primary" @click="handleNewChat">
-            + 开始新对话
-          </AppButton>
+          <AppButton variant="primary" @click="handleNewChat"> + 开始新对话 </AppButton>
         </div>
         <div v-else class="conversations">
-          <div 
-            v-for="conv in kbConversations" 
-            :key="conv.id" 
+          <div
+            v-for="conv in kbConversations"
+            :key="conv.id"
             class="conversation-item"
             @click="conversationStore.open(conv.id)"
           >
             <div class="conversation-item__info">
               <div class="conversation-item__title">{{ conv.title }}</div>
               <div class="conversation-item__meta">
-                <span>{{ new Date(conv.updateTime || conv.createTime || Date.now()).toLocaleString() }}</span>
+                <span>{{
+                  new Date(conv.updateTime || conv.createTime || Date.now()).toLocaleString()
+                }}</span>
                 <span v-if="conv.messageCount">{{ conv.messageCount }} 条消息</span>
               </div>
             </div>
@@ -419,7 +443,10 @@ async function confirmDeleteDocument() {
                   <AppIcon name="close" :size="14" />
                   <span>移除</span>
                 </div>
-                <div class="menu-item menu-item--danger" @click.stop="handleDeleteConversation(conv.id)">
+                <div
+                  class="menu-item menu-item--danger"
+                  @click.stop="handleDeleteConversation(conv.id)"
+                >
                   <AppIcon name="trash" :size="14" />
                   <span>删除</span>
                 </div>
@@ -436,18 +463,26 @@ async function confirmDeleteDocument() {
           <div class="source-section">
             <div class="section__header">
               <h2 class="section__title">文档列表</h2>
-              <AppButton 
-                variant="primary" 
-                size="small"
-                @click="handleUpload"
-                :loading="docStore.uploading"
-                :disabled="docStore.uploading"
-              >
-                <template #icon>
-                  <AppIcon v-if="!docStore.uploading" name="plus" :size="16" />
-                </template>
-                上传资料
-              </AppButton>
+              <div style="display: flex; gap: 8px">
+                <AppButton variant="secondary" size="small" @click="handleExamAnalysis">
+                  <template #icon>
+                    <span>🧠</span>
+                  </template>
+                  {{ knowledgeBase?.examAnalysisId ? "查看分析" : "分析试卷" }}
+                </AppButton>
+                <AppButton
+                  variant="primary"
+                  size="small"
+                  @click="handleUpload"
+                  :loading="docStore.uploading"
+                  :disabled="docStore.uploading"
+                >
+                  <template #icon>
+                    <AppIcon v-if="!docStore.uploading" name="plus" :size="16" />
+                  </template>
+                  上传资料
+                </AppButton>
+              </div>
             </div>
 
             <div v-if="documents.length === 0" class="empty-small">
@@ -456,15 +491,20 @@ async function confirmDeleteDocument() {
             </div>
 
             <div v-else class="documents">
-              <div 
-                v-for="doc in documents" 
-                :key="doc.id" 
+              <div
+                v-for="doc in documents"
+                :key="doc.id"
                 class="document-item"
                 :class="{ 'document-item--clickable': doc.status === 'completed' }"
                 @click="doc.status === 'completed' && handlePreviewDocument(doc.id, doc.fileName)"
               >
                 <div class="document-item__icon">
-                  <AppIcon :name="doc.fileType === 'pdf' ? 'pdf' : (doc.fileType === 'docx' ? 'word' : 'file')" :size="24" />
+                  <AppIcon
+                    :name="
+                      doc.fileType === 'pdf' ? 'pdf' : doc.fileType === 'docx' ? 'word' : 'file'
+                    "
+                    :size="24"
+                  />
                 </div>
                 <div class="document-item__info">
                   <div class="document-item__name">{{ doc.fileName }}</div>
@@ -472,19 +512,39 @@ async function confirmDeleteDocument() {
                     <span>{{ doc.fileType }}</span>
                     <span>{{ formatFileSize(doc.fileSize) }}</span>
                     <span>{{ doc.chunkCount }} 个分块</span>
+                    <span
+                      >📄 类型：{{
+                        doc.fileName.includes("卷") || doc.fileName.includes("真题")
+                          ? "试卷"
+                          : "资料"
+                      }}</span
+                    >
                   </div>
                 </div>
                 <div class="document-item__status">
                   <span :class="['status', `status--${doc.status}`]">
-                    <AppIcon v-if="doc.status === 'pending'" name="loader" :size="12" class="status-spin" />
+                    <AppIcon
+                      v-if="doc.status === 'pending'"
+                      name="loader"
+                      :size="12"
+                      class="status-spin"
+                    />
                     {{ getStatusText(doc.status) }}
                   </span>
                 </div>
                 <div class="document-item__actions">
-                  <button class="action-btn" @click.stop="handleDownloadDocument(doc.id, doc.fileName)" title="下载">
+                  <button
+                    class="action-btn"
+                    @click.stop="handleDownloadDocument(doc.id, doc.fileName)"
+                    title="下载"
+                  >
                     <AppIcon name="download" :size="16" />
                   </button>
-                  <button class="action-btn action-btn--danger" @click.stop="handleDeleteDocument(doc.id)" title="删除">
+                  <button
+                    class="action-btn action-btn--danger"
+                    @click.stop="handleDeleteDocument(doc.id)"
+                    title="删除"
+                  >
                     <AppIcon name="trash" :size="16" />
                   </button>
                 </div>
@@ -496,11 +556,7 @@ async function confirmDeleteDocument() {
           <div class="source-section">
             <div class="section__header">
               <h2 class="section__title">相关思维导图</h2>
-              <AppButton 
-                variant="secondary" 
-                size="small"
-                @click="handleCreateMindMap"
-              >
+              <AppButton variant="secondary" size="small" @click="handleCreateMindMap">
                 <template #icon>
                   <AppIcon name="plus" :size="16" />
                 </template>
@@ -514,9 +570,9 @@ async function confirmDeleteDocument() {
             </div>
 
             <div v-else class="mindmaps">
-              <div 
-                v-for="map in relatedMindMaps" 
-                :key="map.id" 
+              <div
+                v-for="map in relatedMindMaps"
+                :key="map.id"
                 class="mindmap-item-card"
                 @click="router.push(`/mindmap/${map.id}`)"
               >
@@ -526,11 +582,15 @@ async function confirmDeleteDocument() {
                 <div class="mindmap-item-card__info">
                   <div class="mindmap-item-card__name">{{ map.title }}</div>
                   <div class="mindmap-item-card__meta">
-                    <span>更新于 {{ new Date(map.updateTime).toISOString().split('T')[0] }}</span>
+                    <span>更新于 {{ new Date(map.updateTime).toISOString().split("T")[0] }}</span>
                   </div>
                 </div>
                 <div class="mindmap-item-card__actions">
-                  <button class="action-btn action-btn--danger" @click.stop="handleDeleteMindMap(map.id)" title="删除">
+                  <button
+                    class="action-btn action-btn--danger"
+                    @click.stop="handleDeleteMindMap(map.id)"
+                    title="删除"
+                  >
                     <AppIcon name="trash" :size="16" />
                   </button>
                 </div>
@@ -556,9 +616,7 @@ async function confirmDeleteDocument() {
         @send="handleSendMessage"
         @upload="handleFileSelect"
       />
-      <div class="input-actions">
-        
-      </div>
+      <div class="input-actions"></div>
     </div>
 
     <KnowledgeBaseCreate
@@ -609,10 +667,10 @@ async function confirmDeleteDocument() {
     >
       <div class="confirm-input-box">
         <p class="confirm-label">请输入思维导图名称</p>
-        <input 
-          v-model="newMindMapTitle" 
+        <input
+          v-model="newMindMapTitle"
           class="plain-input"
-          placeholder="思维导图名称" 
+          placeholder="思维导图名称"
           @keyup.enter="confirmCreateMindMap"
           autofocus
         />
@@ -1098,8 +1156,12 @@ async function confirmDeleteDocument() {
 }
 
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .status--pending {

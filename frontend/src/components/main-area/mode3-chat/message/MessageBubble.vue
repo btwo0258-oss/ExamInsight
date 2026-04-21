@@ -18,6 +18,13 @@ type Props = {
 
 const props = withDefaults(defineProps<Props>(), { isStreaming: false });
 
+const emit = defineEmits<{
+  copy: [text: string];
+  edit: [messageId: string];
+  regenerate: [messageId: string];
+  generateMindmap: [messageId: string, content: string];
+}>();
+
 const isUser = computed(() => props.message.role === "user");
 const messageStore = useMessageStore();
 const appState = useAppState();
@@ -153,6 +160,11 @@ async function onRegenerate() {
   const turnId = props.message.turnId || props.message.id;
   await messageStore.regenerate(props.conversationId, turnId);
 }
+
+async function onGenerateMindmap() {
+  if (!props.conversationId) return;
+  emit("generateMindmap", props.message.id, props.message.content);
+}
 </script>
 
 <template>
@@ -244,6 +256,7 @@ async function onRegenerate() {
           @copy="onCopy"
           @edit="onEdit"
           @regenerate="onRegenerate"
+          @generate-mindmap="onGenerateMindmap"
         />
       </div>
     </div>

@@ -16,4 +16,6 @@ public class KbCreateReq {
     private String avatar;
 
     private String color;
+
+    private Long examAnalysisId;
 }

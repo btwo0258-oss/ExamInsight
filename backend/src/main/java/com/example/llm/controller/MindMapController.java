@@ -3,13 +3,16 @@ package com.example.llm.controller;
 import com.example.llm.common.Result;
 import com.example.llm.common.UserContext;
 import com.example.llm.dto.MindMapCreateReq;
+import com.example.llm.dto.MindMapGenerateReq;
 import com.example.llm.dto.MindMapUpdateReq;
 import com.example.llm.entity.MindMap;
 import com.example.llm.service.MindMapService;
+import com.example.llm.service.MindMapGenerateService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/mindmap")
@@ -17,6 +20,9 @@ public class MindMapController {
 
     @Autowired
     private MindMapService mindMapService;
+
+    @Autowired
+    private MindMapGenerateService mindMapGenerateService;
 
     @PostMapping("/create")
     public Result<Long> createMindMap(@RequestBody MindMapCreateReq req) {
@@ -51,5 +57,12 @@ public class MindMapController {
         Long userId = UserContext.getUserId();
         MindMap detail = mindMapService.getMindMapDetail(id, userId);
         return Result.success(detail);
+    }
+
+    @PostMapping("/generate-from-ai")
+    public Result<Map<String, Object>> generateFromAi(@RequestBody MindMapGenerateReq req) {
+        Long userId = UserContext.getUserId();
+        Map<String, Object> result = mindMapGenerateService.generateFromAiContent(req, userId);
+        return Result.success(result);
     }
 }

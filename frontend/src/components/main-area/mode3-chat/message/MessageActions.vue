@@ -1,38 +1,43 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import type { ChatMessage } from '@/stores/message'
-import AppIcon from '@/components/common/AppIcon.vue'
+import { computed, ref } from "vue";
+import type { ChatMessage } from "@/stores/message";
+import AppIcon from "@/components/common/AppIcon.vue";
 
 type Props = {
-  message: ChatMessage
-  isRegenerateDisabled?: boolean
-}
+  message: ChatMessage;
+  isRegenerateDisabled?: boolean;
+};
 
-const props = withDefaults(defineProps<Props>(), { isRegenerateDisabled: false })
+const props = withDefaults(defineProps<Props>(), { isRegenerateDisabled: false });
 const emit = defineEmits<{
-  copy: [text: string]
-  edit: [messageId: string]
-  regenerate: [messageId: string]
-}>()
+  copy: [text: string];
+  edit: [messageId: string];
+  regenerate: [messageId: string];
+  generateMindmap: [messageId: string, content: string];
+}>();
 
-const isUser = computed(() => props.message.role === 'user')
-const copied = ref(false)
+const isUser = computed(() => props.message.role === "user");
+const copied = ref(false);
 
 function handleCopy() {
-  emit('copy', props.message.content)
-  copied.value = true
+  emit("copy", props.message.content);
+  copied.value = true;
   setTimeout(() => {
-    copied.value = false
-  }, 1500)
+    copied.value = false;
+  }, 1500);
 }
 
 function handleEdit() {
-  emit('edit', props.message.id)
+  emit("edit", props.message.id);
 }
 
 function handleRegenerate() {
-  if (props.isRegenerateDisabled) return
-  emit('regenerate', props.message.id)
+  if (props.isRegenerateDisabled) return;
+  emit("regenerate", props.message.id);
+}
+
+function handleGenerateMindmap() {
+  emit("generateMindmap", props.message.id, props.message.content);
 }
 </script>
 
@@ -41,16 +46,24 @@ function handleRegenerate() {
     <button class="action-btn" title="复制" @click="handleCopy">
       <AppIcon :name="copied ? 'check' : 'copy'" :size="16" :class="{ 'anim-pop': copied }" />
     </button>
-    
+
     <template v-if="isUser">
       <button class="action-btn" title="编辑" @click="handleEdit">
         <AppIcon name="edit" :size="16" />
       </button>
     </template>
-    
+
     <template v-else>
-      <button class="action-btn" title="重新生成" :disabled="isRegenerateDisabled" @click="handleRegenerate">
+      <button
+        class="action-btn"
+        title="重新生成"
+        :disabled="isRegenerateDisabled"
+        @click="handleRegenerate"
+      >
         <AppIcon name="refresh-single" :size="16" />
+      </button>
+      <button class="action-btn" title="AI生成思维导图" @click="handleGenerateMindmap">
+        <AppIcon name="layers" :size="16" />
       </button>
     </template>
   </div>
@@ -82,8 +95,8 @@ function handleRegenerate() {
   color: var(--color-text, #303133);
 }
 
-:root[data-theme='dark'] .action-btn:hover:not(:disabled) {
-  color: #E4E7ED;
+:root[data-theme="dark"] .action-btn:hover:not(:disabled) {
+  color: #e4e7ed;
 }
 
 .action-btn:disabled {
@@ -96,7 +109,13 @@ function handleRegenerate() {
 }
 
 @keyframes pop {
-  0% { transform: scale(0.8); opacity: 0.5; }
-  100% { transform: scale(1); opacity: 1; }
+  0% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 </style>

@@ -10,6 +10,9 @@ const router = createRouter({
     { path: '/', redirect: '/chat' },
     { path: '/chat', name: 'chat', component: ChatView },
     { path: '/chat/:id', name: 'chat-detail', component: ChatView, props: true },
+    { path: '/resource', name: 'resource-center', component: () => import('@/views/ResourceCenterView.vue') },
+    { path: '/exam-analysis', name: 'exam-analysis-list', component: () => import('@/views/ExamAnalysisListView.vue') },
+    { path: '/exam-analysis/:id', name: 'exam-analysis-detail', component: () => import('@/views/ExamAnalysisView.vue'), props: true },
     { path: '/knowledge', name: 'knowledge', component: KnowledgeBaseView },
     { path: '/knowledge/:id', name: 'knowledge-detail', component: KnowledgeBaseView, props: true },
     { path: '/mindmap', name: 'mindmap-list', component: () => import('@/views/mindmap/MindMapListView.vue') },
@@ -44,6 +47,11 @@ const router = createRouter({
           path: 'system-config',
           name: 'admin-system-config',
           component: () => import('@/views/admin/system-config/index.vue')
+        },
+        {
+          path: 'resources',
+          name: 'admin-resources',
+          component: () => import('@/views/admin/resources/index.vue')
         }
       ]
     }

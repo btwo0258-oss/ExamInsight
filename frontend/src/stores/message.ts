@@ -104,7 +104,7 @@ function saveLocalActiveAVersions(
 
 function parseCreateTime(createTime: any): number {
   if (!createTime) return Date.now();
-  if (typeof createTime === 'number') return createTime;
+  if (typeof createTime === "number") return createTime;
   if (Array.isArray(createTime)) {
     const [year, month, day, hour = 0, minute = 0, second = 0] = createTime;
     return new Date(year, month - 1, day, hour, minute, second).getTime();
@@ -177,19 +177,21 @@ export const useMessageStore = defineStore("message", () => {
 
           // 修复：如果服务端返回了带 [附加文件内容] 的长文本，而本地存了原始输入文本和 files
           let displayContent = m.content;
-          if (m.role === 'user' && m.content?.includes('[附加文件内容]')) {
-            displayContent = localMatch?.content || m.content.split('[用户输入]\n').pop() || m.content;
+          if (m.role === "user" && m.content?.includes("[附加文件内容]")) {
+            displayContent =
+              localMatch?.content || m.content.split("[用户输入]\n").pop() || m.content;
           }
 
-          const parsedFiles = typeof m.files === "string"
-            ? (() => {
-                try {
-                  return JSON.parse(m.files);
-                } catch {
-                  return undefined;
-                }
-              })()
-            : m.files;
+          const parsedFiles =
+            typeof m.files === "string"
+              ? (() => {
+                  try {
+                    return JSON.parse(m.files);
+                  } catch {
+                    return undefined;
+                  }
+                })()
+              : m.files;
 
           const message: ChatMessage = {
             id: String(m.id || Date.now() + Math.random()),
@@ -212,45 +214,63 @@ export const useMessageStore = defineStore("message", () => {
             qVersion: m.qVersion ?? localMatch?.qVersion ?? undefined,
             aVersion: m.aVersion ?? localMatch?.aVersion ?? undefined,
             //files: parsedFiles || localMatch?.files,
-            files: parsedFiles || localMatch?.files || (m.role === 'user' && m.content?.includes('[附加文件内容]') ? (() => {
-              const fileRegex = /\[文件：(.*?)\]/g;
-              const recoveredFiles = [];
-              let match;
-              while ((match = fileRegex.exec(m.content)) !== null) {
-                const fileName = match[1];
-                let type = 'unknown';
-                if (fileName.endsWith('.pdf')) type = 'application/pdf';
-                else if (fileName.endsWith('.txt')) type = 'text/plain';
-                else if (fileName.endsWith('.docx') || fileName.endsWith('.docx')) type = 'application/msword';
-                else if (fileName.endsWith('.xls') || fileName.endsWith('.xlsx')) type = 'application/vnd.ms-excel';
-                
-                recoveredFiles.push({ name: fileName, type, size: 0 }); // 无法恢复准确大小，只能用0
-              }
-              return recoveredFiles.length > 0 ? recoveredFiles : undefined;
-            })() : undefined),
+            files:
+              parsedFiles ||
+              localMatch?.files ||
+              (m.role === "user" && m.content?.includes("[附加文件内容]")
+                ? (() => {
+                    const fileRegex = /\[文件：(.*?)\]/g;
+                    const recoveredFiles = [];
+                    let match;
+                    while ((match = fileRegex.exec(m.content)) !== null) {
+                      const fileName = match[1];
+                      let type = "unknown";
+                      if (fileName.endsWith(".pdf")) type = "application/pdf";
+                      else if (fileName.endsWith(".txt")) type = "text/plain";
+                      else if (fileName.endsWith(".docx") || fileName.endsWith(".docx"))
+                        type = "application/msword";
+                      else if (fileName.endsWith(".xls") || fileName.endsWith(".xlsx"))
+                        type = "application/vnd.ms-excel";
+
+                      recoveredFiles.push({ name: fileName, type, size: 0 }); // 无法恢复准确大小，只能用0
+                    }
+                    return recoveredFiles.length > 0 ? recoveredFiles : undefined;
+                  })()
+                : undefined),
           };
 
           if (message.role === "user") {
-            const localMatch = (byConversation.value[key] || []).find((lm) => lm.id === String(m.id));
-            
+            const localMatch = (byConversation.value[key] || []).find(
+              (lm) => lm.id === String(m.id),
+            );
+
             // Check if we need to auto-assign qVersion
             // If the server returned undefined (old API), or if we see duplicate turnId+qVersion (corrupt old data)
             const parentKey = String(m.parentId ?? 0);
             if (!userTurnIdByParent.has(parentKey) && message.turnId) {
-               userTurnIdByParent.set(parentKey, message.turnId);
+              userTurnIdByParent.set(parentKey, message.turnId);
             }
-            
-            const turnId = message.turnId || localMatch?.turnId || userTurnIdByParent.get(parentKey) || uid();
+
+            const turnId =
+              message.turnId || localMatch?.turnId || userTurnIdByParent.get(parentKey) || uid();
             if (!userTurnIdByParent.has(parentKey)) {
               userTurnIdByParent.set(parentKey, turnId);
             }
 
             const expectedNextQ = userVersionCountByTurn.get(turnId) ?? 0;
-            
+
             // If message has turnId and a valid qVersion that doesn't conflict, use it
-            if (message.turnId && message.qVersion !== undefined && message.qVersion >= expectedNextQ) {
+            if (
+              message.turnId &&
+              message.qVersion !== undefined &&
+              message.qVersion >= expectedNextQ
+            ) {
               userVersionCountByTurn.set(turnId, message.qVersion + 1);
-            } else if (localMatch?.turnId && localMatch?.qVersion !== undefined && localMatch.qVersion >= expectedNextQ) {
+            } else if (
+              localMatch?.turnId &&
+              localMatch?.qVersion !== undefined &&
+              localMatch.qVersion >= expectedNextQ
+            ) {
               message.turnId = localMatch.turnId;
               message.qVersion = localMatch.qVersion;
               userVersionCountByTurn.set(turnId, localMatch.qVersion + 1);
@@ -277,23 +297,32 @@ export const useMessageStore = defineStore("message", () => {
 
         for (const { raw, message } of pendingAssistants) {
           const parentUser = raw.parentId ? derivedUserById.get(Number(raw.parentId)) : undefined;
-          
-          const localMatch = (byConversation.value[key] || []).find((lm) => lm.id === String(raw.id));
+
+          const localMatch = (byConversation.value[key] || []).find(
+            (lm) => lm.id === String(raw.id),
+          );
 
           const turnId = message.turnId || localMatch?.turnId || parentUser?.turnId || uid();
           const qVersion = message.qVersion ?? localMatch?.qVersion ?? parentUser?.qVersion ?? 0;
-          
+
           const aKey = `${turnId}-${qVersion}`;
           const expectedNextA = assistantVersionCountByTurnQ.get(aKey) ?? 0;
 
           message.turnId = turnId;
           message.qVersion = qVersion;
-          
-          if (message.aVersion === undefined || message.aVersion === null || message.aVersion < expectedNextA) {
+
+          if (
+            message.aVersion === undefined ||
+            message.aVersion === null ||
+            message.aVersion < expectedNextA
+          ) {
             message.aVersion = localMatch?.aVersion ?? expectedNextA;
           }
-          
-          assistantVersionCountByTurnQ.set(aKey, Math.max(message.aVersion + 1, (assistantVersionCountByTurnQ.get(aKey) ?? 0)));
+
+          assistantVersionCountByTurnQ.set(
+            aKey,
+            Math.max(message.aVersion + 1, assistantVersionCountByTurnQ.get(aKey) ?? 0),
+          );
         }
 
         const localNewMsgs = (byConversation.value[key] || []).filter(
@@ -394,7 +423,7 @@ export const useMessageStore = defineStore("message", () => {
     let text = content.trim();
     const hasFiles = files && files.length > 0;
     if (!text && !hasFiles && !skipUserMsg) return;
-    
+
     if (!text && hasFiles) {
       text = "请分析上传的文件内容";
     }
@@ -544,7 +573,7 @@ export const useMessageStore = defineStore("message", () => {
       }
 
       // 构建发送给后端的文本，如果后端不支持 fileContext 字段，我们需要把它拼接到 question 中
-      const finalQuestion = fileContext 
+      const finalQuestion = fileContext
         ? `[附加文件内容]\n${fileContext}\n\n[用户输入]\n${text}`
         : text;
 
@@ -565,7 +594,10 @@ export const useMessageStore = defineStore("message", () => {
           turnId: currentTurnId,
           qVersion: currentQVersion,
           aVersion: currentAVersion,
-          files: files && files.length > 0 ? JSON.stringify(files.map(f => ({ name: f.name, type: f.type, size: f.size }))) : undefined,
+          files:
+            files && files.length > 0
+              ? JSON.stringify(files.map((f) => ({ name: f.name, type: f.type, size: f.size })))
+              : undefined,
         },
         { signal: nextController.signal },
       );
@@ -630,7 +662,10 @@ export const useMessageStore = defineStore("message", () => {
               }
 
               // Fallback to checking fullContent length as a heuristic if no parentId match
-              return m.content === fullContent || (m.content && fullContent && m.content.length === fullContent.length);
+              return (
+                m.content === fullContent ||
+                (m.content && fullContent && m.content.length === fullContent.length)
+              );
             });
 
           if (remoteUser && !skipUserMsg) {
@@ -873,19 +908,12 @@ export const useMessageStore = defineStore("message", () => {
       title: "新对话",
     });
 
-    // 如果有初始消息或文件，异步发送，不阻塞跳转
-    if (options.firstMessage || (options.files && options.files.length > 0)) {
-      sendMessage(
-        conversation.id,
-        options.firstMessage || "",
-        undefined,
-        undefined,
-        undefined,
-        options.files,
-      );
-    }
-
-    return conversation.id;
+    // 不再在这里发送消息，让调用方在跳转后再发送
+    return {
+      id: conversation.id,
+      firstMessage: options.firstMessage,
+      files: options.files,
+    };
   }
 
   function clearConversation(conversationId: number) {

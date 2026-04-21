@@ -9,6 +9,7 @@ export type KnowledgeBase = {
   color?: string;
   documentCount?: number;
   mindMapCount?: number;
+  examAnalysisId?: number;
   createTime: string;
   updateTime: string;
 };
@@ -46,6 +47,7 @@ function normalizeKnowledgeBase(kb: any): KnowledgeBase {
     color: kb.color,
     documentCount: kb.docCount ?? kb.documentCount ?? 0,
     mindMapCount: kb.mindMapCount ?? 0,
+    examAnalysisId: kb.examAnalysisId,
     createTime: kb.createTime,
     updateTime: kb.updateTime,
   };
@@ -104,6 +106,7 @@ export async function createKnowledgeBase(payload: Partial<KnowledgeBase>): Prom
       color: payload.color,
       documentCount: 0,
       mindMapCount: 0,
+      examAnalysisId: payload.examAnalysisId,
       createTime: new Date().toISOString(),
       updateTime: new Date().toISOString(),
     };
@@ -111,37 +114,16 @@ export async function createKnowledgeBase(payload: Partial<KnowledgeBase>): Prom
     saveMockKb(list);
     return next;
   }
-  try {
-    const res = await request.post("/api/kb/create", {
-      ...payload,
-      avatar: payload.icon,
-      color: payload.color,
-    });
-    return normalizeKnowledgeBase(res.data?.data ?? res.data);
-  } catch (err: unknown) {
-    if (
-      typeof err === "object" &&
-      err !== null &&
-      "response" in err &&
-      (err as { response?: { status?: number } }).response?.status === 404
-    ) {
-      const list = getMockKb();
-      const next: KnowledgeBase = {
-        id: Date.now(),
-        name: payload.name || "",
-        description: payload.description,
-        icon: payload.icon,
-        color: payload.color,
-        documentCount: 0,
-        createTime: new Date().toISOString(),
-        updateTime: new Date().toISOString(),
-      };
-      list.unshift(next);
-      saveMockKb(list);
-      return next;
-    }
-    throw err;
+  const res = await request.post("/api/kb/create", {
+    ...payload,
+    avatar: payload.icon,
+    color: payload.color,
+  });
+  const data = res.data?.data ?? res.data;
+  if (!data || !data.id) {
+    throw new Error("知识库创建失败：未返回有效数据");
   }
+  return normalizeKnowledgeBase(data);
 }
 
 export async function updateKnowledgeBase(data: KnowledgeBase): Promise<KnowledgeBase> {
@@ -199,5 +181,23 @@ export async function deleteKnowledgeBase(id: number): Promise<void> {
       return;
     }
     throw err;
+  }
+}
+
+export async function getKnowledgeBaseByExamAnalysisId(
+  examAnalysisId: number,
+): Promise<KnowledgeBase | null> {
+  if (mockEnabled.value) {
+    return getMockKb().find((x) => x.examAnalysisId === examAnalysisId) || null;
+  }
+  try {
+    const res = await request.get(`/api/kb/by-exam-analysis/${examAnalysisId}`);
+    const data = res.data?.data;
+    if (data === null || data === undefined) {
+      return null;
+    }
+    return normalizeKnowledgeBase(data);
+  } catch (err: unknown) {
+    return null;
   }
 }

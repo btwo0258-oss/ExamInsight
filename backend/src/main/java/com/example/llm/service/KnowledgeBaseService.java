@@ -14,6 +14,7 @@ public interface KnowledgeBaseService extends IService<KnowledgeBase> {
     KnowledgeBase getKnowledgeBaseDetail(Long userId, Long kbId);
     KnowledgeBase updateKnowledgeBase(Long userId, Long kbId, KbUpdateReq req);
     void deleteKnowledgeBase(Long userId, Long kbId);
+    KnowledgeBase getByExamAnalysisId(Long userId, Long examAnalysisId);
 
     void checkOwnership(Long userId, Long kbId);
 }

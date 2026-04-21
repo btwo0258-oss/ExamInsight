@@ -21,6 +21,7 @@ public class KnowledgeBase {
     private Integer docCount;
     private Integer chunkCount;
     private Integer mindMapCount;
+    private Long examAnalysisId;
 
     @TableLogic(value = "0", delval = "1")  // 0=未删除, 1=已删除
     private Integer status;

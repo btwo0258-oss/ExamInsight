@@ -7,20 +7,23 @@ import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 import { useConversationStore } from '@/stores/conversation'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
+import { useExamAnalysisStore } from '@/stores/examAnalysis'
 
 const authStore = useAuthStore()
 const themeStore = useThemeStore()
 const conversationStore = useConversationStore()
 const knowledgeBaseStore = useKnowledgeBaseStore()
+const examAnalysisStore = useExamAnalysisStore()
 
 onMounted(async () => {
   themeStore.init()
   authStore.init()
   
-  // 如果用户已登录，加载对话和知识库数据
+  // 如果用户已登录，加载对话、知识库和考试分析数据
   if (authStore.isAuthed) {
     await conversationStore.fetchList()
     await knowledgeBaseStore.fetchList()
+    await examAnalysisStore.fetchList()
   }
 })
 
@@ -31,6 +34,7 @@ watch(() => authStore.isAuthed, async (isAuthed) => {
     await themeStore.syncFromServer()
     await conversationStore.fetchList()
     await knowledgeBaseStore.fetchList()
+    await examAnalysisStore.fetchList()
   }
 })
 </script>

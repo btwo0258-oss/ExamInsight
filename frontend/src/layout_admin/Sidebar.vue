@@ -8,6 +8,7 @@ const route = useRoute()
 const navItems = [
   { name: 'admin-dashboard', label: '概览', icon: 'bar-chart', path: '/admin/dashboard' },
   { name: 'admin-users', label: '用户', icon: 'users', path: '/admin/users' },
+  { name: 'admin-resources', label: '资料', icon: 'folder', path: '/admin/resources' },
   { name: 'admin-system-config', label: '配置', icon: 'settings', path: '/admin/system-config' }
 ]
 

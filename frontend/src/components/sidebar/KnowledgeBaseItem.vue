@@ -117,7 +117,7 @@ function handleDeleteConversation(conv: any) {
           @click.stop="toggleActions"
           :class="{ 'actions-btn--active': showActionsPanel }"
         >
-          •••
+          <AppIcon name="more-horizontal" :size="16" />
         </button>
         <div v-if="showActionsPanel" class="actions-panel">
           <button class="action-item" @click="handleEdit">编辑</button>
@@ -144,7 +144,7 @@ function handleDeleteConversation(conv: any) {
             @click.stop="conv.showActionsPanel = !conv.showActionsPanel"
             :class="{ 'actions-btn--active': conv.showActionsPanel }"
           >
-            •••
+            <AppIcon name="more-horizontal" :size="16" />
           </button>
           <div v-if="conv.showActionsPanel" class="actions-panel">
             <button class="action-item" @click="handleRenameConversation(conv)">重命名</button>
@@ -309,13 +309,16 @@ function handleDeleteConversation(conv: any) {
 .actions-btn {
   background: none;
   border: none;
-  font-size: 16px;
   cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 4px;
-  color: var(--color-text-secondary);
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--color-text-muted);
   transition: all 0.2s ease;
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   opacity: 0.6;
 }
 

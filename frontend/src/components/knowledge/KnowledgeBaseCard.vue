@@ -11,9 +11,12 @@ import KnowledgeBaseCreate from './KnowledgeBaseCreate.vue'
 
 type Props = {
   knowledgeBase: KnowledgeBase
+  viewMode?: 'grid' | 'list'
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  viewMode: 'grid'
+})
 const emit = defineEmits(['select'])
 const conversationStore = useConversationStore()
 const kbStore = useKnowledgeBaseStore()
@@ -69,74 +72,77 @@ onUnmounted(() => {
 })
 
 function formatDate(dateString: string): string {
+  if (!dateString) return '未知时间'
   const date = new Date(dateString)
+  if (isNaN(date.getTime())) return '无效日期'
+  
   const now = new Date()
   const diff = now.getTime() - date.getTime()
   const days = Math.floor(diff / (1000 * 60 * 60 * 24))
   
+  if (days < 0) return '刚刚' // 未来时间处理
   if (days === 0) return '今天'
   if (days === 1) return '昨天'
   if (days < 7) return `${days}天前`
   if (days < 30) return `${Math.floor(days / 7)}周前`
-  return `${Math.floor(days / 30)}月前`
+  if (days < 365) return `${Math.floor(days / 30)}月前`
+  return `${Math.floor(days / 365)}年前`
 }
 </script>
 
 <template>
-  <div class="kb-card" @click="emit('select', knowledgeBase.id)">
+  <div class="kb-card" :class="[`kb-card--${viewMode}`, { 'kb-card--active': showActions }]" @click="emit('select', knowledgeBase.id)">
     <div class="kb-card__header">
       <div 
         class="kb-card__icon"
-        :style="{ 
-          backgroundColor: knowledgeBase.color ? knowledgeBase.color + '15' : 'transparent',
-          color: knowledgeBase.color || 'inherit'
-        }"
+        :style="{ backgroundColor: knowledgeBase.color + '15', color: knowledgeBase.color }"
       >
-        <!-- @ts-ignore -->
-        <AppIcon :name="knowledgeBase.icon || 'book'" :size="24" :color="knowledgeBase.color" />
+        <AppIcon :name="knowledgeBase.icon || 'folder'" :size="20" />
       </div>
-      <h3 class="kb-card__title">{{ knowledgeBase.name }}</h3>
-      <div class="kb-card__more">
-        <button class="more-btn" @click="toggleActions">
-          <AppIcon name="more-horizontal" :size="18" />
-        </button>
-        <div v-if="showActions" class="dropdown-menu">
-          <div class="menu-item" @click="handleEdit">
-            <AppIcon name="edit" :size="14" />
-            <span>重命名</span>
+      <div class="kb-card__main">
+        <h3 class="kb-card__title">{{ knowledgeBase.name }}</h3>
+        <p class="kb-card__description">{{ knowledgeBase.description || '暂无描述' }}</p>
+      </div>
+      
+      <div class="kb-card__footer">
+        <div class="kb-card__stats">
+          <div class="kb-card__stat">
+            <AppIcon name="file-text" :size="14" />
+            <span>{{ knowledgeBase.documentCount || 0 }}</span>
           </div>
-          <div class="menu-item menu-item--danger" @click="handleDelete">
-            <AppIcon name="trash" :size="14" />
-            <span>删除</span>
+          <div class="kb-card__stat">
+            <AppIcon name="message-square" :size="14" />
+            <span>{{ conversationCount }}</span>
+          </div>
+          <div class="kb-card__stat">
+            <AppIcon name="layers" :size="14" />
+            <span>{{ mindMapCount }}</span>
+          </div>
+        </div>
+        <div class="kb-card__time">
+          <AppIcon name="clock" :size="14" />
+          <span>{{ formatDate(knowledgeBase.updateTime) }}</span>
+        </div>
+      </div>
+
+      <div class="kb-card__actions">
+        <div class="actions-wrapper">
+          <button class="dots-btn" @click.stop="showActions = !showActions">
+            <AppIcon name="more-horizontal" :size="20" />
+          </button>
+          <div class="overlay" v-if="showActions" @click.stop="showActions = false"></div>
+          <div class="actions-menu" v-if="showActions">
+            <div class="menu-item" @click.stop="handleEdit">
+              <AppIcon name="edit" :size="16" />
+              <span>编辑信息</span>
+            </div>
+            <div class="menu-item danger" @click.stop="handleDelete">
+              <AppIcon name="trash" :size="16" />
+              <span>删除知识库</span>
+            </div>
           </div>
         </div>
       </div>
-    </div>
-    
-    <p class="kb-card__description">
-      {{ knowledgeBase.description || '暂无描述' }}
-    </p>
-    
-    <div class="kb-card__footer">
-      <div class="kb-card__meta">
-        <span class="meta-item">
-          <AppIcon name="file" :size="14" />
-          {{ knowledgeBase.documentCount || 0 }} 文档
-        </span>
-        <span class="meta-item">
-          <AppIcon name="bar-chart" :size="14" />
-          {{ conversationCount }} 对话
-        </span>
-        <span class="meta-item">
-          <AppIcon name="layers" :size="14" />
-          {{ mindMapCount }} 思维导图
-        </span>
-        <span class="meta-item">
-          <AppIcon name="clock" :size="14" />
-          {{ formatDate(knowledgeBase.createTime) }}
-        </span>
-      </div>
-      <div class="kb-card__arrow">→</div>
     </div>
 
     <KnowledgeBaseCreate
@@ -162,89 +168,134 @@ function formatDate(dateString: string): string {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: 12px;
-  padding: 20px;
   cursor: pointer;
   transition: all 0.2s ease;
-  display: flex;
-  flex-direction: column;
-  height: 100%;
+  position: relative;
+  overflow: visible;
+}
+
+.kb-card--active {
+  z-index: 200;
 }
 
 .kb-card:hover {
   border-color: var(--color-primary);
-  transform: translateY(-4px);
-  box-shadow: var(--shadow-md);
+  background: var(--color-surface-hover);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-sm);
 }
 
 .kb-card__header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
-  position: relative;
+  padding: 16px 20px;
+  gap: 16px;
 }
 
 .kb-card__icon {
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: var(--color-text);
-  transition: all 0.2s ease;
+}
+
+.kb-card__main {
+  flex: 1;
+  min-width: 0;
 }
 
 .kb-card__title {
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
   color: var(--color-text);
-  margin: 0;
-  flex: 1;
+  margin: 0 0 4px 0;
+  line-height: 1.4;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.kb-card__more {
+.kb-card__description {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kb-card__footer {
+  display: flex;
+  align-items: center;
+  margin-right: 12px;
+}
+
+.kb-card__stats {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.kb-card__stat {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.kb-card__time {
+  display: none;
+}
+
+.kb-card__actions {
+  display: flex;
+  align-items: center;
+}
+
+.actions-wrapper {
   position: relative;
-  opacity: 0;
-  transition: opacity 0.2s;
 }
 
-.kb-card:hover .kb-card__more {
-  opacity: 1;
-}
-
-.more-btn {
+.dots-btn {
+  background: transparent;
+  border: none;
   width: 32px;
   height: 32px;
-  border-radius: 6px;
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
+  border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  transition: all 0.2s;
 }
 
-.more-btn:hover {
-  background: var(--color-surface-hover);
+.dots-btn:hover {
+  background: var(--color-bg-alt);
   color: var(--color-text);
 }
 
-.dropdown-menu {
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+}
+
+.actions-menu {
   position: absolute;
   top: 100%;
   right: 0;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 4px;
-  min-width: 120px;
+  border-radius: 10px;
   box-shadow: var(--shadow-lg);
+  padding: 6px;
+  min-width: 140px;
   z-index: 100;
   margin-top: 4px;
 }
@@ -252,69 +303,71 @@ function formatDate(dateString: string): string {
 .menu-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   padding: 8px 12px;
+  border-radius: 6px;
   font-size: 13px;
   color: var(--color-text);
-  cursor: pointer;
-  border-radius: 4px;
+  transition: background 0.2s;
 }
 
 .menu-item:hover {
-  background: var(--color-surface-hover);
+  background: var(--color-bg-alt);
 }
 
-.menu-item--danger {
+.menu-item.danger {
   color: #ef4444;
 }
 
-.menu-item--danger:hover {
-  background: rgba(239, 68, 68, 0.1);
+.menu-item.danger:hover {
+  background: rgba(239, 68, 68, 0.05);
 }
 
-.kb-card__description {
-  font-size: 14px;
-  color: var(--color-text-muted);
-  line-height: 1.5;
-  margin: 0 0 20px 0;
-  flex: 1;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-height: 42px;
+/* Grid layout overrides */
+.kb-card--grid {
+  display: block;
 }
 
-.kb-card__footer {
-  display: flex;
-  justify-content: space-between;
+.kb-card--grid .kb-card__header {
+  flex-direction: column;
+  align-items: flex-start;
+  min-height: 180px;
+  padding: 24px;
+}
+
+.kb-card--grid .kb-card__footer {
+  margin-top: auto;
+  margin-right: 0;
+  padding-top: 16px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.kb-card--grid .kb-card__stats {
+  flex-direction: row;
   align-items: center;
-  padding-top: 12px;
-  border-top: 1px solid var(--color-border);
+  gap: 12px;
 }
 
-.kb-card__meta {
+.kb-card--grid .kb-card__time {
   display: flex;
-  gap: 16px;
+  align-items: center;
+  gap: 4px;
   font-size: 12px;
   color: var(--color-text-muted);
 }
 
-.meta-item {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+.kb-card--grid .kb-card__actions {
+  position: absolute;
+  top: 16px;
+  right: 16px;
 }
 
-.kb-card__arrow {
-  font-size: 18px;
-  color: var(--color-primary);
-  opacity: 0;
-  transition: opacity 0.2s ease;
-}
-
-.kb-card:hover .kb-card__arrow {
-  opacity: 1;
+.kb-card--grid .kb-card__description {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 </style>

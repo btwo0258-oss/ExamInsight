@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import { useConversationStore } from '@/stores/conversation'
@@ -15,7 +15,8 @@ const conversationStore = useConversationStore()
 const mindMapStore = useMindMapStore()
 
 const searchQuery = ref('')
-const sortBy = ref('updated_at') // 'updated_at', 'name'
+const viewMode = ref<'grid' | 'list'>((localStorage.getItem('llm.kbList.viewMode') as any) || 'grid')
+const sortBy = ref<'updated_at' | 'name'>((localStorage.getItem('llm.kbList.sortBy') as any) || 'updated_at')
 const currentPage = ref(1)
 const pageSize = ref(10)
 const showCreateDialog = ref(false)
@@ -80,6 +81,17 @@ onMounted(() => {
   loadData()
 })
 
+watch(viewMode, (val) => localStorage.setItem('llm.kbList.viewMode', val))
+watch(sortBy, (val) => localStorage.setItem('llm.kbList.sortBy', val))
+
+const showSearch = ref(false)
+const showSortMenu = ref(false)
+
+function toggleSearch() {
+  showSearch.value = !showSearch.value
+  if (!showSearch.value) searchQuery.value = ''
+}
+
 function handleCreate() {
   showCreateDialog.value = true
 }
@@ -92,22 +104,58 @@ function handleViewDetail(id: number) {
 <template>
   <div class="knowledge-base-list">
     <div class="header">
-      <h1 class="title">知识库</h1>
+      <div class="header__info">
+        <h1 class="title">知识库</h1>
+        <p class="subtitle">管理您的专属知识库与文档资料</p>
+      </div>
       <div class="actions">
-        <div class="search">
+        <div class="search-expand" v-if="showSearch">
           <input
             v-model="searchQuery"
             type="text"
             placeholder="搜索知识库..."
+            autofocus
           />
         </div>
-        <select v-model="sortBy" class="sort-select">
-          <option value="updated_at">按更新时间排序</option>
-          <option value="name">按名称排序</option>
-        </select>
-        <AppButton variant="primary" @click="handleCreate">
-          + 新建知识库
-        </AppButton>
+        <div class="action-pill">
+          <button class="pill-btn" @click="toggleSearch">
+            <AppIcon name="search" :size="20" color="var(--color-primary)" />
+          </button>
+          
+          <div class="dropdown-wrapper">
+            <button class="pill-btn" @click="showSortMenu = !showSortMenu">
+              <AppIcon :name="viewMode === 'grid' ? 'grid' : 'list'" :size="20" color="var(--color-primary)" />
+            </button>
+            <div class="overlay" v-if="showSortMenu" @click="showSortMenu = false"></div>
+            <div class="dropdown-menu" v-if="showSortMenu">
+              <div class="dropdown-item" @click="viewMode = 'grid'; showSortMenu = false">
+                <AppIcon name="grid" :size="16" />
+                <span class="dropdown-text">图标</span>
+                <AppIcon v-if="viewMode === 'grid'" name="check" :size="16" color="var(--color-primary)" />
+              </div>
+              <div class="dropdown-item" @click="viewMode = 'list'; showSortMenu = false">
+                <AppIcon name="list" :size="16" />
+                <span class="dropdown-text">列表</span>
+                <AppIcon v-if="viewMode === 'list'" name="check" :size="16" color="var(--color-primary)" />
+              </div>
+              <div class="dropdown-divider"></div>
+              <div class="dropdown-item" @click="sortBy = 'updated_at'; showSortMenu = false">
+                <AppIcon name="clock" :size="16" />
+                <span class="dropdown-text">按更新时间排序</span>
+                <AppIcon v-if="sortBy === 'updated_at'" name="check" :size="16" color="var(--color-primary)" />
+              </div>
+              <div class="dropdown-item" @click="sortBy = 'name'; showSortMenu = false">
+                <AppIcon name="type" :size="16" />
+                <span class="dropdown-text">按名称排序</span>
+                <AppIcon v-if="sortBy === 'name'" name="check" :size="16" color="var(--color-primary)" />
+              </div>
+            </div>
+          </div>
+
+          <button class="pill-btn" @click="handleCreate">
+            <AppIcon name="plus" :size="20" color="var(--color-primary)" />
+          </button>
+        </div>
       </div>
     </div>
 
@@ -120,20 +168,24 @@ function handleViewDetail(id: number) {
       <AppButton @click="loadData" style="margin-top: 16px;">重试</AppButton>
     </div>
 
-    <div v-else-if="filteredKnowledgeBases.length === 0" class="empty">
-      <div class="empty__icon">
-        <AppIcon name="book" :size="48" />
-      </div>
-      <h3 class="empty__title">暂无知识库</h3>
-      <p class="empty__description">创建您的第一个知识库来开始使用</p>
-    </div>
-
     <div v-else>
-      <div class="grid">
+      <div class="grid" :class="`grid--${viewMode}`">
+        <!-- 新建卡片 -->
+        <div class="new-card" @click="handleCreate">
+          <div class="new-card__icon">
+            <div class="plus-circle">
+              <AppIcon name="plus" :size="24" color="#fff" />
+            </div>
+          </div>
+          <span class="new-card__text">新建</span>
+        </div>
+
+        <!-- 知识库卡片 -->
         <KnowledgeBaseCard
           v-for="kb in paginatedKnowledgeBases"
           :key="kb.id"
           :knowledge-base="kb"
+          :view-mode="viewMode"
           @click="handleViewDetail(kb.id)"
         />
       </div>
@@ -156,22 +208,32 @@ function handleViewDetail(id: number) {
 .knowledge-base-list {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 32px 20px;
+  padding: 40px 32px;
 }
 
 .header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   margin-bottom: 32px;
-  flex-wrap: wrap;
-  gap: 16px;
+}
+
+.header__info {
+  display: flex;
+  flex-direction: column;
 }
 
 .title {
   font-size: 28px;
   font-weight: 700;
   color: var(--color-text);
+  margin: 0 0 8px 0;
+}
+
+.subtitle {
+  font-size: 14px;
+  color: var(--color-text-muted);
+  margin: 0;
 }
 
 .actions {
@@ -180,24 +242,87 @@ function handleViewDetail(id: number) {
   align-items: center;
 }
 
-.search {
-  position: relative;
+.search-expand {
+  animation: slideIn 0.2s ease;
 }
 
-.search input {
+@keyframes slideIn {
+  from { width: 0; opacity: 0; }
+  to { width: 200px; opacity: 1; }
+}
+
+.search-expand input {
   padding: 10px 16px;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: 999px;
   font-size: 14px;
-  width: 280px;
+  width: 200px;
   background: var(--color-surface);
   color: var(--color-text);
 }
 
-.search input:focus {
+.search-expand input:focus {
   outline: none;
   border-color: var(--color-primary);
 }
+
+.action-pill {
+  display: flex;
+  align-items: center;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 4px;
+  box-shadow: var(--shadow-sm);
+}
+
+.pill-btn {
+  background: transparent;
+  border: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.pill-btn:hover {
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.dropdown-wrapper { position: relative; }
+.overlay { position: fixed; inset: 0; z-index: 40; }
+.dropdown-menu {
+  position: absolute;
+  top: 120%;
+  right: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  padding: 8px;
+  min-width: 180px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+}
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  color: var(--color-text);
+  font-size: 14px;
+}
+.dropdown-item:hover { background: var(--color-surface-hover); }
+.dropdown-text { flex: 1; }
+.dropdown-divider { height: 1px; background: var(--color-border); margin: 4px 0; }
 
 .empty {
   text-align: center;
@@ -225,18 +350,73 @@ function handleViewDetail(id: number) {
 }
 
 .grid {
+  transition: all 0.3s ease;
+}
+
+.grid--grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 24px;
 }
 
-.sort-select {
-  padding: 8px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-surface);
-  color: var(--color-text);
-  outline: none;
+.grid--list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.grid--list .new-card {
+  flex-direction: row;
+  align-items: center;
+  min-height: auto;
+  padding: 16px 24px;
+}
+
+.grid--list .new-card__icon {
+  margin-bottom: 0;
+  margin-right: 16px;
+}
+
+.new-card {
+  background: rgba(59, 130, 246, 0.05);
+  border: 1px dashed rgba(59, 130, 246, 0.3);
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  min-height: 200px;
+}
+
+.new-card:hover {
+  background: rgba(59, 130, 246, 0.1);
+  border-style: solid;
+  border-color: var(--color-primary);
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-md);
+}
+
+.new-card__icon {
+  margin-bottom: 16px;
+}
+
+.plus-circle {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.new-card__text {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-primary);
 }
 
 .pagination {
@@ -244,7 +424,7 @@ function handleViewDetail(id: number) {
   justify-content: center;
   align-items: center;
   gap: 16px;
-  margin-top: 32px;
+  margin-top: 40px;
 }
 
 .pagination button {
@@ -254,6 +434,12 @@ function handleViewDetail(id: number) {
   background: var(--color-surface);
   color: var(--color-text);
   cursor: pointer;
+  transition: all 0.2s;
+}
+
+.pagination button:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .pagination button:disabled {

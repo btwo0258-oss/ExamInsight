@@ -25,7 +25,7 @@ elasticsearch:
 
 # 阿里云 DashScope 配置
 dashscope:
-  api-key: sk-67876496140f457c90d228efaa665e0f
+  api-key: sk-06833190552c4dd8af261537b591352b
   chat:
     model: qwen-plus-2025-07-28
     temperature: 0.7
