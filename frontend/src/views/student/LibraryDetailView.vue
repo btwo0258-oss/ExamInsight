@@ -163,7 +163,7 @@ p {
 }
 
 .back-btn {
-  height: 34px;
+  height: 28px;
   border: 0;
   background: transparent;
   color: #667085;
@@ -171,7 +171,13 @@ p {
   align-items: center;
   gap: 6px;
   cursor: pointer;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.back-btn .icon {
+  width: 14px;
+  height: 14px;
 }
 
 .hero-card {

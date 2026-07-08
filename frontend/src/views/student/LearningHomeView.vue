@@ -395,6 +395,7 @@ h2 {
   display: grid;
   grid-template-columns: 300px minmax(0, 1fr) 400px;
   gap: 16px;
+  align-items: start;
 }
 
 .panel {
@@ -549,13 +550,13 @@ h2 {
 }
 
 .resource-tile {
-  min-height: 142px;
+  min-height: 206px;
   border: 1px solid #dbe2ec;
   border-radius: 8px;
   padding: 20px;
-  display: grid;
-  align-content: start;
-  justify-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   text-align: center;
   gap: 8px;
   color: #344054;
@@ -567,12 +568,13 @@ h2 {
 }
 
 .resource-tile p {
+  flex: 1;
   color: #7b8494;
   line-height: 1.5;
 }
 
 .resource-tile span {
-  margin-top: 4px;
+  margin-top: auto;
   padding: 4px 10px;
   border-radius: 6px;
   background: #f2f4f7;

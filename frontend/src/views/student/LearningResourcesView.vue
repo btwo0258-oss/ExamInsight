@@ -94,7 +94,8 @@ p {
   align-items: center;
   gap: 6px;
   cursor: pointer;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 500;
 }
 
 h1 {

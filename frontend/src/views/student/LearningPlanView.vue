@@ -9,6 +9,11 @@ const route = useRoute()
 const router = useRouter()
 const plan = computed(() => learningPlans.find((item) => item.id === Number(route.params.id)) ?? learningPlans[0])
 const library = computed(() => courseLibraries.find((item) => item.id === plan.value.libraryId))
+const agentProgress = computed(() => {
+  if (plan.value.agents.length <= 1) return 100
+  const completed = plan.value.agents.filter((agent) => agent.status === 'done').length
+  return Math.max(0, ((completed - 1) / (plan.value.agents.length - 1)) * 100)
+})
 </script>
 
 <template>
@@ -36,8 +41,16 @@ const library = computed(() => courseLibraries.find((item) => item.id === plan.v
       </header>
 
       <section class="agent-strip">
-        <article v-for="agent in plan.agents" :key="agent.name">
-          <span :class="agent.status" />
+        <div class="agent-track">
+          <span class="agent-track-fill" :style="{ width: `${agentProgress}%` }" />
+        </div>
+        <article
+          v-for="(agent, index) in plan.agents"
+          :key="agent.name"
+          class="agent-step"
+          :class="`agent-step--${agent.status}`"
+        >
+          <span class="agent-dot">{{ index + 1 }}</span>
           <strong>{{ agent.name }}</strong>
           <p>{{ agent.desc }}</p>
         </article>
@@ -136,7 +149,7 @@ p {
 }
 
 .back-btn {
-  height: 34px;
+  height: 28px;
   border: 0;
   background: transparent;
   color: #667085;
@@ -144,7 +157,13 @@ p {
   align-items: center;
   gap: 6px;
   cursor: pointer;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.back-btn .icon {
+  width: 14px;
+  height: 14px;
 }
 
 .hero-body {
@@ -204,34 +223,65 @@ h1 {
 }
 
 .agent-strip {
+  position: relative;
   margin-top: 18px;
+  padding: 18px 16px 16px;
   border: 1px solid #dbe2ec;
   border-radius: 8px;
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0;
   background: #fffffc;
 }
 
-.agent-strip article {
-  padding: 16px;
-  border-right: 1px solid #e6ebf3;
-}
-
-.agent-strip article:last-child {
-  border-right: 0;
-}
-
-.agent-strip span {
-  width: 9px;
-  height: 9px;
+.agent-track {
+  position: absolute;
+  left: 44px;
+  right: 44px;
+  top: 34px;
+  height: 3px;
   border-radius: 999px;
+  background: #e6ebf3;
+  overflow: hidden;
+}
+
+.agent-track-fill {
   display: block;
-  background: #16a34a;
+  height: 100%;
+  border-radius: inherit;
+  background: #111827;
+}
+
+.agent-step {
+  position: relative;
+  z-index: 1;
+  padding: 0 12px;
+  text-align: center;
+}
+
+.agent-dot {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto;
+  border: 1px solid #d4dce8;
+  background: #fffffc;
+  color: #667085;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.agent-step--done .agent-dot {
+  background: #111827;
+  border-color: #111827;
+  color: #fff;
 }
 
 .agent-strip strong {
   display: block;
-  margin-top: 8px;
+  margin-top: 12px;
   color: #1f2937;
 }
 
@@ -410,6 +460,9 @@ h1 {
   border: 1px solid #dbe2ec;
   border-radius: 8px;
   padding: 16px;
+  min-height: 138px;
+  display: flex;
+  flex-direction: column;
 }
 
 .resource-grid h3 {
@@ -419,9 +472,15 @@ h1 {
 }
 
 .resource-grid p {
+  flex: 1;
   margin-top: 7px;
   color: #667085;
   line-height: 1.5;
+}
+
+.resource-grid article > span {
+  width: fit-content;
+  margin-top: auto;
 }
 
 @media (max-width: 1080px) {
