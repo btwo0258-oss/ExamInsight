@@ -44,8 +44,18 @@ async function createNewChat() {
   transition: all 0.2s ease;
 }
 
-:root[data-theme='dark'] .new-btn {
+.new-btn :deep(svg) {
   color: var(--color-surface);
+}
+
+:root[data-theme='dark'] .new-btn {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+
+:root[data-theme='dark'] .new-btn :deep(svg) {
+  color: var(--color-text);
 }
 
 .new-btn:hover {

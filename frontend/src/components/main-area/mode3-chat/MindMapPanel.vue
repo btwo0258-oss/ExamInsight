@@ -4,7 +4,15 @@
       <div v-if="visible" class="mindmap-panel-overlay" @click.self="$emit('close')">
         <div class="mindmap-panel">
           <div class="panel-header">
-            <h3 class="panel-title">🧠 {{ generatedData?.displayTitle || "知识图谱" }}</h3>
+            <div class="panel-title-left">
+              <!-- <button class="panel-sidebar-toggle" @click="$emit('toggle-sidebar')" title="切换侧边栏">
+                <AppIcon name="panel-left-open" :size="18" />
+              </button> -->
+              <h3 class="panel-title">
+                <AppIcon name="layers" :size="18" color="var(--color-primary)" />
+                <span>{{ generatedData?.displayTitle || "知识图谱" }}</span>
+              </h3>
+            </div>
             <div class="panel-actions">
               <button
                 class="panel-btn"
@@ -12,20 +20,19 @@
                 :disabled="!generatedData"
                 title="保存到知识库"
               >
-                <AppIcon name="book" :size="16" />
+                <AppIcon name="folder" :size="16" />
                 <span>保存到知识库</span>
               </button>
               <button
-                class="panel-btn"
+                class="panel-btn-text"
                 @click="openInEditor"
                 :disabled="!generatedData"
                 title="在编辑器中打开"
               >
-                <AppIcon name="external-link" :size="16" />
                 <span>编辑</span>
               </button>
-              <button class="panel-close" @click="$emit('close')">
-                <AppIcon name="x" :size="18" />
+              <button class="panel-close" @click="$emit('close')" title="关闭">
+                ×
               </button>
             </div>
           </div>
@@ -41,7 +48,7 @@
 
             <div v-else class="empty-state">
               <AppIcon name="layers" :size="48" color="var(--color-text-muted)" />
-              <p>点击AI回答下方的 🧠 按钮生成知识图谱</p>
+              <p>点击AI回答下方的按钮生成知识图谱</p>
             </div>
           </div>
         </div>
@@ -73,6 +80,26 @@
       </div>
     </div>
   </AppModal>
+
+  <ConfirmDialog
+    :open="showSuccessDialog"
+    title="保存成功"
+    message="已保存到知识库！"
+    confirm-text="确定"
+    confirm-variant="primary"
+    @close="showSuccessDialog = false"
+    @confirm="showSuccessDialog = false"
+  />
+
+  <ConfirmDialog
+    :open="showErrorDialog"
+    title="保存失败"
+    :message="errorMessage"
+    confirm-text="确定"
+    confirm-variant="primary"
+    @close="showErrorDialog = false"
+    @confirm="showErrorDialog = false"
+  />
 </template>
 
 <script setup lang="ts">
@@ -81,6 +108,7 @@ import { useRouter } from "vue-router";
 import AppIcon from "@/components/common/AppIcon.vue";
 import AppButton from "@/components/common/AppButton.vue";
 import AppModal from "@/components/common/AppModal.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import { generateMindMapFromAi, updateMindMap } from "@/api/mindmap";
 import { getKnowledgeBases, type KnowledgeBase } from "@/api/knowledgeBase";
 import MindMap from "simple-mind-map";
@@ -98,6 +126,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: [];
   saved: [mindMapId: number];
+  "toggle-sidebar": [];
 }>();
 
 const router = useRouter();
@@ -109,6 +138,9 @@ let mindMapInstance: any = null;
 const showKbModal = ref(false);
 const knowledgeBases = ref<KnowledgeBase[]>([]);
 const selectedKbId = ref<number | null>(null);
+const showSuccessDialog = ref(false);
+const showErrorDialog = ref(false);
+const errorMessage = ref("");
 
 function closePanel() {
   emit("close");
@@ -216,11 +248,12 @@ async function confirmSaveToKb() {
       kbId: selectedKbId.value,
     });
     showKbModal.value = false;
-    alert("已保存到知识库！");
+    showSuccessDialog.value = true;
   } catch (error: any) {
     console.error("Failed to save to knowledge base:", error);
-    const msg = error?.response?.data?.message || error?.message || "保存到知识库失败";
-    alert(msg);
+    showKbModal.value = false;
+    errorMessage.value = error?.response?.data?.message || error?.message || "保存到知识库失败";
+    showErrorDialog.value = true;
   }
 }
 
@@ -245,7 +278,7 @@ onUnmounted(() => {
   right: 0;
   bottom: 0;
   left: 0;
-  z-index: 100;
+  z-index: 9999;
   display: flex;
   justify-content: flex-end;
   background: rgba(0, 0, 0, 0.3);
@@ -275,11 +308,40 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
+.panel-title-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panel-sidebar-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.panel-sidebar-toggle:hover {
+  background: var(--color-bg-alt);
+  color: var(--color-text);
+}
+
 .panel-title {
   font-size: 16px;
   font-weight: 600;
   color: var(--color-text);
   margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .panel-actions {
@@ -313,6 +375,28 @@ onUnmounted(() => {
   cursor: not-allowed;
 }
 
+.panel-btn-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.panel-btn-text:hover:not(:disabled) {
+  color: var(--color-primary);
+}
+
+.panel-btn-text:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .panel-close {
   display: flex;
   align-items: center;
@@ -325,6 +409,9 @@ onUnmounted(() => {
   cursor: pointer;
   border-radius: 6px;
   transition: all 0.2s;
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1;
 }
 
 .panel-close:hover {

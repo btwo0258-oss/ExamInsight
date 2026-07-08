@@ -48,7 +48,7 @@ function handleViewList() {
         <span class="section__title">知识库</span>
       </div>
       <div class="header-right">
-        <span class="section__count">{{ knowledgeBaseStore.list.length }}</span>
+        <span v-if="authStore.isAuthed" class="section__count">{{ knowledgeBaseStore.list.length }}</span>
         <button class="collapse-btn" @click.stop="toggleCollapse">
           <AppIcon :name="isCollapsed ? 'chevron-right' : 'chevron-down'" :size="14" />
         </button>
@@ -56,12 +56,12 @@ function handleViewList() {
     </div>
 
     <template v-if="!isCollapsed">
-      <!-- <div class="section__create">
+      <div class="section__create">
         <button class="create-button" @click="handleCreate">
           <AppIcon name="plus" :size="16" />
           <span class="create-text">新建知识库</span>
         </button>
-      </div> -->
+      </div>
 
       <div class="section__list">
         <KnowledgeBaseItem

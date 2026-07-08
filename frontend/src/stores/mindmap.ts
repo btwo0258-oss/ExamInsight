@@ -33,6 +33,7 @@ export const useMindMapStore = defineStore('mindmap', () => {
       return list
     } catch (error) {
       console.error('Failed to fetch mindmap list:', error)
+      mindMapList.value = []
       return []
     }
   }
@@ -99,6 +100,18 @@ export const useMindMapStore = defineStore('mindmap', () => {
     currentMapId.value = null
   }
 
+  function clearAll() {
+    mindMapList.value = []
+    currentMapId.value = null
+    mapTitle.value = '未命名思维导图'
+    treeData.value = {
+      data: { text: '中心主题' },
+      children: []
+    }
+    pinnedIds.value = []
+    localStorage.removeItem('llm.mindmap.pinned')
+  }
+
   return {
     mindMapList,
     currentMapId,
@@ -114,6 +127,7 @@ export const useMindMapStore = defineStore('mindmap', () => {
     deleteMap,
     renameMap,
     moveToKB,
-    initEmptyMap
+    initEmptyMap,
+    clearAll
   }
 })

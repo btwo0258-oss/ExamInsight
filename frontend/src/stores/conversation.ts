@@ -17,7 +17,7 @@ export const useConversationStore = defineStore("conversation", () => {
       try {
         const user = JSON.parse(userStr);
         if (user && user.id) return String(user.id);
-      } catch {}
+      } catch { }
     }
     return "guest";
   }
@@ -53,6 +53,8 @@ export const useConversationStore = defineStore("conversation", () => {
       } catch {
         list.value = [];
       }
+    } else {
+      list.value = [];
     }
     isInitialized.value = true;
   }
@@ -89,6 +91,8 @@ export const useConversationStore = defineStore("conversation", () => {
     } catch (err) {
       errorMessage.value = err instanceof Error ? err.message : "获取会话列表失败";
       // 如果未登录或其他错误，保持列表为空
+      list.value = [];
+      saveToStorage();
       console.error("获取会话列表失败:", err);
     } finally {
       isLoading.value = false;
@@ -120,7 +124,7 @@ export const useConversationStore = defineStore("conversation", () => {
   async function rename(id: number, nextTitle: string) {
     try {
       await conversationApi.updateConversation(id, { title: nextTitle });
-    } catch {}
+    } catch { }
     const existing = list.value.find((x) => x.id === id);
     if (!existing) return;
     upsertLocal({ ...existing, title: nextTitle, updateTime: nowMs() });
@@ -141,7 +145,7 @@ export const useConversationStore = defineStore("conversation", () => {
   async function remove(id: number) {
     try {
       await conversationApi.deleteConversation(id);
-    } catch {}
+    } catch { }
     removeLocal(id);
     if (currentId.value === id) {
       await router.push("/chat");
@@ -154,7 +158,7 @@ export const useConversationStore = defineStore("conversation", () => {
     const isPinned = !existing.isPinned;
     try {
       await conversationApi.updateConversation(id, { isPinned });
-    } catch {}
+    } catch { }
     existing.isPinned = isPinned;
   }
 

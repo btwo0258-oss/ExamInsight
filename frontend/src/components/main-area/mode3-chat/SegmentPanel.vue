@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { computed, ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useMessageStore } from '@/stores/message'
 import type { ChatMessage } from '@/stores/message'
 
@@ -111,13 +111,15 @@ const updateActiveIndex = throttle(() => {
     const el = document.getElementById(`msg-${segment.id}`)
     if (el) {
       const rect = el.getBoundingClientRect()
-      const diff = Math.abs(rect.top - containerCenter)
+      const elementCenter = rect.top + rect.height / 2
+      const diff = Math.abs(elementCenter - containerCenter)
       if (diff < minDiff) {
         minDiff = diff
         closestIndex = i
       }
     }
   })
+  
   activeIndex.value = closestIndex
 }, 100)
 
@@ -132,6 +134,30 @@ onMounted(() => {
     }
   })
 })
+
+watch(
+  () => segments.value.length,
+  (newLen, oldLen) => {
+    if (newLen > oldLen && oldLen > 0) {
+      nextTick(() => {
+        const lastSegment = segments.value[segments.value.length - 1]
+        if (lastSegment) {
+          scrollTo(lastSegment.id, lastSegment.index)
+          activeIndex.value = lastSegment.index
+        }
+      })
+    }
+  }
+)
+
+watch(
+  () => segments.value.map(s => s.id).join(','),
+  () => {
+    nextTick(() => {
+      updateActiveIndex()
+    })
+  }
+)
 
 onUnmounted(() => {
   if (clickTimer) clearTimeout(clickTimer)
@@ -285,14 +311,14 @@ onUnmounted(() => {
 
 .dash-line {
   width: 12px;
-  height: 2px;
-  background: #e0e0e0;
-  border-radius: 1px;
+  height: 3px;
+  background: #c0c0c0;
+  border-radius: 2px;
   transition: all 0.2s;
 }
 
-:root[data-theme='dark'] .dash-line { background: #555; }
-.is-active .dash-line { background: #1a1a1a !important; width: 18px; height: 3px; }
+:root[data-theme='dark'] .dash-line { background: #666; }
+.is-active .dash-line { background: #1a1a1a !important; width: 20px; height: 4px; }
 :root[data-theme='dark'] .is-active .dash-line { background: #ffffff !important; }
 
 .outline-scroll-viewport::-webkit-scrollbar { width: 0px; }

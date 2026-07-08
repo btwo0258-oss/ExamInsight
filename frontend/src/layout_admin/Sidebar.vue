@@ -19,8 +19,8 @@ const activeRoute = computed(() => route.name)
   <aside class="sidebar">
     <div class="sidebar-header">
       <div class="brand">
-        <AppIcon name="bar-chart" :size="24" />
-        <span class="brand-text">Aether Admin</span>
+        <img src="@/assets/icons/ExamInsight-Logo-White.png" alt="ExamInsight" class="brand-logo" />
+        <span class="brand-text">ExamInsight Admin</span>
       </div>
     </div>
     
@@ -67,6 +67,12 @@ const activeRoute = computed(() => route.name)
   align-items: center;
   gap: 12px;
   color: var(--color-text);
+}
+
+.brand-logo {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
 }
 
 .brand-text {

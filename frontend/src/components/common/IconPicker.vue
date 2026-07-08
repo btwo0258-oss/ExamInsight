@@ -2,13 +2,7 @@
 import AppIcon from './AppIcon.vue'
 
 const icons = [
-  'book', 'folder', 'dollar', 'graduation', 'pen-tool', 'popcorn', 'palette', 
-  'stethoscope', 'flower', 'lotus', 'briefcase', 'bar-chart', 'dumbbell', 
-  'notebook', 'scale', 'airplane', 'wrench', 'paw', 'flask', 'brain', 
-  'heart', 'plant', 'clock', 'home', 'settings', 'bell', 'mail', 
-  'calendar', 'camera', 'video', 'image', 'star', 'shield', 'help-circle', 
-  'info', 'alert-circle', 'cpu', 'database', 'cloud', 
-  'globe', 'layers', 'layout', 'users', 'pie-chart', 'message-square'
+  'book', 'folder', 'dollar', 'graduation', 'pen-tool', 'briefcase', 'notebook', 'airplane', 'flask', 'heart', 'plant', 'clock', 'home', 'settings', 'bell', 'mail', 'calendar', 'camera', 'video', 'image', 'star', 'shield', 'database', 'cloud', 'globe', 'layers', 'layout', 'users', 'pie-chart', 'message-square'
 ]
 
 type Props = { modelValue: string }

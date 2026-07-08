@@ -1,29 +1,33 @@
 <script setup lang="ts">
-import { useRouter } from 'vue-router'
-import AppIcon from '@/components/common/AppIcon.vue'
-import { useConversationStore } from '@/stores/conversation'
-import { useAuthStore } from '@/stores/auth'
-import logoUrl from '@/assets/icons/Aether Logo SVG.jpg'
+import { computed } from "vue";
+import { useRouter } from "vue-router";
+import AppIcon from "@/components/common/AppIcon.vue";
+import { useConversationStore } from "@/stores/conversation";
+import { useAuthStore } from "@/stores/auth";
+import { useThemeStore } from "@/stores/theme";
+import logoUrl from "@/assets/icons/ExamInsight-Logo.png";
+import logoWhiteUrl from "@/assets/icons/ExamInsight-Logo-White.png";
 
-const router = useRouter()
-const conversationStore = useConversationStore()
-const authStore = useAuthStore()
+const router = useRouter();
+const conversationStore = useConversationStore();
+const authStore = useAuthStore();
+const themeStore = useThemeStore();
+
+const currentLogo = computed(() => logoWhiteUrl);
 
 async function handleNewChat() {
-  if (!authStore.isAuthed) return authStore.openAuthModal()
-  await conversationStore.create()
+  if (!authStore.isAuthed) return authStore.openAuthModal();
+  await conversationStore.create();
 }
 
 async function goToChat() {
-  if (!authStore.isAuthed) return authStore.openAuthModal()
-  // 创建新对话并切换到 mode3
-  await conversationStore.create()
+  if (!authStore.isAuthed) return authStore.openAuthModal();
+  await conversationStore.create();
 }
 
 function goToKnowledge() {
-  if (!authStore.isAuthed) return authStore.openAuthModal()
-  // 切换到 mode2（知识库页面）
-  router.push('/knowledge')
+  if (!authStore.isAuthed) return authStore.openAuthModal();
+  router.push("/knowledge");
 }
 </script>
 
@@ -31,12 +35,12 @@ function goToKnowledge() {
   <div class="welcome">
     <div class="welcome__content">
       <div class="welcome__logo">
-        <img :src="logoUrl" alt="Aether Logo" class="welcome-logo-img" />
+        <img :src="currentLogo" alt="ExamInsight Logo" class="welcome-logo-img" />
       </div>
-      
+
       <h1 class="welcome__title">欢迎使用智能助手</h1>
       <p class="welcome__subtitle">我可以帮您解答问题、提供信息和协助完成各种任务</p>
-      
+
       <div class="welcome__features">
         <div class="feature-item" @click="goToChat">
           <div class="feature-icon">
@@ -56,10 +60,7 @@ function goToKnowledge() {
             <p>基于您的知识库提供精准回答</p>
           </div>
         </div>
-       
       </div>
-      
-      
     </div>
   </div>
 </template>
@@ -79,22 +80,24 @@ function goToKnowledge() {
 }
 
 .welcome__logo {
-  margin-bottom: 24px;
+  margin-bottom: 12px;
   display: flex;
   justify-content: center;
 }
 
 .welcome-logo-img {
-  width: 64px;
-  height: 64px;
+  width: 120px;
+  height: 120px;
   object-fit: contain;
   border-radius: 12px;
+  transition: opacity 0.2s ease;
+  flex-shrink: 0;
 }
 
 .welcome__title {
   font-size: 32px;
   font-weight: 700;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   color: var(--color-text);
 }
 

@@ -24,7 +24,7 @@ withDefaults(defineProps<Props>(), {
     :type="type"
   >
     <div v-if="loading" class="loading-icon">
-      <AppIcon name="refresh" class="spin" :size="16" />
+      <AppIcon name="refresh-cw" class="spin" :size="16" />
     </div>
     <div class="content" :class="{ 'content--hidden': loading }">
       <slot name="icon" />

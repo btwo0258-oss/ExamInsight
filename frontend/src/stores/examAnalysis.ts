@@ -113,6 +113,12 @@ export const useExamAnalysisStore = defineStore("examAnalysis", () => {
     }
   }
 
+  function clearAll() {
+    list.value = [];
+    loading.value = false;
+    currentAnalysis.value = null;
+  }
+
   return {
     list,
     loading,
@@ -124,5 +130,6 @@ export const useExamAnalysisStore = defineStore("examAnalysis", () => {
     fetchDetail,
     analyze,
     generateSugg,
+    clearAll,
   };
 });

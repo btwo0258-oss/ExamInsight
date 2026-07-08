@@ -246,7 +246,7 @@ async function confirmMove() {
                       showSortMenu = false;
                     "
                   >
-                    <AppIcon name="type" :size="16" />
+                    <AppIcon name="user" :size="16" />
                     <span class="dropdown-text">按名称排序</span>
                     <AppIcon
                       v-if="sortMode === 'name'"
@@ -275,7 +275,7 @@ async function confirmMove() {
           <div class="new-card" @click="handleCreate">
             <div class="new-card__icon">
               <div class="plus-circle">
-                <AppIcon name="plus" :size="24" color="#fff" />
+                <AppIcon name="plus" :size="24" class="plus-icon" />
               </div>
             </div>
             <span class="new-card__text">新建</span>
@@ -329,7 +329,7 @@ async function confirmMove() {
                       activeMenuId = null;
                     "
                   >
-                    <AppIcon name="move" :size="16" />
+                    <AppIcon name="folder" :size="16" />
                     <span>移动到知识库</span>
                   </div>
                   <div
@@ -705,7 +705,7 @@ async function confirmMove() {
   justify-content: center;
   cursor: pointer;
   transition: all 0.2s;
-  min-height: 200px;
+  min-height: 160px;
 }
 
 .new-card:hover {
@@ -729,6 +729,14 @@ async function confirmMove() {
   align-items: center;
   justify-content: center;
   box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.plus-icon {
+  color: #fff;
+}
+
+:root[data-theme="dark"] .plus-icon {
+  color: #000;
 }
 
 .new-card__text {
@@ -896,9 +904,9 @@ async function confirmMove() {
 }
 
 .new-card {
-  background: rgba(59, 130, 246, 0.03);
-  border: 1px dashed var(--color-border);
-  border-radius: 12px;
+  background: rgba(59, 130, 246, 0.05);
+  border: 1px dashed rgba(59, 130, 246, 0.3);
+  border-radius: 16px;
   display: flex;
   align-items: center;
   padding: 16px 20px;
@@ -911,6 +919,7 @@ async function confirmMove() {
   flex-direction: column;
   justify-content: center;
   min-height: 160px;
+  padding: 24px;
 }
 
 .new-card:hover {
@@ -920,17 +929,18 @@ async function confirmMove() {
 }
 
 .plus-circle {
-  width: 36px;
-  height: 36px;
+  width: 56px;
+  height: 56px;
   border-radius: 50%;
   background: var(--color-primary);
   display: flex;
   align-items: center;
   justify-content: center;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
 }
 
 .new-card__text {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--color-primary);
 }

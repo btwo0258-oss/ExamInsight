@@ -58,7 +58,7 @@ async function handleCreate() {
     authStore.openAuthModal()
     return
   }
-  openPrompt('新建思维导图', '未命名思维导图', async (title) => {
+  openPrompt('新建思维导图', '', async (title) => {
     if (title) {
       const id = await mindMapStore.createMap(title)
       router.push(`/mindmap/${id}`)
@@ -129,7 +129,7 @@ function getMenuItems(id: number, title: string): MenuItem[] {
   }))
   
   return [
-    { label: mindMapStore.isPinned(id) ? '取消置顶' : '置顶', action: () => mindMapStore.togglePin(id) },
+    // { label: mindMapStore.isPinned(id) ? '取消置顶' : '置顶', action: () => mindMapStore.togglePin(id) },
     { label: '重命名', action: () => handleRename(id, title) },
     {
       label: '移至知识库',
@@ -151,7 +151,7 @@ function getMenuItems(id: number, title: string): MenuItem[] {
         <span class="section__title">思维导图</span>
       </div>
       <div class="header-right">
-        <span class="section__count">{{ mindMapStore.mindMapList.length }}</span>
+        <span v-if="authStore.isAuthed" class="section__count">{{ mindMapStore.mindMapList.length }}</span>
         <button class="collapse-btn" @click.stop="toggleCollapse">
           <AppIcon :name="isCollapsed ? 'chevron-right' : 'chevron-down'" :size="14" />
         </button>
@@ -159,12 +159,12 @@ function getMenuItems(id: number, title: string): MenuItem[] {
     </div>
 
     <template v-if="!isCollapsed">
-      <!-- <div class="section__create">
+      <div class="section__create">
         <button class="create-button" @click="handleCreate">
           <AppIcon name="plus" :size="16" />
           <span class="create-text">新建思维导图</span>
         </button>
-      </div> -->
+      </div>
 
       <div class="section__list">
         <div
@@ -181,9 +181,9 @@ function getMenuItems(id: number, title: string): MenuItem[] {
           </div>
           <span class="item__title">{{ map.title }}</span>
           
-          <div v-show="mindMapStore.isPinned(map.id) && hoveredId !== map.id && menuOpenId !== map.id" class="item__pin">
+          <!-- <div v-show="mindMapStore.isPinned(map.id) && hoveredId !== map.id && menuOpenId !== map.id" class="item__pin">
             <AppIcon name="star" :size="12" />
-          </div>
+          </div> -->
 
           <button 
             v-show="hoveredId === map.id || menuOpenId === map.id" 
@@ -306,7 +306,7 @@ function getMenuItems(id: number, title: string): MenuItem[] {
 
 .create-text {
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--color-text);
 }
 

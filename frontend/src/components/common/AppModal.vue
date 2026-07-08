@@ -53,7 +53,7 @@ function onBackdrop() {
   padding: 24px;
   background: rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(4px);
-  z-index: 50;
+  z-index: 10000;
 }
 
 .modal__card {

@@ -25,6 +25,7 @@ const mindMapStore = useMindMapStore()
 const showActions = ref(false)
 const showEditDialog = ref(false)
 const showDeleteConfirm = ref(false)
+const showTooltip = ref(false)
 
 const conversationCount = computed(() => {
   return conversationStore.list.filter(conv => conv.knowledgeBaseId === props.knowledgeBase.id).length
@@ -76,17 +77,11 @@ function formatDate(dateString: string): string {
   const date = new Date(dateString)
   if (isNaN(date.getTime())) return '无效日期'
   
-  const now = new Date()
-  const diff = now.getTime() - date.getTime()
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24))
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
   
-  if (days < 0) return '刚刚' // 未来时间处理
-  if (days === 0) return '今天'
-  if (days === 1) return '昨天'
-  if (days < 7) return `${days}天前`
-  if (days < 30) return `${Math.floor(days / 7)}周前`
-  if (days < 365) return `${Math.floor(days / 30)}月前`
-  return `${Math.floor(days / 365)}年前`
+  return `创建时间 ${year}-${month}-${day}`
 }
 </script>
 
@@ -97,22 +92,27 @@ function formatDate(dateString: string): string {
         class="kb-card__icon"
         :style="{ backgroundColor: knowledgeBase.color + '15', color: knowledgeBase.color }"
       >
-        <AppIcon :name="knowledgeBase.icon || 'folder'" :size="20" />
+        <AppIcon :name="knowledgeBase.examAnalysisId ? 'pie-chart' : (knowledgeBase.icon || 'folder')" :size="20" />
       </div>
       <div class="kb-card__main">
-        <h3 class="kb-card__title">{{ knowledgeBase.name }}</h3>
-        <p class="kb-card__description">{{ knowledgeBase.description || '暂无描述' }}</p>
+        <div class="tooltip-container" @mouseenter="showTooltip = true" @mouseleave="showTooltip = false">
+          <h3 class="kb-card__title">{{ knowledgeBase.name }}</h3>
+          <div v-if="showTooltip && knowledgeBase.name.length > 20" class="custom-tooltip">
+            {{ knowledgeBase.name }}
+          </div>
+        </div>
+        <p class="kb-card__description" :title="knowledgeBase.description || '暂无描述'">{{ knowledgeBase.description || '暂无描述' }}</p>
       </div>
       
       <div class="kb-card__footer">
         <div class="kb-card__stats">
           <div class="kb-card__stat">
-            <AppIcon name="file-text" :size="14" />
-            <span>{{ knowledgeBase.documentCount || 0 }}</span>
-          </div>
-          <div class="kb-card__stat">
             <AppIcon name="message-square" :size="14" />
             <span>{{ conversationCount }}</span>
+          </div>
+          <div class="kb-card__stat">
+            <AppIcon name="folder" :size="14" />
+            <span>{{ knowledgeBase.documentCount || 0 }}</span>
           </div>
           <div class="kb-card__stat">
             <AppIcon name="layers" :size="14" />
@@ -120,7 +120,6 @@ function formatDate(dateString: string): string {
           </div>
         </div>
         <div class="kb-card__time">
-          <AppIcon name="clock" :size="14" />
           <span>{{ formatDate(knowledgeBase.updateTime) }}</span>
         </div>
       </div>
@@ -205,6 +204,8 @@ function formatDate(dateString: string): string {
 .kb-card__main {
   flex: 1;
   min-width: 0;
+  width: 100%;
+  overflow: hidden;
 }
 
 .kb-card__title {
@@ -325,23 +326,30 @@ function formatDate(dateString: string): string {
 
 /* Grid layout overrides */
 .kb-card--grid {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 120px;
+  box-sizing: border-box;
 }
 
 .kb-card--grid .kb-card__header {
   flex-direction: column;
   align-items: flex-start;
-  min-height: 180px;
-  padding: 24px;
+  flex: 1;
+  padding: 16px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .kb-card--grid .kb-card__footer {
-  margin-top: auto;
+  margin-top: 16px;
   margin-right: 0;
-  padding-top: 16px;
+  margin-bottom: 8px;
   flex-direction: column;
   align-items: flex-start;
   gap: 8px;
+  width: 100%;
 }
 
 .kb-card--grid .kb-card__stats {
@@ -354,7 +362,7 @@ function formatDate(dateString: string): string {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--color-text-muted);
 }
 
@@ -364,10 +372,72 @@ function formatDate(dateString: string): string {
   right: 16px;
 }
 
+.kb-card--grid .kb-card__main {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.kb-card--grid .kb-card__title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  display: block;
+  margin: 0;
+}
+
 .kb-card--grid .kb-card__description {
-  white-space: normal;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+}
+
+.tooltip-container {
+  position: relative;
+  display: block;
+  width: 100%;
+  overflow: hidden;
+}
+
+.custom-tooltip {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+  z-index: 1000;
+  margin-bottom: 8px;
+  opacity: 0;
+  animation: tooltipFadeIn 0.1s ease-out forwards;
+  pointer-events: none;
+}
+
+.custom-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 4px solid transparent;
+  border-top-color: rgba(0, 0, 0, 0.8);
+}
+
+@keyframes tooltipFadeIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
 }
 </style>

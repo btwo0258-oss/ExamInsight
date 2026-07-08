@@ -49,8 +49,8 @@ async function handleLogin() {
     <div class="login-card">
       <div class="login-header">
         <div class="brand">
-          <AppIcon name="bar-chart" :size="32" />
-          <h1 class="brand-text">Aether Admin</h1>
+          <img src="@/assets/icons/ExamInsight-Logo.png" alt="ExamInsight" class="brand-logo" />
+          <h1 class="brand-text">ExamInsight Admin</h1>
         </div>
         <p class="subtitle">管理后台登录</p>
       </div>
@@ -136,7 +136,14 @@ async function handleLogin() {
   align-items: center;
   justify-content: center;
   gap: 12px;
-  margin-bottom: 8px;
+  margin-bottom: 0;
+}
+
+.brand-logo {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  border-radius: 4px;
 }
 
 .brand-text {

@@ -86,7 +86,7 @@
                       showSortMenu = false;
                     "
                   >
-                    <AppIcon name="file-text" :size="16" />
+                    <AppIcon name="user" :size="16" />
                     <span class="dropdown-text">按名称排序</span>
                     <AppIcon
                       v-if="sortMode === 'name'"
@@ -109,7 +109,7 @@
           <div class="new-card" @click="handleCreate">
             <div class="new-card__icon">
               <div class="plus-circle">
-                <AppIcon name="plus" :size="24" color="#fff" />
+                <AppIcon name="plus" :size="24" class="plus-icon" />
               </div>
             </div>
             <span class="new-card__text">新建分析</span>
@@ -126,12 +126,16 @@
               <AppIcon name="pie-chart" :size="20" color="var(--color-text)" />
             </div>
             <div class="item-main">
-              <div class="item-title">{{ item.title }}</div>
+              <div class="item-title" :title="item.title">{{ item.title }}</div>
               <div class="item-desc">试卷深度分析与考点提取</div>
             </div>
             <div class="item-meta">
               <span>考试类型：{{ item.type }}</span>
-              <span>创建时间：{{ item.date }}</span>
+              <span
+                >创建时间：{{ new Date(item.date).getFullYear() }}-{{
+                  String(new Date(item.date).getMonth() + 1).padStart(2, "0")
+                }}-{{ String(new Date(item.date).getDate()).padStart(2, "0") }}</span
+              >
             </div>
             <div class="item-actions">
               <div class="actions-wrapper">
@@ -187,6 +191,26 @@
       </button>
     </div>
   </div>
+
+  <PromptModal
+    :open="showRenamePrompt"
+    title="重命名分析记录"
+    :default-value="renamingTitle"
+    label="名称"
+    placeholder="请输入分析记录名称"
+    @close="showRenamePrompt = false"
+    @confirm="handleRenameConfirm"
+  />
+
+  <ConfirmDialog
+    :open="showDeleteConfirm"
+    title="确认删除"
+    :message="`确定要删除分析记录'${deletingTitle}'吗？`"
+    confirm-text="删除"
+    confirm-variant="danger"
+    @close="showDeleteConfirm = false"
+    @confirm="confirmDelete"
+  />
 </template>
 
 <script setup lang="ts">
@@ -195,6 +219,8 @@ import { useRouter } from "vue-router";
 import TheSidebar from "@/components/sidebar/TheSidebar.vue";
 import AppIcon from "@/components/common/AppIcon.vue";
 import AppButton from "@/components/common/AppButton.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
+import PromptModal from "@/components/common/PromptModal.vue";
 import { useAppState } from "@/stores/appState";
 import { useExamAnalysisStore } from "@/stores/examAnalysis";
 
@@ -215,6 +241,14 @@ const viewMode = ref<"grid" | "list">(
 const sortMode = ref<"time" | "name">(
   (localStorage.getItem("llm.examAnalysis.sortMode") as any) || "time",
 );
+
+const showDeleteConfirm = ref(false);
+const deletingId = ref<number | null>(null);
+const deletingTitle = ref("");
+
+const showRenamePrompt = ref(false);
+const renamingId = ref<number | null>(null);
+const renamingTitle = ref("");
 
 watch(viewMode, (val) => localStorage.setItem("llm.examAnalysis.viewMode", val));
 watch(sortMode, (val) => localStorage.setItem("llm.examAnalysis.sortMode", val));
@@ -257,15 +291,31 @@ watch(sidebarOpen, (open) => {
 });
 
 function handleEdit(item: any) {
-  const newTitle = prompt("重命名分析记录", item.title);
-  if (newTitle && newTitle.trim()) {
-    examStore.rename(item.id, newTitle.trim());
+  renamingId.value = item.id;
+  renamingTitle.value = item.title;
+  showRenamePrompt.value = true;
+}
+
+function handleRenameConfirm(value: string) {
+  if (value && value.trim() && renamingId.value !== null) {
+    examStore.rename(renamingId.value, value.trim());
   }
+  showRenamePrompt.value = false;
+  renamingId.value = null;
 }
 
 function handleDelete(id: number) {
-  if (confirm("确定要删除这条试卷分析记录吗？")) {
-    examStore.remove(id);
+  const item = examStore.list.find((i) => i.id === id);
+  deletingId.value = id;
+  deletingTitle.value = item?.title || "";
+  showDeleteConfirm.value = true;
+}
+
+function confirmDelete() {
+  if (deletingId.value !== null) {
+    examStore.remove(deletingId.value);
+    showDeleteConfirm.value = false;
+    deletingId.value = null;
   }
 }
 </script>
@@ -473,8 +523,8 @@ function handleDelete(id: number) {
 
 .list--grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 24px;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 20px;
 }
 
 .list--list {
@@ -523,7 +573,7 @@ function handleDelete(id: number) {
   justify-content: center;
   cursor: pointer;
   transition: all 0.2s;
-  min-height: 200px;
+  min-height: 160px;
 }
 
 .new-card:hover {
@@ -549,6 +599,14 @@ function handleDelete(id: number) {
   box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
 }
 
+.plus-icon {
+  color: #fff;
+}
+
+:root[data-theme="dark"] .plus-icon {
+  color: #000;
+}
+
 .new-card__text {
   font-size: 16px;
   font-weight: 600;
@@ -566,7 +624,8 @@ function handleDelete(id: number) {
   transition: all 0.2s ease;
   position: relative;
   gap: 16px;
-  overflow: visible;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 .list-item--active {
@@ -605,6 +664,7 @@ function handleDelete(id: number) {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .item-desc {
@@ -679,17 +739,20 @@ function handleDelete(id: number) {
   background: rgba(239, 68, 68, 0.05);
 }
 
-.list--grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 20px;
-}
-
 .list--grid .list-item {
   flex-direction: column;
   align-items: flex-start;
   min-height: 160px;
   padding: 24px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.list--grid .item-main {
+  width: 100%;
+  min-width: 0;
 }
 
 .list--grid .item-meta {
@@ -713,15 +776,16 @@ function handleDelete(id: number) {
 }
 
 .new-card {
-  background: rgba(59, 130, 246, 0.03);
-  border: 1px dashed var(--color-border);
-  border-radius: 12px;
+  background: rgba(59, 130, 246, 0.05);
+  border: 1px dashed rgba(59, 130, 246, 0.3);
+  border-radius: 16px;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  padding: 16px 20px;
+  justify-content: center;
   cursor: pointer;
   transition: all 0.2s;
-  gap: 16px;
+  min-height: 160px;
 }
 
 .list--grid .new-card {
@@ -737,17 +801,18 @@ function handleDelete(id: number) {
 }
 
 .plus-circle {
-  width: 36px;
-  height: 36px;
+  width: 56px;
+  height: 56px;
   border-radius: 50%;
   background: var(--color-primary);
   display: flex;
   align-items: center;
   justify-content: center;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
 }
 
 .new-card__text {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--color-primary);
 }

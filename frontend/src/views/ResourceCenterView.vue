@@ -52,7 +52,7 @@
                     @click="handleAddToKb(paper)"
                     :title="isAdded(paper.id) ? '移动到知识库' : '添加到知识库'"
                   >
-                    <AppIcon :name="isAdded(paper.id) ? 'move' : 'plus'" :size="16" />
+                    <AppIcon :name="isAdded(paper.id) ? 'folder' : 'plus'" :size="16" />
                     <span>{{ isAdded(paper.id) ? "移动到知识库" : "加入知识库" }}</span>
                   </button>
                   <button class="action-btn download-btn" @click="handleDownload(paper)">
@@ -103,6 +103,14 @@
         </div>
       </div>
     </AppModal>
+
+    <ConfirmDialog
+      :open="showConfirmDialog"
+      :title="confirmDialogTitle"
+      :message="confirmDialogMessage"
+      @close="showConfirmDialog = false"
+    />
+
   </div>
 </template>
 
@@ -112,6 +120,7 @@ import TheSidebar from "@/components/sidebar/TheSidebar.vue";
 import AppIcon from "@/components/common/AppIcon.vue";
 import AppButton from "@/components/common/AppButton.vue";
 import AppModal from "@/components/common/AppModal.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import { useAppState } from "@/stores/appState";
 import { useAuthStore } from "@/stores/auth";
 import {
@@ -137,7 +146,7 @@ const categories = [
   { key: "计算机二级", label: "计算机二级" },
   { key: "普通话等级考试", label: "普通话等级考试" },
 ];
-const activeCategory = ref("计算机二级");
+const activeCategory = ref("英语四六级");
 
 const loading = ref(false);
 const resourceList = ref<ResourceItem[]>([]);
@@ -147,6 +156,10 @@ const knowledgeBases = ref<KnowledgeBase[]>([]);
 const showKbModal = ref(false);
 const selectedResource = ref<ResourceItem | null>(null);
 const selectedKbId = ref<number | null>(null);
+
+const showConfirmDialog = ref(false);
+const confirmDialogTitle = ref("");
+const confirmDialogMessage = ref("");
 
 const availableYears = computed(() => {
   const years = new Set(resourceList.value.map((r) => r.year));
@@ -170,12 +183,12 @@ function formatFileSize(bytes: number) {
 function getFileIcon(fileType: string): string {
   switch (fileType?.toLowerCase()) {
     case "pdf":
-      return "file-pdf";
+      return "pdf";
     case "docx":
     case "doc":
-      return "file-word";
+      return "pdf";
     case "txt":
-      return "file-text";
+      return "txt";
     default:
       return "file";
   }
@@ -185,9 +198,10 @@ async function fetchResources() {
   loading.value = true;
   try {
     const data = await getResourceList({ category: activeCategory.value });
+    console.log("获取资料列表成功:", data);
     resourceList.value = data;
   } catch (error) {
-    console.error("Failed to fetch resources:", error);
+    console.error("获取资料列表失败:", error);
     const currentYear = new Date().getFullYear();
     resourceList.value = Array.from({ length: 5 }, (_, i) => currentYear - i).flatMap((year) =>
       generateMockData(year),
@@ -395,9 +409,10 @@ function generateMockData(year: number): ResourceItem[] {
 async function fetchMyResources() {
   try {
     const data = await getMyResources();
+    console.log("获取我的资料成功:", data);
     addedResourceIds.value = new Set(data.map((r) => r.resourceId));
   } catch (error) {
-    console.error("Failed to fetch my resources:", error);
+    console.error("获取我的资料失败:", error);
   }
 }
 
@@ -410,21 +425,37 @@ async function fetchKnowledgeBases() {
   }
 }
 
-function handleDownload(paper: ResourceItem) {
+async function handleDownload(paper: ResourceItem) {
   if (paper.id > 100000) {
-    alert(`开始下载：${paper.title}`);
+    confirmDialogTitle.value = "提示";
+    confirmDialogMessage.value = "该资料为演示数据，暂时无法下载。请上传真实资料后再试。";
+    showConfirmDialog.value = true;
     return;
   }
-  downloadResource(paper.id);
+  try {
+    await downloadResource(paper.id);
+  } catch (error: any) {
+    confirmDialogTitle.value = "下载失败";
+    confirmDialogMessage.value = error.message || "下载失败，请稍后重试";
+    showConfirmDialog.value = true;
+  }
 }
 
 function handleAddToKb(paper: ResourceItem) {
+  if (paper.id > 100000) {
+    confirmDialogTitle.value = "提示";
+    confirmDialogMessage.value = "该资料为演示数据，暂时无法添加到知识库。请上传真实资料后再试。";
+    showConfirmDialog.value = true;
+    return;
+  }
   if (!authStore.isAuthed) {
     authStore.openAuthModal();
     return;
   }
   if (knowledgeBases.value.length === 0) {
-    alert("请先创建知识库");
+    confirmDialogTitle.value = "提示";
+    confirmDialogMessage.value = "请先创建知识库";
+    showConfirmDialog.value = true;
     return;
   }
   selectedResource.value = paper;

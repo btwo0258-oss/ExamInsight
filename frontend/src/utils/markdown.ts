@@ -1,90 +1,106 @@
 // @ts-nocheck
-function escapeHtml(input: string): string {
-  return input
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;')
+import { Marked } from 'marked'
+import { markedHighlight } from 'marked-highlight'
+import hljs from 'highlight.js'
+import 'highlight.js/styles/github.css'
+
+function sanitizeIncompleteMarkdown(md: string): string {
+  if (!md) return ''
+
+  let sanitized = md
+
+  // 预处理：修复行首标点符号（将行首的标点合并到上一行）
+  sanitized = sanitized.replace(/\n([。！？；，、：；])/g, '$1')
+
+  // 预处理：修复标题格式（###文字 -> ### 文字）
+  sanitized = sanitized.replace(/^(#{1,6})([^\s#])/gm, '$1 $2')
+
+  // 预处理：修复列表项格式（-文字 -> - 文字）
+  sanitized = sanitized.replace(/^([-*+])([^\s-*+])/gm, '$1 $2')
+  sanitized = sanitized.replace(/^(\d+\.)([^\s\d])/gm, '$1 $2')
+
+  // 提取代码块内容，避免对其中的符号进行匹配
+  const codeBlocks: string[] = []
+  sanitized = sanitized.replace(/```[\s\S]*?```/g, (match) => {
+    codeBlocks.push(match)
+    return `__CODE_BLOCK_${codeBlocks.length - 1}__`
+  })
+
+  // 提取行内代码
+  const inlineCodes: string[] = []
+  sanitized = sanitized.replace(/`[^`]+`/g, (match) => {
+    inlineCodes.push(match)
+    return `__INLINE_CODE_${inlineCodes.length - 1}__`
+  })
+
+  // 修复未闭合的代码块
+  const fenceCount = (sanitized.match(/```/g) || []).length
+  if (fenceCount % 2 !== 0) {
+    sanitized += '\n```'
+  }
+
+  // 修复未闭合的粗体
+  const boldCount = (sanitized.match(/\*\*/g) || []).length
+  if (boldCount % 2 !== 0) {
+    sanitized += '**'
+  }
+
+  // 修复未闭合的斜体（排除已匹配的粗体）
+  const tempWithoutBold = sanitized.replace(/\*\*/g, '')
+  const italicCount = (tempWithoutBold.match(/\*/g) || []).length
+  if (italicCount % 2 !== 0) {
+    sanitized += '*'
+  }
+
+  // 修复未闭合的行内代码
+  const remainingBackticks = (sanitized.match(/`/g) || []).length
+  if (remainingBackticks % 2 !== 0) {
+    sanitized += '`'
+  }
+
+  // 修复未闭合的引用块
+  const lines = sanitized.split('\n')
+  const lastLine = lines[lines.length - 1] || ''
+  if (lastLine.trim().startsWith('>')) {
+    sanitized += '\n'
+  }
+
+  // 确保标题后面有换行符（如果还没有的话）
+  // 移除强制换行，避免标点符号被挤到下一行
+
+  // 确保列表项后面有换行符（如果还没有的话）
+  // 移除强制换行，避免标点符号被挤到下一行
+
+  // 还原代码块和行内代码
+  codeBlocks.forEach((block, i) => {
+    sanitized = sanitized.replace(`__CODE_BLOCK_${i}__`, block)
+  })
+  inlineCodes.forEach((code, i) => {
+    sanitized = sanitized.replace(`__INLINE_CODE_${i}__`, code)
+  })
+
+  return sanitized
 }
+
+const markedInstance = new Marked(
+  markedHighlight({
+    langPrefix: 'hljs language-',
+    highlight(code, lang) {
+      if (lang && hljs.getLanguage(lang)) {
+        return hljs.highlight(code, { language: lang }).value
+      }
+      return hljs.highlightAuto(code).value
+    }
+  }),
+  {
+    breaks: true,
+    gfm: true
+  }
+)
 
 export function renderMarkdownToHtml(markdown: string): string {
   if (!markdown) return ''
 
-  // 1. 转义基础 HTML 字符以防 XSS
-  let html = markdown
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-
-  // 2. 处理代码块 (```code```)
-  html = html.replace(/```(?:[a-z0-9]+)?\n([\s\S]*?)```/g, (match, code) => {
-    return `<pre><code>${code.trim()}</code></pre>`
-  })
-  // 处理没有换行的代码块或者未闭合的代码块 (简单处理)
-  html = html.replace(/```([\s\S]*?)```/g, (match, code) => {
-    return `<pre><code>${code.trim()}</code></pre>`
-  })
-
-  // 3. 处理行内代码 (`code`)
-  html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>')
-
-  // 4. 处理标题 (# Title)
-  html = html.replace(/^# (.*$)/gm, '<h1>$1</h1>')
-  html = html.replace(/^## (.*$)/gm, '<h2>$1</h2>')
-  html = html.replace(/^### (.*$)/gm, '<h3>$1</h3>')
-
-  // 5. 处理粗体 (**bold**)
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-
-  // 6. 处理列表 (- list)
-  html = html.replace(/^\s*[-*+]\s+\[ \]\s+(.*$)/gm, '<li><input type="checkbox" disabled /> $1</li>')
-  html = html.replace(/^\s*[-*+]\s+\[x\]\s+(.*$)/gm, '<li><input type="checkbox" checked disabled /> $1</li>')
-  html = html.replace(/^\s*[-*+]\s+(.*$)/gm, '<li>$1</li>')
-  
-  // 将连续的 <li> 包裹在 <ul> 中
-  html = html.replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
-  // 简单清理 <ul> 嵌套
-  html = html.replace(/<\/ul>\s*<ul>/g, '')
-
-  // 8. 处理表格 (简单实现)
-  const lines = html.split('\n')
-  let inTable = false
-  let tableHtml = ''
-  const newLines = []
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim()
-    if (line.startsWith('|') && line.endsWith('|')) {
-      if (!inTable) {
-        inTable = true
-        tableHtml = '<table class="markdown-table">'
-      }
-      const cells = line.split('|').filter(c => c.trim() !== '').map(c => c.trim())
-      if (lines[i + 1]?.includes('---')) {
-        tableHtml += '<thead><tr>' + cells.map(c => `<th>${c}</th>`).join('') + '</tr></thead><tbody>'
-        i++ // 跳过分隔行
-      } else {
-        tableHtml += '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>'
-      }
-    } else {
-      if (inTable) {
-        tableHtml += '</tbody></table>'
-        newLines.push(tableHtml)
-        inTable = false
-        tableHtml = ''
-      }
-      newLines.push(lines[i])
-    }
-  }
-  if (inTable) {
-    tableHtml += '</tbody></table>'
-    newLines.push(tableHtml)
-  }
-  html = newLines.join('\n')
-
-  // 9. 处理换行 (如果不属于 block 元素，则添加 <br />)
-  html = html.replace(/\n(?!<(h1|h2|h3|li|ul|pre|code|table|thead|tbody|tr|th|td))/g, '<br />')
-
-  return html
+  const sanitized = sanitizeIncompleteMarkdown(markdown)
+  return markedInstance.parse(sanitized)
 }

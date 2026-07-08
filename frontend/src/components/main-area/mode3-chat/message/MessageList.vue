@@ -17,6 +17,10 @@ const emit = defineEmits<{
 const wrap = ref<HTMLDivElement | null>(null);
 const autoScroll = ref(true);
 
+defineExpose({
+  scrollContainer: wrap,
+});
+
 function onScroll() {
   const el = wrap.value;
   if (!el) return;
@@ -74,9 +78,9 @@ watch(
 }
 
 .list__inner {
-  width: min(800px, 100%);
+  width: min(880px, 100%);
   margin: 0 auto;
-  padding: 24px 28px 20px;
+  padding: 24px 0 20px;
   display: grid;
   gap: 16px;
   flex: 1;

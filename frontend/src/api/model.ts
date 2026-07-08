@@ -8,7 +8,7 @@ export type ModelInfo = {
 
 export async function listModels(): Promise<ModelInfo[]> {
   try {
-    const res = await request.get('/model')
+    const res = await request.get('/api/config/model')
     return (res.data?.data ?? res.data) as ModelInfo[]
   } catch {
     return [

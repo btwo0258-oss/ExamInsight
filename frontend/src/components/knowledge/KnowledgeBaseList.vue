@@ -1,103 +1,102 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
-import { useConversationStore } from '@/stores/conversation'
-import { useMindMapStore } from '@/stores/mindmap'
-import KnowledgeBaseCard from './KnowledgeBaseCard.vue'
-import KnowledgeBaseCreate from './KnowledgeBaseCreate.vue'
-import AppButton from '@/components/common/AppButton.vue'
-import AppIcon from '@/components/common/AppIcon.vue'
+import { ref, onMounted, computed, watch } from "vue";
+import { useRouter } from "vue-router";
+import { useKnowledgeBaseStore } from "@/stores/knowledgeBase";
+import { useConversationStore } from "@/stores/conversation";
+import { useMindMapStore } from "@/stores/mindmap";
+import KnowledgeBaseCard from "./KnowledgeBaseCard.vue";
+import KnowledgeBaseCreate from "./KnowledgeBaseCreate.vue";
+import AppButton from "@/components/common/AppButton.vue";
+import AppIcon from "@/components/common/AppIcon.vue";
 
-const router = useRouter()
-const kbStore = useKnowledgeBaseStore()
-const conversationStore = useConversationStore()
-const mindMapStore = useMindMapStore()
+const router = useRouter();
+const kbStore = useKnowledgeBaseStore();
+const conversationStore = useConversationStore();
+const mindMapStore = useMindMapStore();
 
-const searchQuery = ref('')
-const viewMode = ref<'grid' | 'list'>((localStorage.getItem('llm.kbList.viewMode') as any) || 'grid')
-const sortBy = ref<'updated_at' | 'name'>((localStorage.getItem('llm.kbList.sortBy') as any) || 'updated_at')
-const currentPage = ref(1)
-const pageSize = ref(10)
-const showCreateDialog = ref(false)
-const errorState = ref(false)
+const searchQuery = ref("");
+const viewMode = ref<"grid" | "list">(
+  (localStorage.getItem("llm.kbList.viewMode") as any) || "grid",
+);
+const sortBy = ref<"updated_at" | "name">(
+  (localStorage.getItem("llm.kbList.sortBy") as any) || "updated_at",
+);
+const currentPage = ref(1);
+const pageSize = ref(10);
+const showCreateDialog = ref(false);
+const errorState = ref(false);
 
 const filteredKnowledgeBases = computed(() => {
-  let result = kbStore.list
+  let result = kbStore.list;
 
   // Search
   if (searchQuery.value) {
-    const lowerQuery = searchQuery.value.toLowerCase()
-    result = result.filter(kb => 
-      kb.name.toLowerCase().includes(lowerQuery)
-    )
+    const lowerQuery = searchQuery.value.toLowerCase();
+    result = result.filter((kb) => kb.name.toLowerCase().includes(lowerQuery));
   }
 
   // Sort
   result = [...result].sort((a, b) => {
-    if (sortBy.value === 'name') {
-      return a.name.localeCompare(b.name)
+    if (sortBy.value === "name") {
+      return a.name.localeCompare(b.name);
     } else {
       // updated_at (or updateTime)
-      const timeA = new Date(a.updateTime || 0).getTime()
-      const timeB = new Date(b.updateTime || 0).getTime()
-      return timeB - timeA // descending
+      const timeA = new Date(a.updateTime || 0).getTime();
+      const timeB = new Date(b.updateTime || 0).getTime();
+      return timeB - timeA; // descending
     }
-  })
+  });
 
-  return result
-})
+  return result;
+});
 
-const totalPages = computed(() => Math.ceil(filteredKnowledgeBases.value.length / pageSize.value))
+const totalPages = computed(() => Math.ceil(filteredKnowledgeBases.value.length / pageSize.value));
 
 const paginatedKnowledgeBases = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value
-  return filteredKnowledgeBases.value.slice(start, start + pageSize.value)
-})
+  const start = (currentPage.value - 1) * pageSize.value;
+  return filteredKnowledgeBases.value.slice(start, start + pageSize.value);
+});
 
 function prevPage() {
-  if (currentPage.value > 1) currentPage.value--
+  if (currentPage.value > 1) currentPage.value--;
 }
 
 function nextPage() {
-  if (currentPage.value < totalPages.value) currentPage.value++
+  if (currentPage.value < totalPages.value) currentPage.value++;
 }
 
 async function loadData() {
-  errorState.value = false
+  errorState.value = false;
   try {
-    await kbStore.fetchAll()
-    await Promise.all([
-      conversationStore.fetchList(),
-      mindMapStore.fetchList()
-    ])
+    await kbStore.fetchAll();
+    await Promise.all([conversationStore.fetchList(), mindMapStore.fetchList()]);
   } catch (err) {
-    errorState.value = true
-    console.error('Failed to load knowledge bases', err)
+    errorState.value = true;
+    console.error("Failed to load knowledge bases", err);
   }
 }
 
 onMounted(() => {
-  loadData()
-})
+  loadData();
+});
 
-watch(viewMode, (val) => localStorage.setItem('llm.kbList.viewMode', val))
-watch(sortBy, (val) => localStorage.setItem('llm.kbList.sortBy', val))
+watch(viewMode, (val) => localStorage.setItem("llm.kbList.viewMode", val));
+watch(sortBy, (val) => localStorage.setItem("llm.kbList.sortBy", val));
 
-const showSearch = ref(false)
-const showSortMenu = ref(false)
+const showSearch = ref(false);
+const showSortMenu = ref(false);
 
 function toggleSearch() {
-  showSearch.value = !showSearch.value
-  if (!showSearch.value) searchQuery.value = ''
+  showSearch.value = !showSearch.value;
+  if (!showSearch.value) searchQuery.value = "";
 }
 
 function handleCreate() {
-  showCreateDialog.value = true
+  showCreateDialog.value = true;
 }
 
 function handleViewDetail(id: number) {
-  router.push(`/knowledge/${id}`)
+  router.push(`/knowledge/${id}`);
 }
 </script>
 
@@ -110,44 +109,87 @@ function handleViewDetail(id: number) {
       </div>
       <div class="actions">
         <div class="search-expand" v-if="showSearch">
-          <input
-            v-model="searchQuery"
-            type="text"
-            placeholder="搜索知识库..."
-            autofocus
-          />
+          <input v-model="searchQuery" type="text" placeholder="搜索知识库..." autofocus />
         </div>
         <div class="action-pill">
           <button class="pill-btn" @click="toggleSearch">
             <AppIcon name="search" :size="20" color="var(--color-primary)" />
           </button>
-          
+
           <div class="dropdown-wrapper">
             <button class="pill-btn" @click="showSortMenu = !showSortMenu">
-              <AppIcon :name="viewMode === 'grid' ? 'grid' : 'list'" :size="20" color="var(--color-primary)" />
+              <AppIcon
+                :name="viewMode === 'grid' ? 'grid' : 'list'"
+                :size="20"
+                color="var(--color-primary)"
+              />
             </button>
             <div class="overlay" v-if="showSortMenu" @click="showSortMenu = false"></div>
             <div class="dropdown-menu" v-if="showSortMenu">
-              <div class="dropdown-item" @click="viewMode = 'grid'; showSortMenu = false">
+              <div
+                class="dropdown-item"
+                @click="
+                  viewMode = 'grid';
+                  showSortMenu = false;
+                "
+              >
                 <AppIcon name="grid" :size="16" />
-                <span class="dropdown-text">图标</span>
-                <AppIcon v-if="viewMode === 'grid'" name="check" :size="16" color="var(--color-primary)" />
+                <span class="dropdown-text">图标排序</span>
+                <AppIcon
+                  v-if="viewMode === 'grid'"
+                  name="check"
+                  :size="16"
+                  color="var(--color-primary)"
+                />
               </div>
-              <div class="dropdown-item" @click="viewMode = 'list'; showSortMenu = false">
+              <div
+                class="dropdown-item"
+                @click="
+                  viewMode = 'list';
+                  showSortMenu = false;
+                "
+              >
                 <AppIcon name="list" :size="16" />
-                <span class="dropdown-text">列表</span>
-                <AppIcon v-if="viewMode === 'list'" name="check" :size="16" color="var(--color-primary)" />
+                <span class="dropdown-text">列表排序</span>
+                <AppIcon
+                  v-if="viewMode === 'list'"
+                  name="check"
+                  :size="16"
+                  color="var(--color-primary)"
+                />
               </div>
               <div class="dropdown-divider"></div>
-              <div class="dropdown-item" @click="sortBy = 'updated_at'; showSortMenu = false">
+              <div
+                class="dropdown-item"
+                @click="
+                  sortBy = 'updated_at';
+                  showSortMenu = false;
+                "
+              >
                 <AppIcon name="clock" :size="16" />
-                <span class="dropdown-text">按更新时间排序</span>
-                <AppIcon v-if="sortBy === 'updated_at'" name="check" :size="16" color="var(--color-primary)" />
+                <span class="dropdown-text">按时间排序</span>
+                <AppIcon
+                  v-if="sortBy === 'updated_at'"
+                  name="check"
+                  :size="16"
+                  color="var(--color-primary)"
+                />
               </div>
-              <div class="dropdown-item" @click="sortBy = 'name'; showSortMenu = false">
-                <AppIcon name="type" :size="16" />
+              <div
+                class="dropdown-item"
+                @click="
+                  sortBy = 'name';
+                  showSortMenu = false;
+                "
+              >
+                <AppIcon name="user" :size="16" />
                 <span class="dropdown-text">按名称排序</span>
-                <AppIcon v-if="sortBy === 'name'" name="check" :size="16" color="var(--color-primary)" />
+                <AppIcon
+                  v-if="sortBy === 'name'"
+                  name="check"
+                  :size="16"
+                  color="var(--color-primary)"
+                />
               </div>
             </div>
           </div>
@@ -165,7 +207,7 @@ function handleViewDetail(id: number) {
       </div>
       <h3 class="empty__title">加载失败</h3>
       <p class="empty__description">无法获取知识库列表，请稍后重试</p>
-      <AppButton @click="loadData" style="margin-top: 16px;">重试</AppButton>
+      <AppButton @click="loadData" style="margin-top: 16px">重试</AppButton>
     </div>
 
     <div v-else>
@@ -174,7 +216,7 @@ function handleViewDetail(id: number) {
         <div class="new-card" @click="handleCreate">
           <div class="new-card__icon">
             <div class="plus-circle">
-              <AppIcon name="plus" :size="24" color="#fff" />
+              <AppIcon name="plus" :size="24" class="plus-icon" />
             </div>
           </div>
           <span class="new-card__text">新建</span>
@@ -247,8 +289,14 @@ function handleViewDetail(id: number) {
 }
 
 @keyframes slideIn {
-  from { width: 0; opacity: 0; }
-  to { width: 200px; opacity: 1; }
+  from {
+    width: 0;
+    opacity: 0;
+  }
+  to {
+    width: 200px;
+    opacity: 1;
+  }
 }
 
 .search-expand input {
@@ -293,8 +341,14 @@ function handleViewDetail(id: number) {
   background: rgba(59, 130, 246, 0.1);
 }
 
-.dropdown-wrapper { position: relative; }
-.overlay { position: fixed; inset: 0; z-index: 40; }
+.dropdown-wrapper {
+  position: relative;
+}
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
 .dropdown-menu {
   position: absolute;
   top: 120%;
@@ -320,9 +374,17 @@ function handleViewDetail(id: number) {
   color: var(--color-text);
   font-size: 14px;
 }
-.dropdown-item:hover { background: var(--color-surface-hover); }
-.dropdown-text { flex: 1; }
-.dropdown-divider { height: 1px; background: var(--color-border); margin: 4px 0; }
+.dropdown-item:hover {
+  background: var(--color-surface-hover);
+}
+.dropdown-text {
+  flex: 1;
+}
+.dropdown-divider {
+  height: 1px;
+  background: var(--color-border);
+  margin: 4px 0;
+}
 
 .empty {
   text-align: center;
@@ -355,8 +417,8 @@ function handleViewDetail(id: number) {
 
 .grid--grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 24px;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 20px;
 }
 
 .grid--list {
@@ -387,7 +449,7 @@ function handleViewDetail(id: number) {
   justify-content: center;
   cursor: pointer;
   transition: all 0.2s;
-  min-height: 200px;
+  min-height: 160px;
 }
 
 .new-card:hover {
@@ -411,6 +473,14 @@ function handleViewDetail(id: number) {
   align-items: center;
   justify-content: center;
   box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.plus-icon {
+  color: #fff;
+}
+
+:root[data-theme="dark"] .plus-icon {
+  color: #000;
 }
 
 .new-card__text {

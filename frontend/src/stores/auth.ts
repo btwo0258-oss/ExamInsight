@@ -7,6 +7,8 @@ import * as authApi from '@/api/auth'
 import { useConversationStore } from '@/stores/conversation'
 import { useMessageStore } from '@/stores/message'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
+import { useExamAnalysisStore } from '@/stores/examAnalysis'
+import { useMindMapStore } from '@/stores/mindmap'
 
 export type User = authApi.ApiUser
 
@@ -157,10 +159,16 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function logout(router?: ReturnType<typeof useRouter>) {
-    // 清除对话和消息 (必须在清除auth之前调用，否则无法获取正确的storage key)
+    token.value = null
+    user.value = null
+    clearStoredAuth()
+
+    // 清除对话和消息 (在清除auth之后调用，确保使用正确的guest storage key)
     const conversationStore = useConversationStore()
     const messageStore = useMessageStore()
     const knowledgeBaseStore = useKnowledgeBaseStore()
+    const examAnalysisStore = useExamAnalysisStore()
+    const mindMapStore = useMindMapStore()
 
     // 清除所有对话
     conversationStore.clearAll()
@@ -171,12 +179,14 @@ export const useAuthStore = defineStore('auth', () => {
     // 清除所有知识库
     knowledgeBaseStore.clearAll()
 
-    token.value = null
-    user.value = null
-    clearStoredAuth()
+    // 清除所有考试分析
+    examAnalysisStore.clearAll()
+
+    // 清除所有思维导图
+    mindMapStore.clearAll()
 
     window.dispatchEvent(new CustomEvent('auth:logout'))
-    
+
     if (router) {
       router.push('/chat')
     }

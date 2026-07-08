@@ -45,7 +45,7 @@ function handleSubmit() {
 </script>
 
 <template>
-  <AppModal :open="open" :title="title" @close="emit('close')" width="400px">
+  <AppModal :open="open" :title="title" @close="emit('close')" width="min(560px, 90vw)">
     <form class="form" @submit.prevent="handleSubmit">
       <div class="field">
         <label v-if="label" class="field__label">{{ label }} <span class="required">*</span></label>
@@ -93,6 +93,7 @@ function handleSubmit() {
   background: var(--color-surface);
   color: var(--color-text);
   transition: border-color 0.2s ease;
+  box-sizing: border-box;
 }
 
 .field__input:focus {

@@ -29,6 +29,17 @@ const isUser = computed(() => props.message.role === "user");
 const messageStore = useMessageStore();
 const appState = useAppState();
 
+const showMarkdown = ref(true);
+
+watch(() => props.isStreaming, (newVal, oldVal) => {
+  if (oldVal && !newVal) {
+    showMarkdown.value = false;
+    setTimeout(() => {
+      showMarkdown.value = true;
+    }, 50);
+  }
+});
+
 const isEditing = ref(false);
 const editDraft = ref(props.message.content);
 
@@ -206,7 +217,7 @@ async function onGenerateMindmap() {
           </div>
         </div>
         <div v-else class="content content--ai">
-          <MarkdownRenderer :content="message.content" />
+          <MarkdownRenderer v-if="showMarkdown" :content="message.content" :is-streaming="isStreaming" />
           <span v-if="isStreaming" class="cursor" />
           <!-- @ts-ignore -->
           <SourceChunks v-if="message.sourceChunks?.length" :chunks="message.sourceChunks" />
@@ -270,9 +281,10 @@ async function onGenerateMindmap() {
 <style scoped>
 .bubble-wrap {
   display: flex;
-  gap: 12px;
+  gap: 20px;
   align-items: flex-start;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
+  width: 100%;
 }
 
 .bubble-wrap--user {
@@ -292,18 +304,21 @@ async function onGenerateMindmap() {
 .avatar--ai {
   background: var(--color-border);
   color: var(--color-text);
+  margin-left: 0;
 }
 
 .avatar--user {
   background: var(--color-text);
   color: var(--color-surface);
+  margin-right: 0;
 }
 
 .bubble-content-wrap {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-width: calc(100% - 48px);
+  max-width: 774px;
+  width: 100%;
 }
 
 .bubble-wrap--user {
@@ -314,7 +329,7 @@ async function onGenerateMindmap() {
   display: inline-flex !important;
   flex-direction: column;
   align-items: flex-end !important;
-  max-width: 80% !important;
+  max-width: 70% !important;
   width: auto !important;
   min-width: 0 !important;
 }
@@ -327,6 +342,20 @@ async function onGenerateMindmap() {
   white-space: normal !important;
   text-align: left !important;
   min-width: 0 !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+}
+
+.bubble-wrap--user .bubble .content {
+  max-width: 100% !important;
+  overflow: hidden !important;
+}
+
+.bubble-wrap--user .bubble-content-wrap .edit-mode {
+  max-width: 100% !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
 }
 
 .uploaded-files {
@@ -516,7 +545,8 @@ async function onGenerateMindmap() {
   flex-direction: column;
   gap: 8px;
   width: 100%;
-  min-width: 250px;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .edit-header {

@@ -75,7 +75,7 @@ async function handleSave() {
           />
         </div>
         
-        <p class="hint">个人资料有助于他人识别你的身份。你的姓名和用户名也将用于 Aether 应用。</p>
+        <p class="hint">个人资料有助于他人识别你的身份。你的姓名和用户名也将用于 ExamInsight 应用。</p>
         
         <div v-if="errorMessage" class="error-msg">
           {{ errorMessage }}

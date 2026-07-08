@@ -7,10 +7,38 @@
 
     <div class="toolbar">
       <div class="toolbar-left">
-        <select v-model="filterCategory" class="filter-select">
-          <option value="">全部分类</option>
-          <option v-for="cat in categories" :key="cat" :value="cat">{{ cat }}</option>
-        </select>
+        <div
+          class="custom-select"
+          :class="{ 'custom-select--open': showFilterDropdown }"
+          @click="showFilterDropdown = !showFilterDropdown"
+        >
+          <span class="custom-select__value">{{ filterCategory || "全部分类" }}</span>
+          <AppIcon name="chevron-right" :size="16" />
+          <div class="custom-select__dropdown" v-if="showFilterDropdown">
+            <div
+              class="custom-select__option"
+              :class="{ 'custom-select__option--selected': filterCategory === '' }"
+              @click.stop="
+                filterCategory = '';
+                showFilterDropdown = false;
+              "
+            >
+              全部分类
+            </div>
+            <div
+              v-for="cat in categories"
+              :key="cat"
+              class="custom-select__option"
+              :class="{ 'custom-select__option--selected': filterCategory === cat }"
+              @click.stop="
+                filterCategory = cat;
+                showFilterDropdown = false;
+              "
+            >
+              {{ cat }}
+            </div>
+          </div>
+        </div>
         <input type="text" v-model="searchText" placeholder="搜索资料..." class="search-input" />
       </div>
       <div class="toolbar-right">
@@ -70,9 +98,28 @@
           </div>
           <div class="form-group">
             <label>分类</label>
-            <select v-model="form.category">
-              <option v-for="cat in categories" :key="cat" :value="cat">{{ cat }}</option>
-            </select>
+            <div
+              class="custom-select form-select"
+              :class="{ 'custom-select--open': showFormCategoryDropdown }"
+              @click="showFormCategoryDropdown = !showFormCategoryDropdown"
+            >
+              <span class="custom-select__value">{{ form.category }}</span>
+              <AppIcon name="chevron-right" :size="16" />
+              <div class="custom-select__dropdown" v-if="showFormCategoryDropdown">
+                <div
+                  v-for="cat in categories"
+                  :key="cat"
+                  class="custom-select__option"
+                  :class="{ 'custom-select__option--selected': form.category === cat }"
+                  @click.stop="
+                    form.category = cat;
+                    showFormCategoryDropdown = false;
+                  "
+                >
+                  {{ cat }}
+                </div>
+              </div>
+            </div>
           </div>
           <div class="form-group">
             <label>年份</label>
@@ -112,8 +159,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, onUnmounted } from "vue";
 import { adminRequest } from "@/api/adminRequest";
+import AppIcon from "@/components/admin/AppIcon.vue";
 
 const categories = [
   "英语四六级",
@@ -131,6 +179,16 @@ const searchText = ref("");
 const showAddModal = ref(false);
 const editingResource = ref<any>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
+const showFilterDropdown = ref(false);
+const showFormCategoryDropdown = ref(false);
+
+function handleClickOutside(e: MouseEvent) {
+  const target = e.target as HTMLElement;
+  if (!target.closest(".custom-select")) {
+    showFilterDropdown.value = false;
+    showFormCategoryDropdown.value = false;
+  }
+}
 
 const form = ref({
   title: "",
@@ -161,7 +219,7 @@ function formatFileSize(bytes: number) {
 
 async function fetchResources() {
   try {
-    const res = await adminRequest.get("/admin/resource/list");
+    const res = await adminRequest.get("/api/admin/resource/list");
     resourceList.value = Array.isArray(res) ? res : (res?.data ?? []);
   } catch (error) {
     console.error("Failed to fetch resources:", error);
@@ -184,7 +242,7 @@ function editResource(item: any) {
 async function deleteResource(item: any) {
   if (!confirm(`确定要删除「${item.title}」吗？`)) return;
   try {
-    await adminRequest.delete(`/admin/resource/${item.id}`);
+    await adminRequest.delete(`/api/admin/resource/${item.id}`);
     await fetchResources();
   } catch (error) {
     console.error("Failed to delete resource:", error);
@@ -216,7 +274,7 @@ async function submitForm() {
 
   try {
     if (editingResource.value) {
-      await adminRequest.put(`/admin/resource/${editingResource.value.id}`, {
+      await adminRequest.put(`/api/admin/resource/${editingResource.value.id}`, {
         title: form.value.title,
         category: form.value.category,
         year: form.value.year,
@@ -233,7 +291,7 @@ async function submitForm() {
       fd.append("year", String(form.value.year));
       fd.append("description", form.value.description);
       fd.append("file", form.value.file);
-      await adminRequest.post("/admin/resource/upload", fd);
+      await adminRequest.post("/api/admin/resource/upload", fd);
     }
     closeModal();
     await fetchResources();
@@ -246,6 +304,11 @@ async function submitForm() {
 
 onMounted(() => {
   fetchResources();
+  window.addEventListener("click", handleClickOutside);
+});
+
+onUnmounted(() => {
+  window.removeEventListener("click", handleClickOutside);
 });
 </script>
 
@@ -287,7 +350,6 @@ onMounted(() => {
   align-items: center;
 }
 
-.filter-select,
 .search-input {
   padding: 8px 12px;
   border: 1px solid var(--color-border);
@@ -296,10 +358,96 @@ onMounted(() => {
   color: var(--color-text);
   font-size: 14px;
   outline: none;
+  min-width: 200px;
 }
 
-.search-input {
-  min-width: 200px;
+.custom-select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 14px;
+  cursor: pointer;
+  min-width: 140px;
+  user-select: none;
+  transition: all 0.2s;
+}
+
+.custom-select:hover {
+  background: var(--color-bg-alt);
+  border-color: var(--color-border);
+}
+
+.custom-select--open {
+  background: var(--color-bg-alt);
+  border-color: var(--color-border);
+}
+
+.custom-select--open .icon {
+  transform: rotate(90deg);
+  transition: transform 0.2s;
+}
+
+.custom-select__value {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.custom-select__arrow {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.custom-select__dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  z-index: 100;
+  overflow: hidden;
+}
+
+.custom-select__option {
+  padding: 8px 12px;
+  font-size: 14px;
+  color: var(--color-text);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.custom-select__option:hover {
+  background: var(--color-bg-alt) !important;
+}
+
+.custom-select__option--selected {
+  background: var(--color-bg-alt);
+  font-weight: 600;
+}
+
+.custom-select__option--selected:hover {
+  background: var(--color-border) !important;
+}
+
+.form-select {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.form-select .custom-select__dropdown {
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 .btn {

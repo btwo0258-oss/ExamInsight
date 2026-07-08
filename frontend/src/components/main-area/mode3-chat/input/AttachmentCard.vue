@@ -11,6 +11,44 @@ const url = computed(() => {
   if (!isImage.value) return ''
   return URL.createObjectURL(props.file)
 })
+
+const fileExtension = computed(() => {
+  const name = props.file.name
+  const lastDot = name.lastIndexOf('.')
+  return lastDot !== -1 ? name.substring(lastDot + 1).toLowerCase() : ''
+})
+
+const iconName = computed(() => {
+  switch (fileExtension.value) {
+    case 'pdf':
+      return 'pdf'
+    case 'doc':
+    case 'docx':
+      return 'word'
+    case 'md':
+      return 'markdown'
+    case 'txt':
+      return 'txt'
+    default:
+      return 'file'
+  }
+})
+
+const iconColor = computed(() => {
+  switch (fileExtension.value) {
+    case 'pdf':
+      return '#ef4444'
+    case 'doc':
+    case 'docx':
+      return '#3b82f6'
+    case 'md':
+      return '#6366f1'
+    case 'txt':
+      return '#6b7280'
+    default:
+      return '#9ca3af'
+  }
+})
 </script>
 
 <template>
@@ -19,7 +57,7 @@ const url = computed(() => {
       <img :src="url" class="card__img" />
     </div>
     <div v-else class="card__file">
-      <AppIcon name="file" class="card__icon" />
+      <AppIcon :name="iconName" class="card__icon" :color="iconColor" />
       <div class="card__name">{{ file.name }}</div>
     </div>
     <button class="card__del" type="button" @click.stop="emit('remove')">×</button>

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import AppIcon from '@/components/common/AppIcon.vue'
+import MarkdownRenderer from './MarkdownRenderer.vue'
 
 export type Chunk = {
   docName: string
@@ -32,10 +34,10 @@ function toggle(i: number) {
         <div class="chunk__title">
           <span class="chunk__idx">[{{ i + 1 }}]</span>
           <span class="chunk__name">{{ c.docName }} (块 {{ c.chunkIndex }})<span v-if="c._score !== undefined" class="chunk__score"> - 相似度: {{ (c._score * 100).toFixed(1) }}%</span></span>
-          <span class="chunk__arrow">▶</span>
+          <AppIcon name="chevron-right" :size="16" class="chunk__arrow" />
         </div>
         <div v-if="expandedIndex === i" class="chunk__content">
-          {{ c.content }}
+          <MarkdownRenderer :content="c.content" />
         </div>
       </div>
     </div>

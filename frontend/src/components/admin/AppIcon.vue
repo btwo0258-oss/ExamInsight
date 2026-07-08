@@ -1,8 +1,8 @@
 <script setup lang="ts">
 type IconName = 
   | 'home' | 'users' | 'settings' | 'bar-chart' | 'pie-chart' | 'logout' | 'search' | 'plus' | 'edit' | 'trash' 
-  | 'lock' | 'unlock' | 'check' | 'close' | 'chevron-left' | 'chevron-right' | 'refresh' | 'file' | 'user'
-  | 'book' | 'paperclip' | 'message-square' | 'layers' | 'shield' | 'activity' | 'user-circle' | 'user-plus'
+  | 'lock' | 'unlock' | 'check' | 'close' | 'chevron-left' | 'chevron-right' | 'chevron-down' | 'refresh' | 'file' | 'user'
+  | 'book' | 'paperclip' | 'message-square' | 'layers' | 'shield' | 'activity' | 'user-circle' | 'user-plus' | 'folder'
 
 type Props = {
   name: IconName
@@ -315,6 +315,30 @@ const props = withDefaults(defineProps<Props>(), { size: 20 })
     <circle cx="9" cy="7" r="4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
     <line x1="19" y1="8" x2="19" y2="14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
     <line x1="22" y1="11" x2="16" y2="11" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+
+  <svg
+    v-else-if="name === 'chevron-down'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <polyline points="6 9 12 15 18 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+
+  <svg
+    v-else-if="name === 'folder'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
   </svg>
 
   <svg

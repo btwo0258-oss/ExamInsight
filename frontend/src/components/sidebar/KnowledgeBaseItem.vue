@@ -102,27 +102,27 @@ function handleDeleteConversation(conv: any) {
     <div class="project-item-header">
       <div class="project-item" @click="selectKnowledgeBase">
         <button class="expand-btn" @click.stop="toggleExpand">
-          <span class="expand-icon" :class="{ expanded: isExpanded }">▶</span>
+          <AppIcon :name="isExpanded ? 'chevron-down' : 'chevron-right'" :size="12" />
         </button>
-        <AppIcon :name="knowledgeBase.icon || 'book'" :size="18" :color="knowledgeBase.color" class="project-item__icon" />
-        <span class="project-item__name">{{ knowledgeBase.name }}</span>
-      </div>
-      <div
-        class="project-item__actions"
-        @mouseenter="showActions = true"
-        @mouseleave="showActions = false"
-      >
-        <button
-          class="actions-btn"
-          @click.stop="toggleActions"
-          :class="{ 'actions-btn--active': showActionsPanel }"
+        <AppIcon :name="knowledgeBase.examAnalysisId ? 'pie-chart' : (knowledgeBase.icon || 'book')" :size="18" :color="knowledgeBase.color" class="project-item__icon" />
+        <span class="project-item__name" :title="knowledgeBase.name">{{ knowledgeBase.name }}</span>
+        <div
+          class="project-item__actions"
+          @mouseenter="showActions = true"
+          @mouseleave="showActions = false"
         >
-          <AppIcon name="more-horizontal" :size="16" />
-        </button>
-        <div v-if="showActionsPanel" class="actions-panel">
-          <button class="action-item" @click="handleEdit">编辑</button>
-          <div class="action-divider"></div>
-          <button class="action-item action-item--danger" @click="handleDelete">删除</button>
+          <button
+            class="actions-btn"
+            @click.stop="toggleActions"
+            :class="{ 'actions-btn--active': showActionsPanel }"
+          >
+            <AppIcon name="more-horizontal" :size="16" />
+          </button>
+          <div v-if="showActionsPanel" class="actions-panel">
+            <button class="action-item" @click="handleEdit">编辑</button>
+            <div class="action-divider"></div>
+            <button class="action-item action-item--danger" @click="handleDelete">删除</button>
+          </div>
         </div>
       </div>
     </div>
@@ -221,6 +221,7 @@ function handleDeleteConversation(conv: any) {
   cursor: pointer;
   transition: background-color 0.2s ease, border-color 0.2s ease;
   flex: 1;
+  min-width: 0;
 }
 
 .project-item:hover {
@@ -247,6 +248,8 @@ function handleDeleteConversation(conv: any) {
   justify-content: center;
   min-width: 16px;
   height: 16px;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
 }
 
 .expand-btn:hover {
@@ -257,33 +260,10 @@ function handleDeleteConversation(conv: any) {
   background: rgba(255, 255, 255, 0.06);
 }
 
-.expand-icon {
-  font-size: 9px;
-  color: #222222 !important;
-  transition: transform 0.2s ease;
-  display: block;
-  line-height: 1;
-  font-weight: 500;
-  /* 强制禁止浏览器渲染为彩色emoji */
-  font-family: system-ui;
-  text-rendering: optimizeSpeed;
-}
-
-.expand-icon.expanded {
-  transform: rotate(90deg);
-}
-
-.project-item:hover {
-  background: rgba(0, 0, 0, 0.04);
-}
-
-:root[data-theme="dark"] .project-item:hover {
-  background: rgba(255, 255, 255, 0.06);
-}
-
 .project-item__icon {
   font-size: 16px;
   line-height: 1;
+  flex-shrink: 0;
 }
 
 .project-item__name {
@@ -294,15 +274,18 @@ function handleDeleteConversation(conv: any) {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  width: 180px;
+  max-width: 180px;
 }
 
 .project-item__actions {
   margin-left: auto;
   opacity: 0;
   transition: opacity 0.2s ease;
+  flex-shrink: 0;
 }
 
-.project-item__actions:hover {
+.project-item:hover .project-item__actions {
   opacity: 1;
 }
 

@@ -32,11 +32,11 @@
                 <AppIcon
                   :name="getFileIcon(file.name)"
                   :size="14"
-                  color="var(--color-text-muted)"
+                  :color="getFileIconColor(file.name)"
                 />
                 <span class="file-item__name">{{ file.name }}</span>
                 <button class="file-item__remove" @click="removeFile(index)">
-                  <AppIcon name="x" :size="14" />
+                  <AppIcon name="close" :size="14" />
                 </button>
               </div>
             </div>
@@ -44,15 +44,21 @@
           </div>
           <div class="type-section">
             <span class="label">考试类型：</span>
-            <select class="type-select" v-model="examType">
-              <option value="英语四六级">英语四六级</option>
-              <option value="研究生考试">研究生考试</option>
-              <option value="公务员考试">公务员考试</option>
-              <option value="英语专四专八">英语专四专八</option>
-              <option value="教师资格证">教师资格证</option>
-              <option value="计算机二级">计算机二级</option>
-              <option value="普通话等级考试">普通话等级考试</option>
-            </select>
+            <div class="custom-select" @click="showExamTypeDropdown = !showExamTypeDropdown">
+              <span class="custom-select__value">{{ examType }}</span>
+              <AppIcon name="chevron-down" :size="16" />
+              <div class="custom-select__dropdown" v-if="showExamTypeDropdown">
+                <div
+                  v-for="type in examTypeOptions"
+                  :key="type"
+                  class="custom-select__option"
+                  :class="{ 'custom-select__option--selected': examType === type }"
+                  @click.stop="selectExamType(type)"
+                >
+                  {{ type }}
+                </div>
+              </div>
+            </div>
             <AppButton
               variant="primary"
               @click="startAnalysis"
@@ -67,7 +73,10 @@
         <div class="main-content" v-if="hasAnalyzed && analysisData">
           <div class="analysis-results">
             <div class="card">
-              <h3 class="card-title">📊 高频考点</h3>
+              <h3 class="card-title">
+                <AppIcon name="star" :size="18" />
+                高频考点
+              </h3>
               <ul class="point-list" v-if="parsedKeyPoints.length > 0">
                 <li v-for="(point, idx) in parsedKeyPoints" :key="idx">
                   <span class="highlight">{{ point.name }}</span>
@@ -78,7 +87,10 @@
             </div>
 
             <div class="card">
-              <h3 class="card-title">📈 题型分布</h3>
+              <h3 class="card-title">
+                <AppIcon name="bar-chart" :size="18" />
+                题型分布
+              </h3>
               <div class="distribution" v-if="parsedDistribution.length > 0">
                 <div class="dist-row" v-for="(item, idx) in parsedDistribution" :key="idx">
                   <div class="dist-item">
@@ -99,7 +111,10 @@
 
             <div class="card suggestion-card">
               <div class="card-header">
-                <h3 class="card-title">🧠 智能复习建议</h3>
+                <h3 class="card-title">
+                  <AppIcon name="graduation" :size="18" />
+                  智能复习建议
+                </h3>
                 <AppButton
                   size="small"
                   variant="primary"
@@ -134,14 +149,17 @@
           <div class="right-panel">
             <div class="card h-full">
               <div class="card-header">
-                <h3 class="card-title">🗺️ 考试重点结构图</h3>
+                <h3 class="card-title">
+                  <AppIcon name="layers" :size="18" />
+                  考试重点结构图
+                </h3>
                 <AppButton
                   size="small"
                   variant="secondary"
                   @click="generateMindMapFromAnalysis"
                   :loading="isMindMapGenerating"
                 >
-                  <template #icon><AppIcon name="layers" :size="14" /></template>
+                  <template #icon><AppIcon name="zap" :size="14" /></template>
                   {{ isMindMapGenerating ? "生成中..." : "生成导图" }}
                 </AppButton>
               </div>
@@ -166,7 +184,7 @@
                     </div>
                   </div>
                   <div class="structure-footer">
-                    <AppIcon name="arrow-right" :size="14" color="var(--color-text-muted)" />
+                    <AppIcon name="zap" :size="14" color="var(--color-text-muted)" />
                     <span>点击查看完整思维导图</span>
                   </div>
                 </div>
@@ -198,7 +216,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, computed } from "vue";
+import { ref, onMounted, onUnmounted, watch, computed } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import TheSidebar from "@/components/sidebar/TheSidebar.vue";
 import AppIcon from "@/components/common/AppIcon.vue";
@@ -211,6 +229,7 @@ import { useExamAnalysisStore } from "@/stores/examAnalysis";
 import * as examApi from "@/api/examAnalysis";
 import * as kbApi from "@/api/knowledgeBase";
 import * as docApi from "@/api/document";
+import { marked } from "marked";
 
 const router = useRouter();
 const route = useRoute();
@@ -224,6 +243,28 @@ const sidebarOpen = ref(true);
 const fileInput = ref<HTMLInputElement | null>(null);
 const files = ref<File[]>([]);
 const examType = ref("英语四六级");
+const showExamTypeDropdown = ref(false);
+const examTypeOptions = [
+  "英语四六级",
+  "研究生考试",
+  "公务员考试",
+  "英语专四专八",
+  "教师资格证",
+  "计算机二级",
+  "普通话等级考试",
+];
+
+function selectExamType(type: string) {
+  examType.value = type;
+  showExamTypeDropdown.value = false;
+}
+
+function handleClickOutside(e: MouseEvent) {
+  const target = e.target as HTMLElement;
+  if (!target.closest(".custom-select")) {
+    showExamTypeDropdown.value = false;
+  }
+}
 
 const isAnalyzing = ref(false);
 const hasAnalyzed = ref(false);
@@ -269,7 +310,7 @@ function getDistFillClass(idx: number) {
 
 function formatSuggestions(text: string): string {
   if (!text) return "";
-  return text.replace(/\n/g, "<br>");
+  return marked.parse(text) as string;
 }
 
 async function loadAnalysis(idParam: string | string[]) {
@@ -312,6 +353,11 @@ onMounted(async () => {
   if (raw === "0") sidebarOpen.value = false;
   appState.setMode("exam-analysis");
   await loadAnalysis(route.params.id);
+  window.addEventListener("click", handleClickOutside);
+});
+
+onUnmounted(() => {
+  window.removeEventListener("click", handleClickOutside);
 });
 
 watch(
@@ -711,14 +757,33 @@ function getFileIcon(filename: string): string {
   const ext = filename.split(".").pop()?.toLowerCase() || "";
   switch (ext) {
     case "pdf":
-      return "file-pdf";
+      return "pdf";
     case "doc":
     case "docx":
-      return "file-word";
+      return "word";
+    case "md":
+      return "markdown";
     case "txt":
-      return "file-text";
+      return "txt";
     default:
       return "file";
+  }
+}
+
+function getFileIconColor(filename: string): string {
+  const ext = filename.split(".").pop()?.toLowerCase() || "";
+  switch (ext) {
+    case "pdf":
+      return "#ef4444";
+    case "doc":
+    case "docx":
+      return "#3b82f6";
+    case "md":
+      return "#6366f1";
+    case "txt":
+      return "#6b7280";
+    default:
+      return "#9ca3af";
   }
 }
 </script>
@@ -896,8 +961,75 @@ function getFileIcon(filename: string): string {
   min-width: 140px;
 }
 
+.type-select:hover {
+  background: var(--color-bg-alt);
+}
+
 .type-select:focus {
   border-color: var(--color-primary);
+}
+
+.custom-select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 14px;
+  cursor: pointer;
+  min-width: 140px;
+  user-select: none;
+  transition: all 0.2s;
+}
+
+.custom-select:hover {
+  background: var(--color-bg-alt);
+  border-color: var(--color-border);
+}
+
+.custom-select__value {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.custom-select__dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  z-index: 100;
+  overflow: hidden;
+}
+
+.custom-select__option {
+  padding: 8px 12px;
+  font-size: 14px;
+  color: var(--color-text);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.custom-select__option:hover {
+  background: var(--color-bg-alt) !important;
+}
+
+.custom-select__option--selected {
+  background: var(--color-bg-alt);
+  font-weight: 600;
+}
+
+.custom-select__option--selected:hover {
+  background: var(--color-border) !important;
 }
 
 .main-content {
@@ -1077,7 +1209,7 @@ function getFileIcon(filename: string): string {
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--color-primary), var(--color-primary-light, #6366f1));
+  background: black;
   border-radius: 3px;
   transition: width 0.3s ease;
 }

@@ -3,6 +3,8 @@ import { ref, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
 import ContextMenu, { type MenuItem } from '@/components/common/ContextMenu.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import PromptModal from '@/components/common/PromptModal.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useAppState } from '@/stores/appState'
 import { useExamAnalysisStore } from '@/stores/examAnalysis'
@@ -17,6 +19,30 @@ const isCollapsed = ref(localStorage.getItem('llm.sidebar.exam.collapsed') === '
 const hoveredId = ref<number | null>(null)
 const menuOpenId = ref<number | null>(null)
 const menuPos = ref({ x: 0, y: 0 })
+
+const showDeleteConfirm = ref(false)
+const deletingId = ref<number | null>(null)
+const deletingTitle = ref('')
+
+const promptState = ref({
+  open: false,
+  title: '',
+  defaultValue: '',
+  onConfirm: (val: string) => {}
+})
+
+function openPrompt(title: string, defaultValue: string, onConfirm: (val: string) => void) {
+  promptState.value = {
+    open: true,
+    title,
+    defaultValue,
+    onConfirm
+  }
+}
+
+function handlePromptConfirm(value: string) {
+  promptState.value.onConfirm(value)
+}
 
 function toggleCollapse(e: MouseEvent) {
   e.stopPropagation()
@@ -61,15 +87,24 @@ function closeMenu() {
 }
 
 function handleRename(id: number, oldTitle: string) {
-  const newTitle = prompt('重命名分析记录', oldTitle)
-  if (newTitle && newTitle !== oldTitle) {
-    examStore.rename(id, newTitle)
-  }
+  openPrompt('重命名分析记录', oldTitle, (newTitle) => {
+    if (newTitle && newTitle !== oldTitle) {
+      examStore.rename(id, newTitle)
+    }
+  })
 }
 
-function handleDelete(id: number) {
-  if (confirm('确定要删除这条试卷分析记录吗？')) {
-    examStore.remove(id)
+function handleDelete(id: number, title: string) {
+  deletingId.value = id
+  deletingTitle.value = title
+  showDeleteConfirm.value = true
+}
+
+function confirmDelete() {
+  if (deletingId.value !== null) {
+    examStore.remove(deletingId.value)
+    showDeleteConfirm.value = false
+    deletingId.value = null
   }
 }
 
@@ -77,7 +112,7 @@ function getMenuItems(id: number, title: string): MenuItem[] {
   return [
     { label: '重命名', action: () => handleRename(id, title) },
     { label: '', divided: true },
-    { label: '删除', danger: true, action: () => handleDelete(id) },
+    { label: '删除', danger: true, action: () => handleDelete(id, title) },
   ]
 }
 </script>
@@ -90,7 +125,7 @@ function getMenuItems(id: number, title: string): MenuItem[] {
         <span class="section__title">考试分析</span>
       </div>
       <div class="header-right">
-        <span class="section__count">{{ examStore.list.length }}</span>
+        <span v-if="authStore.isAuthed" class="section__count">{{ examStore.list.length }}</span>
         <button class="collapse-btn" @click.stop="toggleCollapse">
           <AppIcon :name="isCollapsed ? 'chevron-right' : 'chevron-down'" :size="14" />
         </button>
@@ -99,10 +134,10 @@ function getMenuItems(id: number, title: string): MenuItem[] {
 
     <template v-if="!isCollapsed">
       <div class="section__create">
-        <!-- <button class="create-button" @click="handleCreate">
+        <button class="create-button" @click="handleCreate">
           <AppIcon name="plus" :size="16" />
           <span class="create-text">新建分析</span>
-        </button> -->
+        </button>
       </div>
 
       <div class="section__list">
@@ -118,7 +153,7 @@ function getMenuItems(id: number, title: string): MenuItem[] {
           <div class="item__icon">
             <AppIcon name="pie-chart" :size="16" color="var(--color-text-muted)" />
           </div>
-          <span class="item__title">{{ item.title }}</span>
+          <span class="item__title" :title="item.title">{{ item.title }}</span>
 
           <button 
             v-show="hoveredId === item.id || menuOpenId === item.id" 
@@ -141,6 +176,26 @@ function getMenuItems(id: number, title: string): MenuItem[] {
       </div>
     </template>
   </div>
+
+  <PromptModal
+    :open="promptState.open"
+    :title="promptState.title"
+    :default-value="promptState.defaultValue"
+    label="名称"
+    placeholder="请输入分析记录名称"
+    @close="promptState.open = false"
+    @confirm="handlePromptConfirm"
+  />
+
+  <ConfirmDialog
+    :open="showDeleteConfirm"
+    title="确认删除"
+    :message="`确定要删除分析记录'${deletingTitle}'吗？`"
+    confirm-text="删除"
+    confirm-variant="danger"
+    @close="showDeleteConfirm = false"
+    @confirm="confirmDelete"
+  />
 </template>
 
 <style scoped>
@@ -269,6 +324,8 @@ function getMenuItems(id: number, title: string): MenuItem[] {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  width: 200px;
+  max-width: 200px;
 }
 
 .item__actions {

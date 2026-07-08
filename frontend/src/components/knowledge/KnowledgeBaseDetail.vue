@@ -374,7 +374,7 @@ async function confirmDeleteDocument() {
             >
               <!-- @ts-ignore -->
               <AppIcon
-                :name="knowledgeBase?.icon || 'book'"
+                :name="knowledgeBase?.examAnalysisId ? 'pie-chart' : (knowledgeBase?.icon || 'book')"
                 :size="32"
                 :color="knowledgeBase?.color"
               />
@@ -466,7 +466,7 @@ async function confirmDeleteDocument() {
               <div style="display: flex; gap: 8px">
                 <AppButton variant="secondary" size="small" @click="handleExamAnalysis">
                   <template #icon>
-                    <span>🧠</span>
+                    <AppIcon name="zap" :size="14" />
                   </template>
                   {{ knowledgeBase?.examAnalysisId ? "查看分析" : "分析试卷" }}
                 </AppButton>
@@ -512,13 +512,13 @@ async function confirmDeleteDocument() {
                     <span>{{ doc.fileType }}</span>
                     <span>{{ formatFileSize(doc.fileSize) }}</span>
                     <span>{{ doc.chunkCount }} 个分块</span>
-                    <span
-                      >📄 类型：{{
-                        doc.fileName.includes("卷") || doc.fileName.includes("真题")
-                          ? "试卷"
-                          : "资料"
-                      }}</span
-                    >
+                    <span class="type-info">
+                      <AppIcon 
+                        :name="doc.fileName.includes('卷') || doc.fileName.includes('真题') ? 'pdf' : 'book'" 
+                        :size="12" 
+                      />
+                      <span>类型：{{ doc.fileName.includes('卷') || doc.fileName.includes('真题') ? '试卷' : '资料' }}</span>
+                    </span>
                   </div>
                 </div>
                 <div class="document-item__status">
@@ -921,7 +921,7 @@ async function confirmDeleteDocument() {
 }
 
 .mindmap-item-card__name {
-  font-weight: 500;
+  font-weight: 600;
   color: var(--color-text);
   white-space: nowrap;
   overflow: hidden;
@@ -1133,6 +1133,12 @@ async function confirmDeleteDocument() {
   color: var(--color-text-muted);
   display: flex;
   gap: 12px;
+}
+
+.type-info {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .document-item__status {

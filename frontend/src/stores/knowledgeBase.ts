@@ -16,7 +16,7 @@ export const useKnowledgeBaseStore = defineStore("knowledgeBase", () => {
       try {
         const user = JSON.parse(userStr);
         if (user && user.id) return String(user.id);
-      } catch {}
+      } catch { }
     }
     return "guest";
   }
@@ -49,6 +49,8 @@ export const useKnowledgeBaseStore = defineStore("knowledgeBase", () => {
       saveToStorage();
     } catch (error) {
       // 如果未登录或其他错误，保持列表为空
+      list.value = [];
+      saveToStorage();
       console.error("获取知识库列表失败:", error);
     }
   }
@@ -60,6 +62,8 @@ export const useKnowledgeBaseStore = defineStore("knowledgeBase", () => {
       saveToStorage();
     } catch (error) {
       // 如果未登录或其他错误，保持列表为空
+      list.value = [];
+      saveToStorage();
       console.error("获取知识库列表失败:", error);
     }
   }

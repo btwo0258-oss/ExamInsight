@@ -59,6 +59,7 @@ const themeStore = useThemeStore()
   display: block;
   transform: translateX(0);
   transition: transform 180ms ease;
+  margin-top: -1px;
 }
 
 .switch[aria-checked='true'] .switch__knob {

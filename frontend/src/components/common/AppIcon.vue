@@ -152,6 +152,50 @@ const props = withDefaults(defineProps<Props>(), { size: 20 });
   </svg>
 
   <svg
+    v-else-if="name === 'list'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    :style="{ color: props.color }"
+  >
+    <line x1="8" y1="6" x2="21" y2="6" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+    <line x1="8" y1="12" x2="21" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+    <line x1="8" y1="18" x2="21" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+    <line x1="3" y1="6" x2="3.01" y2="6" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+    <line x1="3" y1="12" x2="3.01" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+    <line x1="3" y1="18" x2="3.01" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+  </svg>
+
+  <svg
+    v-else-if="name === 'type'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    :style="{ color: props.color }"
+  >
+    <path d="M4 7V4h16v3M4 17v3h16v-3M9 4v16M15 4v16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  </svg>
+
+  <svg
+    v-else-if="name === 'sort'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    :style="{ color: props.color }"
+  >
+    <path d="M12 15V3M5 12l7 7 7-7M5 6l7 3 7-3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  </svg>
+
+  <svg
     v-else-if="name === 'sidebar-left'"
     class="icon"
     :width="props.size"
@@ -1401,6 +1445,22 @@ const props = withDefaults(defineProps<Props>(), { size: 20 });
       stroke-linecap="round"
       stroke-linejoin="round"
     />
+  </svg>
+
+  <svg
+    v-else-if="name === 'grid'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    :style="{ color: props.color }"
+  >
+    <rect x="3" y="3" width="7" height="7" rx="1" stroke="currentColor" stroke-width="2" />
+    <rect x="14" y="3" width="7" height="7" rx="1" stroke="currentColor" stroke-width="2" />
+    <rect x="3" y="14" width="7" height="7" rx="1" stroke="currentColor" stroke-width="2" />
+    <rect x="14" y="14" width="7" height="7" rx="1" stroke="currentColor" stroke-width="2" />
   </svg>
 
   <svg

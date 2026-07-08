@@ -5,8 +5,10 @@ import { useRouter } from "vue-router";
 import AppModal from "@/components/common/AppModal.vue";
 import AppButton from "@/components/common/AppButton.vue";
 import { useAuthStore } from "@/stores/auth";
+import { useThemeStore } from "@/stores/theme";
 import { forgotPassword } from "@/api/auth";
-import logoUrl from "@/assets/icons/Aether Logo SVG.jpg";
+import logoUrl from "@/assets/icons/ExamInsight-Logo.png";
+import logoWhiteUrl from "@/assets/icons/ExamInsight-Logo-White.png";
 
 type Props = { open: boolean };
 const props = defineProps<Props>();
@@ -14,6 +16,9 @@ const emit = defineEmits<{ close: [] }>();
 
 const authStore = useAuthStore();
 const router = useRouter();
+const themeStore = useThemeStore();
+
+const currentLogo = computed(() => logoWhiteUrl);
 
 const mode = ref<"login" | "register">("login");
 const username = ref("");
@@ -26,7 +31,9 @@ const showForgotPassword = ref(false);
 const forgotPasswordLoading = ref(false);
 const forgotPasswordMessage = ref("");
 
-const title = computed(() => (mode.value === "login" ? "欢迎来到Aether" : "欢迎来到Aether"));
+const title = computed(() =>
+  mode.value === "login" ? "欢迎来到ExamInsight" : "欢迎来到ExamInsight",
+);
 const subTitle = computed(() =>
   mode.value === "login" ? "请登录或注册以继续" : "请填写以下信息完成注册",
 );
@@ -76,7 +83,7 @@ async function handleForgotPassword() {
   try {
     const result = await forgotPassword(username.value);
     forgotPasswordMessage.value = result.message || "密码重置申请已提交，请等待管理员处理";
-    
+
     // Auto close after 2 seconds
     setTimeout(() => {
       showForgotPassword.value = false;
@@ -117,7 +124,7 @@ function goToAdminLogin() {
   <AppModal :open="open" :close-on-backdrop="true" @close="close">
     <div class="auth">
       <div class="auth__brand">
-        <div class="auth__logo"><img :src="logoUrl" alt="Logo" class="logo-img" /></div>
+        <div class="auth__logo"><img :src="currentLogo" alt="Logo" class="logo-img" /></div>
       </div>
 
       <div class="auth__title">{{ title }}</div>
@@ -247,7 +254,10 @@ function goToAdminLogin() {
         <div
           v-if="forgotPasswordMessage"
           class="forgot-password__message"
-          :class="{ success: forgotPasswordMessage.includes('成功') || forgotPasswordMessage.includes('已提交') }"
+          :class="{
+            success:
+              forgotPasswordMessage.includes('成功') || forgotPasswordMessage.includes('已提交'),
+          }"
         >
           {{ forgotPasswordMessage }}
         </div>
@@ -272,7 +282,7 @@ function goToAdminLogin() {
   display: flex;
   justify-content: center;
   align-items: center;
-  margin-bottom: 18px;
+  margin-bottom: 0;
 }
 
 .auth__logo {
@@ -282,9 +292,12 @@ function goToAdminLogin() {
 }
 
 .logo-img {
-  width: 80px;
-  height: auto;
+  width: 120px;
+  height: 120px;
   object-fit: contain;
+  border-radius: 4px;
+  transition: opacity 0.2s ease;
+  flex-shrink: 0;
 }
 
 .auth__brand-name {
@@ -324,6 +337,7 @@ function goToAdminLogin() {
 
 .field__input {
   width: 100%;
+  box-sizing: border-box;
   border: 0;
   border-radius: 14px;
   padding: 16px 16px;

@@ -151,15 +151,26 @@ function handleKeyDown(e: KeyboardEvent) {
 const showMindMapPanel = ref(false);
 const mindMapContent = ref("");
 const mindMapTitle = ref("");
+const mindMapSidebarCollapsed = ref(false);
+const messageListRef = ref<InstanceType<typeof MessageList> | null>(null);
+
+const messageListContainer = computed(() => {
+  return messageListRef.value?.scrollContainer ?? null;
+});
 
 function onGenerateMindmap(messageId: string, content: string) {
   mindMapContent.value = content;
   mindMapTitle.value = "";
   showMindMapPanel.value = true;
+  mindMapSidebarCollapsed.value = false;
 }
 
 function onMindMapSaved(mindMapId: number) {
   showMindMapPanel.value = false;
+}
+
+function handleToggleMindMapSidebar() {
+  mindMapSidebarCollapsed.value = !mindMapSidebarCollapsed.value;
 }
 
 onMounted(() => {
@@ -178,6 +189,7 @@ onUnmounted(() => {
     <div class="message-container">
       <MessageList
         v-if="!showWelcome"
+        ref="messageListRef"
         :conversation-id="activeChatId"
         :messages="messages"
         @generate-mindmap="onGenerateMindmap"
@@ -190,7 +202,7 @@ onUnmounted(() => {
       @send="onSend"
     />
 
-    <SegmentPanel v-if="!showWelcome" :conversation-id="activeChatId" />
+    <SegmentPanel v-if="!showWelcome" :conversation-id="activeChatId" :container-ref="messageListContainer" />
 
     <MindMapPanel
       :visible="showMindMapPanel"
@@ -198,7 +210,12 @@ onUnmounted(() => {
       :ai-title="mindMapTitle"
       @close="showMindMapPanel = false"
       @saved="onMindMapSaved"
+      @toggle-sidebar="handleToggleMindMapSidebar"
     />
+
+    <div v-if="showMindMapPanel && mindMapSidebarCollapsed" class="mindmap-fab" @click="handleToggleMindMapSidebar">
+      <AppIcon name="panel-left-open" :size="20" />
+    </div>
   </div>
 </template>
 
@@ -216,5 +233,30 @@ onUnmounted(() => {
   min-height: 0;
   overflow: hidden;
   position: relative;
+}
+
+.mindmap-fab {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 9998;
+  color: var(--color-text-muted);
+  transition: all 0.2s;
+}
+
+.mindmap-fab:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-primary);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
 }
 </style>

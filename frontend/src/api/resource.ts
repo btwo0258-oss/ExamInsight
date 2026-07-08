@@ -51,10 +51,13 @@ export async function downloadResource(id: number): Promise<void> {
 
     if (!response.ok) {
       if (response.status === 401) {
-        alert("未登录或登录已过期，请重新登录");
-        return;
+        throw new Error("未登录或登录已过期，请重新登录");
       }
-      throw new Error("下载失败");
+      if (response.status === 404) {
+        throw new Error("文件不存在，请联系管理员重新上传");
+      }
+      const errorText = await response.text();
+      throw new Error(`下载失败 (${response.status}): ${errorText || "请稍后重试"}`);
     }
 
     const contentDisposition = response.headers.get("Content-Disposition");
@@ -81,7 +84,7 @@ export async function downloadResource(id: number): Promise<void> {
     URL.revokeObjectURL(link.href);
   } catch (error) {
     console.error("Download failed:", error);
-    alert("下载失败，请稍后重试");
+    throw error;
   }
 }
 
