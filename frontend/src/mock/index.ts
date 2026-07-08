@@ -1,4 +1,5 @@
 import { ref } from "vue";
+export * from "./student";
 
 export const mockEnabled = ref(false);
 

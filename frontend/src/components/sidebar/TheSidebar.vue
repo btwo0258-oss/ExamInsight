@@ -4,6 +4,7 @@ import { useRouter } from "vue-router";
 
 import SidebarHeader from "./SidebarHeader.vue";
 import NewChatButton from "./NewChatButton.vue";
+import LearningWorkspaceSection from "./LearningWorkspaceSection.vue";
 import ResourceCenterSection from "./ResourceCenterSection.vue";
 import ConversationList from "./ConversationList.vue";
 import KnowledgeBaseSection from "./KnowledgeBaseSection.vue";
@@ -71,6 +72,7 @@ watch(
     <div class="sidebar-wrap__scroll">
       <NewChatButton />
 
+      <LearningWorkspaceSection />
       <ResourceCenterSection />
       <KnowledgeBaseSection />
       <ExamAnalysisSection />
