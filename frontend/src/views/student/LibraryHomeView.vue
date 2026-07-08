@@ -68,7 +68,6 @@ function useForLearning(id: number) {
               </div>
               <div class="card-actions">
                 <button class="soft-btn" type="button" @click="useForLearning(item.id)">
-                  <AppIcon name="graduation" :size="16" />
                   用于智能学习
                 </button>
                 <button class="line-btn" type="button" @click="router.push(`/library/${item.id}`)">
@@ -183,6 +182,11 @@ function useForLearning(id: number) {
   background: #fffffc;
 }
 
+.library-page,
+.library-page * {
+  box-sizing: border-box;
+}
+
 .page-title,
 .toolbar,
 .main-grid,
@@ -257,10 +261,10 @@ h1 {
 }
 
 .primary-btn {
-  border: 1px solid #2563eb;
-  background: #2563eb;
+  border: 1px solid #111827;
+  background: #111827;
   color: #fff;
-  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.18);
+  box-shadow: 0 10px 22px rgba(17, 24, 39, 0.12);
 }
 
 .main-grid {
@@ -322,8 +326,8 @@ h1 {
 }
 
 .view-switch button.active {
-  background: #edf4ff;
-  color: #2563eb;
+  background: #f2f4f7;
+  color: #111827;
 }
 
 .library-grid {
@@ -388,15 +392,18 @@ h1 {
 
 .card-actions {
   margin-top: auto;
-  display: flex;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
 }
 
 .soft-btn,
 .line-btn {
   height: 40px;
-  padding: 0 10px;
-  font-size: 12px;
+  width: 100%;
+  min-width: 0;
+  padding: 0 6px;
+  font-size: 11px;
   white-space: nowrap;
 }
 
@@ -407,16 +414,16 @@ h1 {
 }
 
 .line-btn {
-  border: 1px solid #9ab9ff;
+  border: 1px solid #cfd7e3;
   background: #fffffc;
-  color: #2563eb;
+  color: #111827;
 }
 
 .more-link,
 .all-files {
   border: 0;
   background: transparent;
-  color: #2563eb;
+  color: #111827;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -434,7 +441,7 @@ h1 {
   border: 1px solid #dbe2ec;
   border-radius: 8px;
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr) 138px;
+  grid-template-columns: 48px minmax(0, 1fr) 124px;
   align-items: center;
   gap: 16px;
   padding: 16px;
@@ -451,6 +458,7 @@ h1 {
 }
 
 .public-card > button {
+  width: 100%;
   height: 38px;
   border: 1px solid #cfd7e3;
   border-radius: 6px;
@@ -458,6 +466,8 @@ h1 {
   color: #344054;
   cursor: pointer;
   font-weight: 700;
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .tags {

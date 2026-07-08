@@ -115,6 +115,11 @@ const library = computed(() => courseLibraries.find((item) => item.id === plan.v
   background: #fffffc;
 }
 
+.plan-page,
+.plan-page * {
+  box-sizing: border-box;
+}
+
 .hero,
 .agent-strip,
 .layout-grid {
@@ -155,7 +160,7 @@ p {
 }
 
 .eyebrow {
-  color: #2563eb;
+  color: #111827;
   font-weight: 800;
   font-size: 13px;
 }
@@ -193,8 +198,8 @@ h1 {
 }
 
 .primary-btn {
-  border: 1px solid #2563eb;
-  background: #2563eb;
+  border: 1px solid #111827;
+  background: #111827;
   color: #fff;
 }
 
@@ -324,8 +329,8 @@ h1 {
 
 .stage--done .stage-index,
 .stage--active .stage-index {
-  background: #2563eb;
-  border-color: #2563eb;
+  background: #111827;
+  border-color: #111827;
   color: #fff;
 }
 
@@ -337,8 +342,8 @@ h1 {
 }
 
 .stage--active .stage-card {
-  border-color: #bfdbfe;
-  background: #f7fbff;
+  border-color: #dbe2ec;
+  background: #f8fafc;
 }
 
 .stage-head {
@@ -387,7 +392,7 @@ h1 {
 .title-between button {
   border: 0;
   background: transparent;
-  color: #2563eb;
+  color: #111827;
   display: inline-flex;
   align-items: center;
   gap: 6px;

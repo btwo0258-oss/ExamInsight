@@ -67,6 +67,11 @@ const groups = computed(() => Array.from(new Set(plan.value.resources.map((item)
   background: #fffffc;
 }
 
+.resources-page,
+.resources-page * {
+  box-sizing: border-box;
+}
+
 .page-head,
 .group-panel {
   max-width: 1040px;
@@ -167,10 +172,10 @@ h1 {
 
 .resource-card button {
   height: 38px;
-  border: 1px solid #9ab9ff;
+  border: 1px solid #cfd7e3;
   border-radius: 8px;
   background: #fffffc;
-  color: #2563eb;
+  color: #111827;
   cursor: pointer;
   font-weight: 700;
 }

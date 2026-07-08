@@ -111,7 +111,7 @@ function go(path: string) {
 .new-chat {
   height: 54px;
   border-radius: 8px;
-  background: #2563eb;
+  background: #111827;
   color: #fff;
   display: flex;
   align-items: center;
@@ -119,7 +119,7 @@ function go(path: string) {
   gap: 10px;
   font-size: 17px;
   font-weight: 700;
-  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.18);
+  box-shadow: 0 10px 22px rgba(17, 24, 39, 0.12);
 }
 
 .nav {
@@ -143,8 +143,8 @@ function go(path: string) {
 
 .nav-item:hover,
 .nav-item--active {
-  background: #edf4ff;
-  color: #1f66f2;
+  background: #f2f4f7;
+  color: #111827;
 }
 
 .recent {
@@ -174,7 +174,7 @@ function go(path: string) {
 }
 
 .recent-item:hover {
-  color: #1f66f2;
+  color: #111827;
 }
 
 .recent-item span {

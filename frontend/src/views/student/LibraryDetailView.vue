@@ -143,6 +143,11 @@ const library = computed(() => courseLibraries.find((item) => item.id === Number
   background: #fffffc;
 }
 
+.detail-page,
+.detail-page * {
+  box-sizing: border-box;
+}
+
 .hero,
 .stats,
 .content-grid {
@@ -231,8 +236,8 @@ h1 {
 }
 
 .primary-btn {
-  border: 1px solid #2563eb;
-  background: #2563eb;
+  border: 1px solid #111827;
+  background: #111827;
   color: #fff;
 }
 

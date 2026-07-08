@@ -206,6 +206,11 @@ function startAnalysis() {
   background: #fffffc;
 }
 
+.learning-page,
+.learning-page * {
+  box-sizing: border-box;
+}
+
 .page-title {
   max-width: 1260px;
   margin: 0 auto 26px;
@@ -266,8 +271,8 @@ h1 {
   display: grid;
   place-items: center;
   border-radius: 8px;
-  background: #edf4ff;
-  color: #2563eb;
+  background: #f2f4f7;
+  color: #111827;
 }
 
 h2 {
@@ -284,8 +289,8 @@ h2 {
 
 .goal-box textarea {
   width: 100%;
-  min-height: 146px;
-  resize: vertical;
+  min-height: 128px;
+  resize: none;
   border: 1px solid #cfd7e3;
   border-radius: 8px;
   padding: 18px 18px 34px;
@@ -296,8 +301,8 @@ h2 {
 }
 
 .goal-box textarea:focus {
-  border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+  border-color: #111827;
+  box-shadow: 0 0 0 3px rgba(17, 24, 39, 0.08);
 }
 
 .goal-box span {
@@ -340,11 +345,11 @@ h2 {
 .primary-btn {
   justify-self: end;
   min-width: 178px;
-  border: 1px solid #2563eb;
-  background: #2563eb;
+  border: 1px solid #111827;
+  background: #111827;
   color: #fff;
   font-size: 16px;
-  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.18);
+  box-shadow: 0 10px 22px rgba(17, 24, 39, 0.12);
 }
 
 .profile-panel {
@@ -388,7 +393,7 @@ h2 {
 
 .content-grid {
   display: grid;
-  grid-template-columns: 316px minmax(0, 1fr) 466px;
+  grid-template-columns: 300px minmax(0, 1fr) 400px;
   gap: 16px;
 }
 
@@ -412,6 +417,11 @@ h2 {
   color: #344054;
   height: 34px;
   padding: 0 12px;
+  white-space: nowrap;
+}
+
+.plan-panel .panel-title h2 {
+  white-space: nowrap;
 }
 
 .progress-list {
@@ -439,8 +449,8 @@ h2 {
 }
 
 .progress-step:first-child .step-number {
-  background: #2563eb;
-  border-color: #2563eb;
+  background: #111827;
+  border-color: #111827;
   color: #fff;
 }
 
@@ -465,8 +475,8 @@ h2 {
 }
 
 .progress-step small.active {
-  background: #edf4ff;
-  border-color: #c7dbff;
+  background: #eef6ff;
+  border-color: #bfdbfe;
   color: #2563eb;
 }
 
@@ -488,14 +498,14 @@ h2 {
   border-radius: 999px;
   display: grid;
   place-items: center;
-  background: #2563eb;
+  background: #111827;
   color: #fff;
   font-weight: 800;
 }
 
 .path-card > div {
-  border: 1px solid #cfe0fb;
-  background: #f7fbff;
+  border: 1px solid #dbe2ec;
+  background: #f8fafc;
   border-radius: 8px;
   padding: 14px 16px;
 }
@@ -529,7 +539,7 @@ h2 {
   margin: 16px auto 0;
   border-color: transparent;
   background: transparent;
-  color: #2563eb;
+  color: #111827;
 }
 
 .resource-grid {
@@ -575,7 +585,7 @@ h2 {
   margin: 22px auto 0;
   border-color: transparent;
   background: transparent;
-  color: #2563eb;
+  color: #111827;
 }
 
 .selected-source {
