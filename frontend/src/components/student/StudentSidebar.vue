@@ -1,16 +1,22 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
-import { recentConversations } from '@/mock'
+import { learningPlans, recentConversations } from '@/mock'
 
 const route = useRoute()
 const router = useRouter()
+const learningExpanded = ref(true)
 
 const activeSection = computed(() => {
   if (route.path.startsWith('/library')) return 'library'
   if (route.path.startsWith('/learning')) return 'learning'
   return 'chat'
+})
+
+const activeLearningId = computed(() => {
+  const rawId = route.params.id
+  return typeof rawId === 'string' ? Number(rawId) : null
 })
 
 function go(path: string) {
@@ -25,7 +31,7 @@ function go(path: string) {
     </button>
 
     <button class="new-chat" type="button" @click="go('/chat')">
-      <AppIcon name="plus" :size="20" />
+      <AppIcon name="edit" :size="16" />
       <span>新对话</span>
     </button>
 
@@ -34,11 +40,41 @@ function go(path: string) {
         class="nav-item"
         :class="{ 'nav-item--active': activeSection === 'learning' }"
         type="button"
-        @click="go('/learning')"
+        @click="learningExpanded = !learningExpanded"
       >
         <AppIcon name="graduation" :size="20" />
         <span>智能学习</span>
+        <AppIcon
+          class="nav-chevron"
+          :name="learningExpanded ? 'chevron-down' : 'chevron-right'"
+          :size="16"
+        />
       </button>
+
+      <div v-if="learningExpanded" class="learning-tree">
+        <button
+          class="tree-item tree-item--new"
+          :class="{ 'tree-item--active': route.path === '/learning' || route.path === '/learning/new' }"
+          type="button"
+          @click="go('/learning/new')"
+        >
+          <AppIcon name="plus" :size="14" />
+          <span>新建智能学习</span>
+        </button>
+        <button
+          v-for="plan in learningPlans"
+          :key="plan.id"
+          class="tree-item"
+          :class="{ 'tree-item--active': activeLearningId === plan.id }"
+          type="button"
+          @click="go(`/learning/${plan.id}`)"
+        >
+          <AppIcon name="notebook" :size="15" />
+          <span>{{ plan.title.replace('方案', '') }}</span>
+          <small>{{ plan.updatedAt }}</small>
+        </button>
+      </div>
+
       <button
         class="nav-item"
         :class="{ 'nav-item--active': activeSection === 'library' }"
@@ -81,7 +117,7 @@ function go(path: string) {
   display: flex;
   flex-direction: column;
   padding: 32px 20px 24px;
-  gap: 20px;
+  gap: 14px;
 }
 
 .brand,
@@ -109,42 +145,103 @@ function go(path: string) {
 }
 
 .new-chat {
-  height: 54px;
-  border-radius: 8px;
-  background: #111827;
-  color: #fff;
+  height: 34px;
+  border-radius: 6px;
+  color: #344054;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 10px;
-  font-size: 17px;
-  font-weight: 700;
-  box-shadow: 0 10px 22px rgba(17, 24, 39, 0.12);
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 0 8px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.new-chat:hover {
+  background: #f2f4f7;
+  color: #111827;
 }
 
 .nav {
   display: grid;
-  gap: 8px;
-  padding-bottom: 20px;
+  gap: 6px;
+  padding: 6px 0 16px;
   border-bottom: 1px solid #e6ebf3;
 }
 
 .nav-item {
-  height: 48px;
+  height: 44px;
   border-radius: 8px;
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 0 16px;
+  padding: 0 14px;
   font-size: 16px;
   font-weight: 700;
   color: #273246;
+}
+
+.nav-item span {
+  flex: 1;
+  text-align: left;
+}
+
+.nav-chevron {
+  color: #667085;
 }
 
 .nav-item:hover,
 .nav-item--active {
   background: #f2f4f7;
   color: #111827;
+}
+
+.learning-tree {
+  display: grid;
+  gap: 3px;
+  padding: 2px 0 6px 30px;
+}
+
+.tree-item {
+  width: 100%;
+  min-height: 34px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #667085;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px;
+  text-align: left;
+  font: inherit;
+}
+
+.tree-item:hover,
+.tree-item--active {
+  background: #f2f4f7;
+  color: #111827;
+}
+
+.tree-item--new {
+  color: #344054;
+  font-weight: 600;
+}
+
+.tree-item span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+}
+
+.tree-item small {
+  color: #8a94a6;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .recent {

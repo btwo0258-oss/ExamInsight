@@ -11,6 +11,7 @@ const router = createRouter({
     { path: '/chat', name: 'chat', component: ChatView },
     { path: '/chat/:id', name: 'chat-detail', component: ChatView, props: true },
     { path: '/learning', name: 'learning-home', component: () => import('@/views/student/LearningHomeView.vue') },
+    { path: '/learning/new', name: 'learning-new', component: () => import('@/views/student/LearningHomeView.vue') },
     { path: '/learning/:id', name: 'learning-plan', component: () => import('@/views/student/LearningPlanView.vue'), props: true },
     { path: '/learning/:id/resources', name: 'learning-resources', component: () => import('@/views/student/LearningResourcesView.vue'), props: true },
     { path: '/library', name: 'library-home', component: () => import('@/views/student/LibraryHomeView.vue') },

@@ -38,6 +38,7 @@ export type LearningPlan = {
   id: number
   title: string
   goal: string
+  updatedAt: string
   libraryId: number
   profile: Array<{ label: string; value: string }>
   stages: Array<{
@@ -139,6 +140,7 @@ export const learningPlans: LearningPlan[] = [
     id: 1,
     title: 'Java 面向对象期末复习方案',
     goal: '两周内掌握继承、多态、接口，并能完成代码实操题',
+    updatedAt: '3 分',
     libraryId: 1,
     profile: [
       { label: '专业方向', value: '计算机相关' },
@@ -220,5 +222,160 @@ export const learningPlans: LearningPlan[] = [
       { name: '内容审核', desc: '已完成引用和安全检查', status: 'done' },
     ],
   },
+  {
+    id: 2,
+    title: '人工智能导论阶段学习方案',
+    goal: '梳理搜索算法、机器学习基础和知识表示，完成课堂复盘',
+    updatedAt: '昨天',
+    libraryId: 2,
+    profile: [
+      { label: '专业方向', value: '人工智能方向' },
+      { label: '知识基础', value: '数学基础一般，算法概念需补齐' },
+      { label: '学习目标', value: '完成导论课程阶段复习' },
+      { label: '认知偏好', value: '图解 + 案例推演' },
+      { label: '易错点', value: '搜索策略、启发式函数、过拟合' },
+      { label: '学习节奏', value: '按章节逐步推进' },
+    ],
+    stages: [
+      {
+        id: 1,
+        title: '搜索算法梳理',
+        duration: '2 天',
+        goal: '理解 BFS、DFS、A* 的适用条件和差异',
+        resources: ['对比讲义', '流程图'],
+        status: 'active',
+      },
+      {
+        id: 2,
+        title: '机器学习基础',
+        duration: '3 天',
+        goal: '掌握监督学习、训练集、测试集和模型评估',
+        resources: ['概念卡片', '练习题'],
+        status: 'pending',
+      },
+      {
+        id: 3,
+        title: '知识表示复盘',
+        duration: '2 天',
+        goal: '整理谓词逻辑、语义网络和产生式系统',
+        resources: ['思维导图', '拓展阅读'],
+        status: 'pending',
+      },
+    ],
+    resources: [
+      {
+        id: 1,
+        group: '文档',
+        title: '搜索算法个性化讲义',
+        desc: '把典型搜索算法按适用场景重排讲解',
+        action: '查看',
+      },
+      {
+        id: 2,
+        group: '结构图',
+        title: 'AI 导论知识结构图',
+        desc: '串联搜索、学习和知识表示三类内容',
+        action: '打开导图',
+      },
+      {
+        id: 3,
+        group: '练习',
+        title: '导论阶段练习 24 道',
+        desc: '覆盖概念判断、算法选择和简答题',
+        action: '开始练习',
+      },
+      {
+        id: 4,
+        group: '实操',
+        title: 'A* 搜索路径案例',
+        desc: '用网格路径规划理解启发式搜索',
+        action: '查看案例',
+      },
+    ],
+    agents: [
+      { name: '画像分析', desc: '已识别导论课学习目标', status: 'done' },
+      { name: '资料理解', desc: '已分析 8 个文件和 214 个知识片段', status: 'done' },
+      { name: '资源生成', desc: '讲义、导图和练习已生成', status: 'done' },
+      { name: '路径规划', desc: '已生成 3 阶段学习路径', status: 'done' },
+      { name: '内容审核', desc: '已完成引用和安全检查', status: 'done' },
+    ],
+  },
+  {
+    id: 3,
+    title: '英语四级阅读强化方案',
+    goal: '提升阅读定位、长难句拆解和主旨题判断能力',
+    updatedAt: '1 周',
+    libraryId: 3,
+    profile: [
+      { label: '专业方向', value: '大学英语四级' },
+      { label: '知识基础', value: '词汇量中等，长难句薄弱' },
+      { label: '学习目标', value: '四周内提升阅读正确率' },
+      { label: '认知偏好', value: '例题拆解 + 错题复盘' },
+      { label: '易错点', value: '主旨题、推断题、细节定位' },
+      { label: '学习节奏', value: '每天一篇精读训练' },
+    ],
+    stages: [
+      {
+        id: 1,
+        title: '词汇与句法补齐',
+        duration: '5 天',
+        goal: '补齐高频词和长难句拆解方法',
+        resources: ['词汇卡片', '句法讲义'],
+        status: 'done',
+      },
+      {
+        id: 2,
+        title: '题型策略训练',
+        duration: '10 天',
+        goal: '分别训练细节题、主旨题和推断题',
+        resources: ['题型讲义', '分层练习'],
+        status: 'active',
+      },
+      {
+        id: 3,
+        title: '真题套练复盘',
+        duration: '12 天',
+        goal: '完成真题练习并沉淀错题原因',
+        resources: ['真题训练', '错题清单'],
+        status: 'pending',
+      },
+    ],
+    resources: [
+      {
+        id: 1,
+        group: '文档',
+        title: '阅读题型策略讲义',
+        desc: '按题型总结定位、排除和复盘方法',
+        action: '查看',
+      },
+      {
+        id: 2,
+        group: '结构图',
+        title: '长难句拆解流程图',
+        desc: '把主干识别和修饰成分拆成步骤',
+        action: '打开导图',
+      },
+      {
+        id: 3,
+        group: '练习',
+        title: '阅读强化练习 40 道',
+        desc: '覆盖细节题、推断题和主旨题',
+        action: '开始练习',
+      },
+      {
+        id: 4,
+        group: '实操',
+        title: '真题精读复盘案例',
+        desc: '示范如何从错题反推阅读策略',
+        action: '查看案例',
+      },
+    ],
+    agents: [
+      { name: '画像分析', desc: '已识别阅读薄弱点', status: 'done' },
+      { name: '资料理解', desc: '已分析 36 个文件和 690 个知识片段', status: 'done' },
+      { name: '资源生成', desc: '讲义、导图和练习已生成', status: 'done' },
+      { name: '路径规划', desc: '已生成 3 阶段学习路径', status: 'done' },
+      { name: '内容审核', desc: '已完成引用和安全检查', status: 'done' },
+    ],
+  },
 ]
-

@@ -14,48 +14,50 @@ const groups = computed(() => Array.from(new Set(plan.value.resources.map((item)
 <template>
   <StudentShell>
     <div class="resources-page">
-      <header class="page-head">
-        <button type="button" @click="router.push(`/learning/${plan.id}`)">
-          <AppIcon name="chevron-left" :size="18" />
-          返回方案
-        </button>
-        <h1>资源包</h1>
-        <p>{{ plan.title }} 生成的个性化学习资源，后续可接入预览、导出、练习和代码运行。</p>
-      </header>
+      <div class="content-wrap">
+        <header class="page-head">
+          <button type="button" @click="router.push(`/learning/${plan.id}`)">
+            <AppIcon name="chevron-left" :size="14" />
+            返回方案
+          </button>
+          <h1>资源包</h1>
+          <p>{{ plan.title }} 生成的个性化学习资源，后续可接入预览、导出、练习和代码运行。</p>
+        </header>
 
-      <section v-for="group in groups" :key="group" class="group-panel">
-        <div class="group-head">
-          <h2>{{ group }}</h2>
-          <span>{{ plan.resources.filter((item) => item.group === group).length }} 份资源</span>
-        </div>
-        <div class="cards">
-          <article
-            v-for="item in plan.resources.filter((resource) => resource.group === group)"
-            :key="item.id"
-            class="resource-card"
-          >
-            <span class="resource-icon">
-              <AppIcon
-                :name="
-                  item.group === '文档'
-                    ? 'file'
-                    : item.group === '结构图'
-                      ? 'mind-topic'
-                      : item.group === '练习'
-                        ? 'edit'
-                        : 'code'
-                "
-                :size="32"
-              />
-            </span>
-            <div>
-              <h3>{{ item.title }}</h3>
-              <p>{{ item.desc }}</p>
-            </div>
-            <button type="button">{{ item.action }}</button>
-          </article>
-        </div>
-      </section>
+        <section v-for="group in groups" :key="group" class="group-panel">
+          <div class="group-head">
+            <h2>{{ group }}</h2>
+            <span>{{ plan.resources.filter((item) => item.group === group).length }} 份资源</span>
+          </div>
+          <div class="cards">
+            <article
+              v-for="item in plan.resources.filter((resource) => resource.group === group)"
+              :key="item.id"
+              class="resource-card"
+            >
+              <span class="resource-icon">
+                <AppIcon
+                  :name="
+                    item.group === '文档'
+                      ? 'file'
+                      : item.group === '结构图'
+                        ? 'mind-topic'
+                        : item.group === '练习'
+                          ? 'edit'
+                          : 'code'
+                  "
+                  :size="32"
+                />
+              </span>
+              <div>
+                <h3>{{ item.title }}</h3>
+                <p>{{ item.desc }}</p>
+              </div>
+              <button type="button">{{ item.action }}</button>
+            </article>
+          </div>
+        </section>
+      </div>
     </div>
   </StudentShell>
 </template>
@@ -72,11 +74,15 @@ const groups = computed(() => Array.from(new Set(plan.value.resources.map((item)
   box-sizing: border-box;
 }
 
-.page-head,
-.group-panel {
+.content-wrap {
   max-width: 1040px;
   margin-left: auto;
   margin-right: auto;
+}
+
+.page-head,
+.group-panel {
+  width: 100%;
 }
 
 h1,
