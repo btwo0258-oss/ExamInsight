@@ -39,6 +39,8 @@ const progressSteps = [
   { id: 4, title: '路径规划', desc: '规划最优学习路径', status: '等待中' },
 ]
 
+const quickGoals = ['两周掌握继承与多态', '期末复习重点', '准备面试', '完成课程作业']
+
 function selectLibrary(id: number) {
   selectedLibraryId.value = id
   libraryModalOpen.value = false
@@ -54,6 +56,7 @@ function startAnalysis() {
     <div class="learning-page">
       <header class="page-title">
         <h1>智能学习</h1>
+        <p>基于你的学习目标和资料库，生成个性化学习方案与资源。</p>
       </header>
 
       <div class="top-grid">
@@ -61,6 +64,25 @@ function startAnalysis() {
           <div class="ask-title">
             <span class="icon-box"><AppIcon name="message-square" :size="22" /></span>
             <h2>今天想解决什么学习问题？</h2>
+          </div>
+
+          <div class="setup-grid">
+            <label class="select-field">
+              <span>选择课程（可选）</span>
+              <select>
+                <option>Java 面向对象程序设计</option>
+                <option>人工智能导论</option>
+                <option>大学英语四级阅读</option>
+              </select>
+            </label>
+            <div class="selected-library-card">
+              <span>已选择资料库</span>
+              <button v-if="selectedLibrary" type="button" @click="libraryModalOpen = true">
+                {{ selectedLibrary.name }}
+                <AppIcon name="close" :size="14" />
+              </button>
+              <button v-else type="button" @click="libraryModalOpen = true">选择资料库</button>
+            </div>
           </div>
 
           <label class="goal-box">
@@ -71,6 +93,13 @@ function startAnalysis() {
             />
             <span>{{ goal.length }}/500</span>
           </label>
+
+          <div class="quick-goals">
+            <span>推荐目标：</span>
+            <button v-for="item in quickGoals" :key="item" type="button" @click="goal = item">
+              {{ item }}
+            </button>
+          </div>
 
           <div class="action-row">
             <button class="outline-btn" type="button" @click="uploadModalOpen = true">
@@ -229,6 +258,11 @@ h1 {
   color: #111827;
 }
 
+.page-title p {
+  margin-top: 8px;
+  color: #667085;
+}
+
 .top-grid,
 .content-grid,
 .selected-source {
@@ -275,6 +309,44 @@ h1 {
   color: #111827;
 }
 
+.setup-grid {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.select-field,
+.selected-library-card {
+  display: grid;
+  gap: 8px;
+}
+
+.select-field span,
+.selected-library-card > span {
+  color: #344054;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.select-field select,
+.selected-library-card button {
+  height: 44px;
+  border: 1px solid #cfd7e3;
+  border-radius: 8px;
+  background: #fffffc;
+  color: #1f2937;
+  padding: 0 12px;
+}
+
+.selected-library-card button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+}
+
 h2 {
   font-size: 20px;
   font-weight: 800;
@@ -284,7 +356,7 @@ h2 {
 .goal-box {
   position: relative;
   display: block;
-  margin-top: 18px;
+  margin-top: 16px;
 }
 
 .goal-box textarea {
@@ -314,11 +386,35 @@ h2 {
 }
 
 .action-row {
-  margin-top: 26px;
+  margin-top: 22px;
   display: grid;
   grid-template-columns: 160px 180px 1fr;
   gap: 16px;
   align-items: center;
+}
+
+.quick-goals {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.quick-goals span {
+  color: #667085;
+  font-size: 13px;
+}
+
+.quick-goals button {
+  height: 28px;
+  border: 1px solid #dbe2ec;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #344054;
+  padding: 0 10px;
+  cursor: pointer;
+  font-size: 13px;
 }
 
 .outline-btn,
@@ -613,6 +709,7 @@ h2 {
   }
 
   .action-row,
+  .setup-grid,
   .resource-grid {
     grid-template-columns: 1fr;
   }

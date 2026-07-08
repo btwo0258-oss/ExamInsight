@@ -9,9 +9,12 @@ import { courseLibraries, publicResources, recentUploads, type PublicResource } 
 const router = useRouter()
 const uploadOpen = ref(false)
 const joinResource = ref<PublicResource | null>(null)
+const newLibraryOpen = ref(false)
+const addMode = ref<'existing' | 'new'>('existing')
+const addToLearning = ref(true)
 
 function useForLearning(id: number) {
-  router.push({ path: '/learning', query: { libraryId: id } })
+  router.push({ path: '/learning/new', query: { libraryId: id } })
 }
 </script>
 
@@ -31,7 +34,7 @@ function useForLearning(id: number) {
           <AppIcon name="upload-cloud" :size="22" />
           上传资料
         </button>
-        <button class="primary-btn" type="button">
+        <button class="primary-btn" type="button" @click="newLibraryOpen = true">
           <AppIcon name="folder" :size="20" />
           新建资料库
         </button>
@@ -99,7 +102,7 @@ function useForLearning(id: number) {
                   <span v-for="tag in item.desc.split('、').slice(0, 3)" :key="tag">{{ tag }}</span>
                 </div>
               </div>
-              <button type="button" @click="joinResource = item">加入我的资料库</button>
+              <button type="button" @click="joinResource = item">查看详情</button>
             </article>
           </div>
         </aside>
@@ -154,21 +157,102 @@ function useForLearning(id: number) {
     <UploadMaterialModal :open="uploadOpen" @close="uploadOpen = false" />
 
     <div v-if="joinResource" class="modal-backdrop" @click.self="joinResource = null">
-      <section class="join-modal">
+      <section class="resource-modal">
         <header>
-          <h2>加入我的资料库</h2>
+          <h2>{{ joinResource.title }}</h2>
           <button type="button" @click="joinResource = null">×</button>
         </header>
-        <p>将「{{ joinResource.title }}」加入已有资料库，后续可直接用于智能学习分析。</p>
-        <label>
-          <span>选择资料库</span>
-          <select>
-            <option v-for="item in courseLibraries" :key="item.id">{{ item.name }}</option>
-          </select>
-        </label>
+        <div class="resource-modal-body">
+          <div class="resource-file">
+            <AppIcon name="file" :size="38" />
+            <div>
+              <strong>{{ joinResource.type }}</strong>
+              <span>公共资源 · {{ joinResource.category }}</span>
+            </div>
+          </div>
+
+          <dl class="resource-meta">
+            <div>
+              <dt>类型</dt>
+              <dd>{{ joinResource.type }}</dd>
+            </div>
+            <div>
+              <dt>大小</dt>
+              <dd>2.3 MB</dd>
+            </div>
+            <div>
+              <dt>来源</dt>
+              <dd>公共资源</dd>
+            </div>
+            <div>
+              <dt>下载量</dt>
+              <dd>128 次</dd>
+            </div>
+          </dl>
+
+          <p>{{ joinResource.desc }}，适合加入资料库后用于知识理解、个性化学习分析和资源生成。</p>
+
+          <section class="join-options">
+            <h3>加入到我的资料库</h3>
+            <label class="radio-row">
+              <input v-model="addMode" type="radio" value="existing" />
+              <span>选择已有资料库</span>
+              <select :disabled="addMode !== 'existing'">
+                <option v-for="item in courseLibraries" :key="item.id">{{ item.name }}</option>
+              </select>
+            </label>
+            <label class="radio-row">
+              <input v-model="addMode" type="radio" value="new" />
+              <span>新建资料库</span>
+              <input :disabled="addMode !== 'new'" placeholder="请输入资料库名称" />
+            </label>
+            <label class="check-row">
+              <input v-model="addToLearning" type="checkbox" />
+              <span>加入后立即用于智能学习</span>
+            </label>
+          </section>
+        </div>
         <footer>
           <button class="outline-btn" type="button" @click="joinResource = null">取消</button>
-          <button class="primary-btn" type="button" @click="joinResource = null">确认加入</button>
+          <button class="outline-btn" type="button">预览</button>
+          <button
+            class="primary-btn"
+            type="button"
+            @click="
+              addToLearning
+                ? router.push({ path: '/learning/new', query: { libraryId: courseLibraries[0]?.id } })
+                : (joinResource = null)
+            "
+          >
+            加入我的资料库
+          </button>
+        </footer>
+      </section>
+    </div>
+
+    <div v-if="newLibraryOpen" class="modal-backdrop" @click.self="newLibraryOpen = false">
+      <section class="new-library-modal">
+        <header>
+          <h2>新建资料库</h2>
+          <button type="button" @click="newLibraryOpen = false">×</button>
+        </header>
+        <div class="new-library-form">
+          <label>
+            <span>资料库名称</span>
+            <input placeholder="例如：Java 面向对象" />
+          </label>
+          <label>
+            <span>所属课程</span>
+            <input placeholder="例如：Java 程序设计" />
+          </label>
+          <label>
+            <span>说明</span>
+            <textarea placeholder="简单说明资料库用途，便于后续智能学习分析" />
+          </label>
+        </div>
+        <footer>
+          <button class="outline-btn" type="button" @click="newLibraryOpen = false">取消</button>
+          <button class="primary-btn" type="button" @click="newLibraryOpen = false">创建资料库</button>
         </footer>
       </section>
     </div>
@@ -269,7 +353,7 @@ h1 {
 
 .main-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 520px;
+  grid-template-columns: minmax(560px, 1fr) 430px;
   gap: 24px;
 }
 
@@ -332,7 +416,7 @@ h1 {
 
 .library-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
 }
 
@@ -402,8 +486,8 @@ h1 {
   height: 40px;
   width: 100%;
   min-width: 0;
-  padding: 0 6px;
-  font-size: 11px;
+  padding: 0 8px;
+  font-size: 12px;
   white-space: nowrap;
 }
 
@@ -553,8 +637,9 @@ td:first-child {
   background: rgba(15, 23, 42, 0.34);
 }
 
-.join-modal {
-  width: min(480px, 100%);
+.resource-modal,
+.new-library-modal {
+  width: min(620px, 100%);
   padding: 20px;
   border-radius: 8px;
   background: #fffffc;
@@ -562,15 +647,18 @@ td:first-child {
   box-shadow: 0 22px 60px rgba(15, 23, 42, 0.2);
 }
 
-.join-modal header,
-.join-modal footer {
+.resource-modal header,
+.resource-modal footer,
+.new-library-modal header,
+.new-library-modal footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
 }
 
-.join-modal header button {
+.resource-modal header button,
+.new-library-modal header button {
   border: 0;
   background: transparent;
   color: #667085;
@@ -578,34 +666,148 @@ td:first-child {
   font-size: 24px;
 }
 
-.join-modal p {
-  margin: 14px 0;
+.resource-modal-body {
+  display: grid;
+  gap: 16px;
+  margin-top: 14px;
+}
+
+.resource-file {
+  display: grid;
+  grid-template-columns: 54px 1fr;
+  gap: 14px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid #dbe2ec;
+  border-radius: 8px;
+}
+
+.resource-file :deep(.icon) {
+  width: 52px;
+  height: 52px;
+  padding: 10px;
+  border-radius: 8px;
+  background: #f2f4f7;
+}
+
+.resource-file strong,
+.resource-file span {
+  display: block;
+}
+
+.resource-file span,
+.resource-modal p {
   color: #667085;
   line-height: 1.6;
 }
 
-.join-modal label {
+.resource-meta {
+  margin: 0;
   display: grid;
-  gap: 8px;
-  color: #344054;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.resource-meta div {
+  padding: 10px;
+  border: 1px solid #e6ebf3;
+  border-radius: 8px;
+}
+
+.resource-meta dt {
+  color: #667085;
+  font-size: 12px;
+}
+
+.resource-meta dd {
+  margin: 4px 0 0;
+  color: #111827;
   font-weight: 700;
 }
 
-.join-modal select {
-  height: 42px;
+.join-options {
+  padding-top: 14px;
+  border-top: 1px solid #e6ebf3;
+}
+
+.join-options h3 {
+  margin-bottom: 12px;
+  font-size: 16px;
+}
+
+.radio-row {
+  display: grid;
+  grid-template-columns: 18px 116px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  margin-top: 10px;
+  color: #344054;
+}
+
+.check-row {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #344054;
+}
+
+.radio-row select,
+.radio-row input[type='text'],
+.radio-row input:not([type]),
+.new-library-form input,
+.new-library-form textarea {
+  min-width: 0;
+  width: 100%;
   border: 1px solid #cfd7e3;
   border-radius: 8px;
   background: #fffffc;
   padding: 0 12px;
 }
 
-.join-modal footer {
+.radio-row select,
+.radio-row input[type='text'],
+.radio-row input:not([type]),
+.new-library-form input {
+  height: 40px;
+}
+
+.radio-row select:disabled,
+.radio-row input:disabled {
+  background: #f8fafc;
+  color: #98a2b3;
+}
+
+.new-library-form {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.new-library-form label {
+  display: grid;
+  gap: 8px;
+  color: #344054;
+  font-weight: 700;
+}
+
+.new-library-form textarea {
+  min-height: 96px;
+  resize: none;
+  padding: 10px 12px;
+}
+
+.resource-modal footer,
+.new-library-modal footer {
   justify-content: flex-end;
+  flex-wrap: wrap;
   margin-top: 18px;
 }
 
-.join-modal footer .outline-btn,
-.join-modal footer .primary-btn {
+.resource-modal footer .outline-btn,
+.resource-modal footer .primary-btn,
+.new-library-modal footer .outline-btn,
+.new-library-modal footer .primary-btn {
   height: 40px;
   padding: 0 16px;
 }
@@ -624,6 +826,29 @@ td:first-child {
   .public-card > button {
     grid-column: 2;
     width: fit-content;
+  }
+}
+
+@media (max-width: 760px) {
+  .resource-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .radio-row {
+    grid-template-columns: 18px minmax(0, 1fr);
+  }
+
+  .radio-row select,
+  .radio-row input[type='text'],
+  .radio-row input:not([type]) {
+    grid-column: 2;
+  }
+
+  .resource-modal footer .outline-btn,
+  .resource-modal footer .primary-btn,
+  .new-library-modal footer .outline-btn,
+  .new-library-modal footer .primary-btn {
+    width: 100%;
   }
 }
 </style>
