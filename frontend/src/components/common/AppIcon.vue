@@ -2623,6 +2623,60 @@ const props = withDefaults(defineProps<Props>(), { size: 20 });
   </svg>
 
   <svg
+    v-else-if="name === 'play'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    :style="{ color: props.color }"
+  >
+    <polygon
+      points="8 5 19 12 8 19 8 5"
+      fill="currentColor"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+  </svg>
+
+  <svg
+    v-else-if="name === 'code'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    :style="{ color: props.color }"
+  >
+    <polyline points="16 18 22 12 16 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+    <polyline points="8 6 2 12 8 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  </svg>
+
+  <svg
+    v-else-if="name === 'eye'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    :style="{ color: props.color }"
+  >
+    <path
+      d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2" />
+  </svg>
+
+  <svg
     v-else
     class="icon"
     :width="props.size"

@@ -1,30 +1,47 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import AppButton from '@/components/common/AppButton.vue'
 import AppIcon from '@/components/common/AppIcon.vue'
 import StudentShell from '@/components/student/StudentShell.vue'
+import UploadMaterialModal from '@/components/student/UploadMaterialModal.vue'
 import { courseLibraries, recentUploads } from '@/mock'
 
 const route = useRoute()
 const router = useRouter()
+const uploadOpen = ref(false)
 const library = computed(() => courseLibraries.find((item) => item.id === Number(route.params.id)) ?? courseLibraries[0])
 </script>
 
 <template>
   <StudentShell>
-    <div class="page">
-      <header class="head">
-        <div>
-          <button class="back" type="button" @click="router.push('/library')">返回资料库</button>
-          <h1>{{ library.name }}</h1>
-          <p>{{ library.description }}</p>
-        </div>
-        <div class="head-actions">
-          <AppButton variant="secondary">上传资料</AppButton>
-          <AppButton variant="primary" @click="router.push({ path: '/learning', query: { libraryId: library.id } })">
-            用于智能学习
-          </AppButton>
+    <div class="detail-page">
+      <header class="hero">
+        <button class="back-btn" type="button" @click="router.push('/library')">
+          <AppIcon name="chevron-left" :size="18" />
+          返回资料库
+        </button>
+        <div class="hero-card">
+          <div>
+            <h1>{{ library.name }}</h1>
+            <p>{{ library.description }}</p>
+            <div class="tags">
+              <span v-for="tag in library.tags" :key="tag">{{ tag }}</span>
+            </div>
+          </div>
+          <div class="hero-actions">
+            <button class="outline-btn" type="button" @click="uploadOpen = true">
+              <AppIcon name="upload-cloud" :size="18" />
+              上传资料
+            </button>
+            <button
+              class="primary-btn"
+              type="button"
+              @click="router.push({ path: '/learning', query: { libraryId: library.id } })"
+            >
+              <AppIcon name="graduation" :size="18" />
+              用于智能学习
+            </button>
+          </div>
         </div>
       </header>
 
@@ -43,11 +60,14 @@ const library = computed(() => courseLibraries.find((item) => item.id === Number
         </article>
       </section>
 
-      <div class="grid">
-        <section class="panel">
+      <div class="content-grid">
+        <section class="panel files-panel">
           <div class="section-head">
             <h2>文件列表</h2>
-            <span>这里后续接文档列表 API</span>
+            <label>
+              <AppIcon name="search" :size="18" />
+              <input placeholder="搜索文件" />
+            </label>
           </div>
           <table>
             <thead>
@@ -61,124 +81,238 @@ const library = computed(() => courseLibraries.find((item) => item.id === Number
             </thead>
             <tbody>
               <tr v-for="file in recentUploads" :key="file.id">
-                <td>{{ file.name }}</td>
+                <td>
+                  <AppIcon name="file" :size="18" />
+                  {{ file.name }}
+                </td>
                 <td>{{ file.type }}</td>
-                <td>{{ file.status }}</td>
+                <td>
+                  <span
+                    class="status"
+                    :class="{
+                      success: file.status === '解析完成',
+                      active: file.status === '向量化中',
+                    }"
+                  >
+                    {{ file.status }}
+                  </span>
+                </td>
                 <td>{{ file.updatedAt }}</td>
-                <td><button class="link-btn">查看</button></td>
+                <td>
+                  <button class="icon-btn" type="button"><AppIcon name="eye" :size="17" /></button>
+                  <button class="icon-btn" type="button"><AppIcon name="download" :size="17" /></button>
+                  <button class="icon-btn" type="button"><AppIcon name="more-horizontal" :size="18" /></button>
+                </td>
               </tr>
             </tbody>
           </table>
         </section>
 
         <aside class="panel summary-panel">
-          <div class="section-head">
+          <div class="panel-title">
+            <AppIcon name="book" :size="22" />
             <h2>资料库摘要</h2>
           </div>
-          <div class="summary-icon">
-            <AppIcon name="book" :size="28" />
-          </div>
-          <p>该资料库适合用于智能学习分析、知识库答疑、资源生成和阶段练习。</p>
-          <div class="tags">
-            <span v-for="tag in library.tags" :key="tag">{{ tag }}</span>
+          <p>该资料库适合用于画像分析、知识库问答、个性化讲义生成、思维导图和代码案例生成。</p>
+          <div class="summary-list">
+            <article>
+              <span>主要知识点</span>
+              <strong>{{ library.tags.join('、') }}</strong>
+            </article>
+            <article>
+              <span>推荐用途</span>
+              <strong>期末复习、项目实操、错题强化</strong>
+            </article>
+            <article>
+              <span>最近更新</span>
+              <strong>{{ library.updatedAt }}</strong>
+            </article>
           </div>
         </aside>
       </div>
     </div>
+
+    <UploadMaterialModal :open="uploadOpen" @close="uploadOpen = false" />
   </StudentShell>
 </template>
 
 <style scoped>
-.page {
-  width: min(1120px, calc(100% - 48px));
-  margin: 0 auto;
-  padding: 34px 0 56px;
+.detail-page {
+  min-height: 100%;
+  padding: 34px 28px 56px;
+  background: #fffffc;
 }
 
-.head {
-  display: flex;
-  justify-content: space-between;
-  gap: 18px;
-  align-items: flex-start;
-  margin-bottom: 18px;
+.hero,
+.stats,
+.content-grid {
+  max-width: 1180px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
-.back {
-  border: 0;
-  background: transparent;
-  padding: 0;
-  cursor: pointer;
-  color: var(--color-text-muted);
-  margin-bottom: 10px;
-}
-
-.head h1,
-.section-head h2 {
+h1,
+h2,
+p {
   margin: 0;
 }
 
-.head h1 {
-  font-size: 26px;
+.back-btn {
+  height: 34px;
+  border: 0;
+  background: transparent;
+  color: #667085;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-weight: 700;
 }
 
-.head p,
-.section-head span,
-.stats span,
-.summary-panel p {
-  color: var(--color-text-muted);
+.hero-card {
+  margin-top: 14px;
+  border: 1px solid #dbe2ec;
+  border-radius: 8px;
+  padding: 24px;
+  background: #fffffc;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 24px;
+  align-items: center;
 }
 
-.head p {
-  margin: 8px 0 0;
+h1 {
+  font-size: 30px;
+  color: #111827;
 }
 
-.head-actions {
+.hero-card p {
+  margin-top: 10px;
+  color: #667085;
+  line-height: 1.6;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.tags span {
+  padding: 5px 10px;
+  border-radius: 6px;
+  background: #f2f4f7;
+  color: #667085;
+  font-size: 13px;
+}
+
+.hero-actions {
   display: flex;
   gap: 10px;
 }
 
+.outline-btn,
+.primary-btn {
+  height: 42px;
+  border-radius: 8px;
+  padding: 0 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.outline-btn {
+  border: 1px solid #cfd7e3;
+  background: #fffffc;
+  color: #1f2937;
+}
+
+.primary-btn {
+  border: 1px solid #2563eb;
+  background: #2563eb;
+  color: #fff;
+}
+
 .stats {
+  margin-top: 18px;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: 14px;
 }
 
 .stats article,
 .panel {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
+  border: 1px solid #dbe2ec;
+  border-radius: 8px;
+  background: #fffffc;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.03);
 }
 
 .stats article {
-  padding: 16px;
+  padding: 18px;
   display: grid;
-  gap: 4px;
+  gap: 5px;
 }
 
 .stats strong {
-  font-size: 24px;
+  font-size: 26px;
+  color: #111827;
 }
 
-.grid {
+.stats span {
+  color: #667085;
+}
+
+.content-grid {
+  margin-top: 18px;
   display: grid;
-  grid-template-columns: 1fr 320px;
-  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 18px;
 }
 
 .panel {
-  padding: 18px;
+  padding: 20px;
 }
 
-.section-head {
+.section-head,
+.panel-title {
   display: flex;
+  align-items: center;
   justify-content: space-between;
+  gap: 14px;
   margin-bottom: 14px;
 }
 
-.section-head h2 {
-  font-size: 18px;
+.panel-title {
+  justify-content: flex-start;
+}
+
+h2 {
+  font-size: 21px;
+  color: #1f2937;
+}
+
+.section-head label {
+  width: 220px;
+  height: 38px;
+  border: 1px solid #cfd7e3;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  color: #667085;
+}
+
+.section-head input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
 }
 
 table {
@@ -188,61 +322,90 @@ table {
 
 th,
 td {
+  height: 44px;
+  border-top: 1px solid #e6ebf3;
   text-align: left;
-  padding: 11px 8px;
-  border-top: 1px solid var(--color-border);
+  color: #344054;
   font-size: 14px;
 }
 
 th {
-  color: var(--color-text-muted);
-  font-size: 12px;
+  color: #667085;
+  font-size: 13px;
 }
 
-.link-btn {
+td:first-child {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.status {
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: #f2f4f7;
+  color: #667085;
+  font-size: 13px;
+}
+
+.status.success {
+  background: #dcfce7;
+  color: #16a34a;
+}
+
+.status.active {
+  background: #edf4ff;
+  color: #2563eb;
+}
+
+.icon-btn {
   border: 0;
   background: transparent;
+  color: #667085;
   cursor: pointer;
-  color: var(--color-text);
-  font-weight: 700;
 }
 
 .summary-panel {
   align-self: start;
 }
 
-.summary-icon {
-  width: 50px;
-  height: 50px;
-  border-radius: 10px;
-  display: grid;
-  place-items: center;
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-}
-
 .summary-panel p {
-  line-height: 1.6;
+  color: #667085;
+  line-height: 1.7;
 }
 
-.tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.summary-list {
+  margin-top: 16px;
+  display: grid;
+  gap: 12px;
 }
 
-.tags span {
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  padding: 4px 9px;
-  font-size: 12px;
-  background: var(--color-bg);
+.summary-list article {
+  border-top: 1px solid #e6ebf3;
+  padding-top: 12px;
 }
 
-@media (max-width: 920px) {
+.summary-list span {
+  display: block;
+  color: #667085;
+  font-size: 13px;
+  margin-bottom: 5px;
+}
+
+.summary-list strong {
+  color: #1f2937;
+  line-height: 1.5;
+}
+
+@media (max-width: 980px) {
+  .hero-card,
   .stats,
-  .grid {
+  .content-grid {
     grid-template-columns: 1fr;
+  }
+
+  .hero-actions {
+    flex-wrap: wrap;
   }
 }
 </style>
