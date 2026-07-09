@@ -235,7 +235,7 @@ const historyMenuItems: MenuAction[] = [
             <span>{{ item.title }}</span>
           </button>
           <button class="recent-pin" type="button" aria-label="置顶">
-            <AppIcon name="pin" :size="15" />
+            <AppIcon name="pin-off" :size="15" />
           </button>
           <button class="recent-more" type="button" @click="openMenu($event, historyMenuItems)">
             <AppIcon name="more-horizontal" :size="15" />
@@ -370,7 +370,7 @@ const historyMenuItems: MenuAction[] = [
           <span>项目名称</span>
           <div class="project-name-field create-name-field">
             <button class="project-icon-trigger project-icon-trigger--muted" type="button" @click="iconPaletteOpen = !iconPaletteOpen">
-              <AppIcon name="smile" :size="18" />
+              <AppIcon name="smile-plus" :size="22" />
             </button>
             <input placeholder="哥本哈根之旅" />
           </div>

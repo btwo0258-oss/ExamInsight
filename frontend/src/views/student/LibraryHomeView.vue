@@ -653,21 +653,10 @@ h1 {
 
 .filter-btn span {
   display: block;
-  height: 1px;
+  width: 12px;
+  height: 1.5px;
   border-radius: 999px;
   background: currentColor;
-}
-
-.filter-btn span:nth-child(1) {
-  width: 14px;
-}
-
-.filter-btn span:nth-child(2) {
-  width: 9px;
-}
-
-.filter-btn span:nth-child(3) {
-  width: 5px;
 }
 
 .view-divider {

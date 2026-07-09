@@ -219,16 +219,52 @@ const props = withDefaults(defineProps<Props>(), { size: 20 });
     xmlns="http://www.w3.org/2000/svg"
     :style="{ color: props.color }"
   >
-    <g transform="rotate(-45 12 12)">
-      <path
-        d="M12 4.5 16.5 9 14.6 10.9v4.2l2 2v1.2H7.4v-1.2l2-2v-4.2L7.5 9 12 4.5Z"
-        stroke="currentColor"
-        stroke-width="1.7"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      />
-      <path d="M12 18.3v2.7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
-    </g>
+    <path
+      d="M14 3.5 20.5 10 17.25 10.85 14.1 14 13.25 17.25 6.75 10.75 10 9.9 13.15 6.75 14 3.5Z"
+      stroke="currentColor"
+      stroke-width="1.75"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <path
+      d="M9.4 14.6 4.5 19.5"
+      stroke="currentColor"
+      stroke-width="1.75"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+  </svg>
+
+  <svg
+    v-else-if="name === 'pin-off'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    :style="{ color: props.color }"
+  >
+    <path
+      d="M14 3.5 20.5 10 17.25 10.85 14.1 14 13.25 17.25 6.75 10.75 10 9.9 13.15 6.75 14 3.5Z"
+      stroke="currentColor"
+      stroke-width="1.75"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <path
+      d="M9.4 14.6 4.5 19.5"
+      stroke="currentColor"
+      stroke-width="1.75"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <path
+      d="M4 4 20 20"
+      stroke="currentColor"
+      stroke-width="1.9"
+      stroke-linecap="round"
+    />
   </svg>
 
   <svg
@@ -2861,6 +2897,22 @@ const props = withDefaults(defineProps<Props>(), { size: 20 });
     <path d="M8 14.2s1.5 1.8 4 1.8 4-1.8 4-1.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
     <path d="M9 9h.01M15 9h.01" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
     <path d="M18.5 5.5v3M17 7h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+  </svg>
+
+  <svg
+    v-else-if="name === 'smile-plus'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    :style="{ color: props.color }"
+  >
+    <circle cx="11" cy="13" r="7" stroke="currentColor" stroke-width="1.8" />
+    <path d="M7.6 14.8s1.25 1.45 3.4 1.45 3.4-1.45 3.4-1.45" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+    <path d="M8.4 10.2h.01M13.6 10.2h.01" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" />
+    <path d="M18.2 4.2v4.6M15.9 6.5h4.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
   </svg>
 
   <svg
