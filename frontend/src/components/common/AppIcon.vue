@@ -210,6 +210,43 @@ const props = withDefaults(defineProps<Props>(), { size: 20 });
   </svg>
 
   <svg
+    v-else-if="name === 'pin'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    :style="{ color: props.color }"
+  >
+    <g transform="rotate(-45 12 12)">
+      <path
+        d="M12 4.5 16.5 9 14.6 10.9v4.2l2 2v1.2H7.4v-1.2l2-2v-4.2L7.5 9 12 4.5Z"
+        stroke="currentColor"
+        stroke-width="1.7"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+      <path d="M12 18.3v2.7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+    </g>
+  </svg>
+
+  <svg
+    v-else-if="name === 'share'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    :style="{ color: props.color }"
+  >
+    <path d="M12 3v12" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+    <path d="M7 8l5-5 5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M5 13v6h14v-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  </svg>
+
+  <svg
     v-else-if="name === 'edit'"
     class="icon"
     :width="props.size"
@@ -327,6 +364,39 @@ const props = withDefaults(defineProps<Props>(), { size: 20 });
     <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" />
     <path
       d="M12 6v12M15 9H10.5a2.25 2.25 0 1 0 0 4.5h3a2.25 2.25 0 1 1 0 4.5H9"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+  </svg>
+
+  <svg
+    v-else-if="name === 'folder-move'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    :style="{ color: props.color }"
+  >
+    <path
+      d="M3 7.5V6a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v2.5"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <path
+      d="M3 11v7a2 2 0 0 0 2 2h8"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <path
+      d="M16 15h5M19 12l3 3-3 3"
       stroke="currentColor"
       stroke-width="2"
       stroke-linecap="round"
@@ -807,13 +877,16 @@ const props = withDefaults(defineProps<Props>(), { size: 20 });
     xmlns="http://www.w3.org/2000/svg"
     :style="{ color: props.color }"
   >
+    <path d="M3 6h18" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+    <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
     <path
-      d="M3 6H5H21M8 6V4C8 3.44772 8.44772 3 9 3H15C15.5523 3 16 3.44772 16 4V6M19 6V20C19 20.5523 18.5523 21 18 21H6C5.44772 21 5 20.5523 5 20V6H19Z"
+      d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"
       stroke="currentColor"
       stroke-width="2"
       stroke-linecap="round"
       stroke-linejoin="round"
     />
+    <path d="M10 11v6M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
   </svg>
 
   <svg
@@ -2654,6 +2727,156 @@ const props = withDefaults(defineProps<Props>(), { size: 20 });
   >
     <polyline points="16 18 22 12 16 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
     <polyline points="8 6 2 12 8 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  </svg>
+
+  <svg
+    v-else-if="name === 'terminal'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    :style="{ color: props.color }"
+  >
+    <rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" stroke-width="2" />
+    <path d="M7 9l3 3-3 3M13 15h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  </svg>
+
+  <svg
+    v-else-if="name === 'music'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    :style="{ color: props.color }"
+  >
+    <path d="M9 18V5l10-2v13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+    <circle cx="6" cy="18" r="3" stroke="currentColor" stroke-width="2" />
+    <circle cx="16" cy="16" r="3" stroke="currentColor" stroke-width="2" />
+  </svg>
+
+  <svg
+    v-else-if="name === 'sparkle'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    :style="{ color: props.color }"
+  >
+    <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+    <path d="M5 16l.8 2.2L8 19l-2.2.8L5 22l-.8-2.2L2 19l2.2-.8L5 16z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+  </svg>
+
+  <svg
+    v-else-if="name === 'activity'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    :style="{ color: props.color }"
+  >
+    <path d="M4 12h4l2-6 4 12 2-6h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  </svg>
+
+  <svg
+    v-else-if="name === 'scales'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    :style="{ color: props.color }"
+  >
+    <path d="M12 3v18M6 6h12M8 21h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+    <path d="M6 6 3 12h6L6 6zM18 6l-3 6h6l-3-6z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+  </svg>
+
+  <svg
+    v-else-if="name === 'microphone'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    :style="{ color: props.color }"
+  >
+    <rect x="9" y="3" width="6" height="11" rx="3" stroke="currentColor" stroke-width="2" />
+    <path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+  </svg>
+
+  <svg
+    v-else-if="name === 'wrench'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    :style="{ color: props.color }"
+  >
+    <path
+      d="M14.5 5.5a5 5 0 0 0 4 4L9 19a3 3 0 1 1-4-4l9.5-9.5z"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+  </svg>
+
+  <svg
+    v-else-if="name === 'gift'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    :style="{ color: props.color }"
+  >
+    <rect x="4" y="10" width="16" height="10" rx="1.5" stroke="currentColor" stroke-width="2" />
+    <path d="M3 7h18v3H3zM12 7v13" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+    <path d="M12 7c-2-4-6-3-6 0M12 7c2-4 6-3 6 0" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+  </svg>
+
+  <svg
+    v-else-if="name === 'smile'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    :style="{ color: props.color }"
+  >
+    <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8" />
+    <path d="M8 14.2s1.5 1.8 4 1.8 4-1.8 4-1.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+    <path d="M9 9h.01M15 9h.01" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
+    <path d="M18.5 5.5v3M17 7h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+  </svg>
+
+  <svg
+    v-else-if="name === 'mindmap'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    :style="{ color: props.color }"
+  >
+    <circle cx="6" cy="7" r="3" stroke="currentColor" stroke-width="2" />
+    <circle cx="18" cy="6" r="2.5" stroke="currentColor" stroke-width="2" />
+    <circle cx="18" cy="18" r="2.5" stroke="currentColor" stroke-width="2" />
+    <path d="M9 7h6.5M8 9.5 16 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
   </svg>
 
   <svg

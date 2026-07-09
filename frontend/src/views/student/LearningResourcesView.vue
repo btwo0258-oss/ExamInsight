@@ -93,6 +93,7 @@ p {
 }
 
 .page-head button {
+  margin-left: -14px;
   border: 0;
   background: transparent;
   color: #667085;
@@ -188,6 +189,10 @@ h1 {
 }
 
 @media (max-width: 760px) {
+  .page-head button {
+    margin-left: 0;
+  }
+
   .resource-card {
     grid-template-columns: 52px 1fr;
   }
