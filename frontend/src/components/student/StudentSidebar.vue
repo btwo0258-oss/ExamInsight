@@ -370,7 +370,7 @@ const historyMenuItems: MenuAction[] = [
           <span>项目名称</span>
           <div class="project-name-field create-name-field">
             <button class="project-icon-trigger project-icon-trigger--muted" type="button" @click="iconPaletteOpen = !iconPaletteOpen">
-              <AppIcon name="smile-plus" :size="22" />
+              <AppIcon name="smile-plus" :size="20" />
             </button>
             <input placeholder="哥本哈根之旅" />
           </div>

@@ -207,9 +207,7 @@ function assetSize(asset: LibraryAsset) {
           <span v-if="selectedCount">已选 {{ selectedCount }} 个</span>
 
           <button class="filter-btn" type="button" aria-label="筛选">
-            <span />
-            <span />
-            <span />
+            <AppIcon name="list-filter" :size="18" />
           </button>
           <span class="view-divider" />
           <button
@@ -643,20 +641,9 @@ h1 {
   place-items: center;
 }
 
-.filter-btn {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-}
-
-.filter-btn span {
-  display: block;
-  width: 12px;
-  height: 1.5px;
-  border-radius: 999px;
-  background: currentColor;
+.view-tools .filter-btn {
+  background: transparent;
+  color: #667085;
 }
 
 .view-divider {
@@ -668,7 +655,8 @@ h1 {
 
 .round-icon.active,
 .round-icon:hover,
-.filter-btn:hover {
+.view-tools .filter-btn:hover,
+.view-tools .filter-btn:focus-visible {
   background: #f2f4f7;
   color: #111827;
 }
