@@ -160,6 +160,7 @@ export const useConversationStore = defineStore("conversation", () => {
       await conversationApi.updateConversation(id, { isPinned });
     } catch { }
     existing.isPinned = isPinned;
+    saveToStorage();
   }
 
   function clearAll() {
@@ -192,6 +193,7 @@ export const useConversationStore = defineStore("conversation", () => {
     errorMessage,
     ungroupedConversations,
     pinnedConversations,
+    init,
     fetchList,
     create,
     rename,

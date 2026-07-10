@@ -184,9 +184,9 @@ onMounted(() => {
 .input-container {
   position: relative;
   /* 1. 背景色改为指定颜色 */
-  background: #fffffc; 
+  background: var(--color-surface);
   border-radius: 24px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--color-border);
   transition: all 0.2s ease;
   /* 移除 overflow: hidden 否则会挡住 ModelSwitch 的下拉框 */
   box-sizing: border-box;
@@ -203,12 +203,16 @@ onMounted(() => {
   background: transparent;
   font-size: 16px;
   line-height: 1.6;
-  color: #18181b;
+  color: var(--color-text);
   resize: none;
   display: block;
   box-sizing: border-box;
   overflow-y: auto; /* 开启滚动 */
   border-radius: 24px;
+}
+
+.main-textarea::placeholder {
+  color: var(--color-text-muted);
 }
 
 /* 2. 滚动条美化：在框内且较短 */
@@ -217,7 +221,7 @@ onMounted(() => {
 }
 
 .main-textarea::-webkit-scrollbar-thumb {
-  background-color: #d4d4d8; /* 灰色小胶囊 */
+  background-color: var(--color-border); /* 灰色小胶囊 */
   border-radius: 10px;
   border: 2px solid transparent; /* 制造留白感 */
   background-clip: content-box;
@@ -235,7 +239,7 @@ onMounted(() => {
   right: 0;
   padding: 8px 10px;
   /* 稍微遮罩背景文字 */
-  background: linear-gradient(to top, #fffffc 70%, transparent); 
+  background: linear-gradient(to top, var(--color-surface) 70%, transparent);
   pointer-events: none; /* 让点击能穿透到底层的 textarea */
   border-bottom-left-radius: 24px;
   border-bottom-right-radius: 24px;
@@ -262,15 +266,15 @@ onMounted(() => {
   height: 32px;
   border: none;
   background: transparent;
-  color: #71717a;
+  color: var(--color-text-muted);
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .icon-action-btn:hover {
-  background: rgba(0, 0, 0, 0.06);
-  color: #18181b;
+  background: var(--color-hover);
+  color: var(--color-text);
 }
 
 .circle-send-btn {
@@ -280,23 +284,23 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   border: none;
-  background: #18181b;
-  color: #fff;
+  background: var(--color-text);
+  color: var(--color-bg);
   border-radius: 50%;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .circle-send-btn:disabled {
-  background: #e4e4e7;
-  color: #a1a1aa;
+  background: var(--color-hover-strong);
+  color: var(--color-text-muted);
   cursor: not-allowed;
 }
 
 .footer-hint {
   text-align: center;
   font-size: 12px;
-  color: #a1a1aa;
+  color: var(--color-text-muted);
   margin-top: 14px;
 }
 </style>

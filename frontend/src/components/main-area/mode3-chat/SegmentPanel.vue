@@ -183,7 +183,7 @@ onUnmounted(() => {
           @mouseenter="showTooltip($event, seg.fullContent)"
           @mouseleave="hideTooltip"
         >
-          <span class="row-text" v-if="isHover">{{ seg.preview }}</span>
+          <span class="row-text">{{ seg.preview }}</span>
           
           <div class="row-indicator">
             <div class="dash-line"></div>
@@ -214,27 +214,36 @@ onUnmounted(() => {
   top: 50%;
   transform: translateY(-50%);
   z-index: 1000;
-  width: 32px;
-  transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  width: 36px;
+  transition: width 0.42s cubic-bezier(0.2, 0.8, 0.2, 1);
   display: flex;
   justify-content: flex-end;
 }
 
 .ds-outline-root.is-hovered {
-  width: auto; 
-  min-width: 120px;
-  max-width: 300px;
+  width: 220px;
 }
 
 .outline-wrapper {
-  width: 100%;
+  width: 36px;
   height: 360px;
-  background: transparent;
+  background: rgba(255, 255, 252, 0.62);
+  border: 1px solid transparent;
   border-radius: 12px;
-  transition: all 0.2s;
+  box-shadow: none;
+  transform-origin: right center;
+  transition:
+    width 0.42s cubic-bezier(0.2, 0.8, 0.2, 1),
+    background 0.34s ease,
+    border-color 0.34s ease,
+    box-shadow 0.34s ease;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+:root[data-theme='dark'] .outline-wrapper {
+  background: rgba(30, 30, 30, 0.5);
 }
 
 .is-compact .outline-wrapper {
@@ -243,6 +252,7 @@ onUnmounted(() => {
 }
 
 .is-hovered .outline-wrapper {
+  width: 220px;
   background: #fffffc;
   border: 1px solid rgba(0,0,0,0.06);
   box-shadow: 0 8px 24px rgba(0,0,0,0.08);
@@ -258,8 +268,13 @@ onUnmounted(() => {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 10px 0;
+  padding: 6px 0;
   scrollbar-width: none;
+  transition: padding 0.34s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.is-hovered .outline-scroll-viewport {
+  padding: 10px 0;
 }
 
 .ds-outline-root:not(.is-compact) .outline-scroll-viewport {
@@ -270,23 +285,28 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  height: 32px;
-  padding: 0 8px 0 16px;
+  height: 22px;
+  padding: 0 7px 0 16px;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.2s;
+  transition:
+    height 0.34s cubic-bezier(0.2, 0.8, 0.2, 1),
+    padding 0.34s cubic-bezier(0.2, 0.8, 0.2, 1),
+    background 0.2s;
 }
 
 .is-hovered .outline-row {
   justify-content: space-between;
+  height: 32px;
+  padding: 0 8px 0 16px;
 }
 
 .is-hovered .outline-row:hover {
-  background: rgba(0, 0, 0, 0.03);
+  background: rgba(0, 0, 0, 0.06);
 }
 
 :root[data-theme='dark'] .is-hovered .outline-row:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .row-text {
@@ -296,9 +316,24 @@ onUnmounted(() => {
   text-overflow: ellipsis;
   margin-right: 12px;
   flex: 1;
+  max-width: 0;
+  opacity: 0;
+  transform: translateX(8px);
+  transition:
+    max-width 0.34s cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 0.2s ease 0.18s,
+    transform 0.26s ease 0.14s;
+}
+
+.is-hovered .row-text {
+  max-width: 170px;
+  opacity: 1;
+  transform: translateX(0);
 }
 
 :root[data-theme='dark'] .row-text { color: #b0b0b0; }
+.is-hovered .outline-row:hover .row-text { color: #1a1a1a; }
+:root[data-theme='dark'] .is-hovered .outline-row:hover .row-text { color: #ffffff; }
 .is-active .row-text { color: #1a1a1a; font-weight: 600; }
 :root[data-theme='dark'] .is-active .row-text { color: #ffffff !important; }
 
@@ -318,6 +353,12 @@ onUnmounted(() => {
 }
 
 :root[data-theme='dark'] .dash-line { background: #666; }
+.is-hovered .outline-row:hover .dash-line {
+  width: 16px;
+  height: 4px;
+  background: #737373;
+}
+:root[data-theme='dark'] .is-hovered .outline-row:hover .dash-line { background: #d4d4d4; }
 .is-active .dash-line { background: #1a1a1a !important; width: 20px; height: 4px; }
 :root[data-theme='dark'] .is-active .dash-line { background: #ffffff !important; }
 

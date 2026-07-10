@@ -83,14 +83,14 @@ onUnmounted(() => document.removeEventListener('click', closeDropdown))
   border-radius: 8px;
   font-size: 14px;
   font-weight: 500;
-  color: #71717a;
+  color: var(--color-text-muted);
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .model-trigger:hover {
-  background: rgba(0, 0, 0, 0.04);
-  color: #18181b;
+  background: var(--color-hover);
+  color: var(--color-text);
 }
 
 .chevron {
@@ -107,8 +107,8 @@ onUnmounted(() => document.removeEventListener('click', closeDropdown))
   bottom: calc(100% + 12px);
   left: 0;
   width: 260px;
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
   border-radius: 12px;
   box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.1);
   padding: 8px;
@@ -126,18 +126,18 @@ onUnmounted(() => document.removeEventListener('click', closeDropdown))
 }
 
 .menu-item:hover, .menu-item.active {
-  background: #f4f4f5;
+  background: var(--color-hover);
 }
 
 .item-name {
   font-size: 14px;
   font-weight: 600;
-  color: #18181b;
+  color: var(--color-text);
 }
 
 .item-desc {
   font-size: 12px;
-  color: #71717a;
+  color: var(--color-text-muted);
 }
 
 .check-icon {

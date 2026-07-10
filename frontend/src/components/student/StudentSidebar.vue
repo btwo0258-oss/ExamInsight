@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
+import UserProfileModal from '@/components/auth/UserProfileModal.vue'
 import logoUrl from '@/assets/icons/ExamInsight-Logo.png'
-import { learningPlans, recentConversations } from '@/mock'
+import { learningPlans } from '@/mock'
+import type { Conversation } from '@/api/conversation'
 import { useAuthStore } from '@/stores/auth'
 import { useConversationStore } from '@/stores/conversation'
+import { useThemeStore } from '@/stores/theme'
 
 type MenuAction = {
   label: string
@@ -19,12 +22,7 @@ type SidebarProject = (typeof learningPlans)[number] & {
   pinned?: boolean
 }
 
-type SidebarRecent = (typeof recentConversations)[number] & {
-  pinned?: boolean
-}
-
 const PROJECTS_STORAGE_KEY = 'examinsight.student.sidebar.projects'
-const RECENTS_STORAGE_KEY = 'examinsight.student.sidebar.recents'
 
 function readStoredList<T>(key: string, fallback: T[]): T[] {
   try {
@@ -45,16 +43,11 @@ const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const conversationStore = useConversationStore()
+const themeStore = useThemeStore()
 const sidebarProjects = ref<SidebarProject[]>(
   readStoredList(
     PROJECTS_STORAGE_KEY,
     learningPlans.map((plan) => ({ ...plan, pinned: false })),
-  ),
-)
-const sidebarRecents = ref<SidebarRecent[]>(
-  readStoredList(
-    RECENTS_STORAGE_KEY,
-    recentConversations.map((item, index) => ({ ...item, pinned: index < 2 })),
   ),
 )
 const sidebarCollapsed = ref(false)
@@ -73,6 +66,7 @@ const editingOpen = ref(false)
 const editingKind = ref<'project' | 'recent'>('project')
 const editingId = ref<number | null>(null)
 const editingTitle = ref('')
+const profileOpen = ref(false)
 const paletteColors = ['#000', '#ff4444', '#ed7d31', '#f6c343', '#4caf5d', '#3b82f6', '#8b5cf6', '#df6f68']
 const paletteIcons = [
   'folder',
@@ -127,8 +121,13 @@ const orderedProjects = computed(() => [
 
 const currentLearningId = computed(() => activeLearningId.value ?? orderedProjects.value[0]?.id ?? 1)
 
-const pinnedRecent = computed(() => sidebarRecents.value.filter((item) => item.pinned))
-const normalRecent = computed(() => sidebarRecents.value.filter((item) => !item.pinned))
+const pinnedRecent = computed(() => conversationStore.list.filter((item) => item.isPinned))
+const normalRecent = computed(() => conversationStore.list.filter((item) => !item.isPinned))
+
+onMounted(() => {
+  conversationStore.init()
+  themeStore.init()
+})
 
 function go(path: string) {
   router.push(path)
@@ -188,12 +187,24 @@ function toggleSidebar() {
   closeMenu()
 }
 
-function persistProjects() {
-  persistList(PROJECTS_STORAGE_KEY, sidebarProjects.value)
+function handleUserClick() {
+  if (!authStore.isAuthed) {
+    authStore.openAuthModal()
+    return
+  }
+  profileOpen.value = true
 }
 
-function persistRecents() {
-  persistList(RECENTS_STORAGE_KEY, sidebarRecents.value)
+function handleLogout() {
+  authStore.logout(router)
+}
+
+function userDisplayName() {
+  return authStore.user?.nickname || authStore.user?.username || '未登录'
+}
+
+function persistProjects() {
+  persistList(PROJECTS_STORAGE_KEY, sidebarProjects.value)
 }
 
 function openRename(kind: 'project' | 'recent', id: number, title: string) {
@@ -204,7 +215,7 @@ function openRename(kind: 'project' | 'recent', id: number, title: string) {
   closeMenu()
 }
 
-function submitRename() {
+async function submitRename() {
   const title = editingTitle.value.trim()
   if (!title || editingId.value === null) return
 
@@ -215,11 +226,7 @@ function submitRename() {
       persistProjects()
     }
   } else {
-    const recent = sidebarRecents.value.find((item) => item.id === editingId.value)
-    if (recent) {
-      recent.title = title
-      persistRecents()
-    }
+    await conversationStore.rename(editingId.value, title)
   }
 
   editingOpen.value = false
@@ -245,19 +252,18 @@ function deleteProject(project: SidebarProject) {
   closeMenu()
 }
 
-function toggleRecentPinned(item: SidebarRecent) {
-  const target = sidebarRecents.value.find((recent) => recent.id === item.id)
-  if (target) {
-    target.pinned = !target.pinned
-    persistRecents()
-  }
+async function toggleRecentPinned(item: Conversation) {
+  await conversationStore.togglePin(item.id)
   closeMenu()
 }
 
-function deleteRecent(item: SidebarRecent) {
-  sidebarRecents.value = sidebarRecents.value.filter((recent) => recent.id !== item.id)
-  persistRecents()
+async function deleteRecent(item: Conversation) {
+  await conversationStore.remove(item.id)
   closeMenu()
+}
+
+function conversationTitle(item: Conversation) {
+  return item.title || '新对话'
 }
 
 function openProjectMenu(e: MouseEvent, project: SidebarProject) {
@@ -273,12 +279,12 @@ function openProjectMenu(e: MouseEvent, project: SidebarProject) {
   ])
 }
 
-function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
+function openRecentMenu(e: MouseEvent, item: Conversation) {
   openMenu(e, [
-    { label: '重命名', icon: 'edit', action: () => openRename('recent', item.id, item.title) },
+    { label: '重命名', icon: 'edit', action: () => openRename('recent', item.id, conversationTitle(item)) },
     {
-      label: item.pinned ? '取消置顶' : '置顶',
-      icon: item.pinned ? 'pin-off' : 'pin',
+      label: item.isPinned ? '取消置顶' : '置顶',
+      icon: item.isPinned ? 'pin-off' : 'pin',
       action: () => toggleRecentPinned(item),
     },
     { label: '删除', icon: 'trash', danger: true, divided: true, action: () => deleteRecent(item) },
@@ -434,7 +440,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
     </nav>
 
     <section class="recent">
-      <div class="recent-section">
+      <div v-if="pinnedRecent.length" class="recent-section">
         <button class="recent-title" type="button" @click="pinnedExpanded = !pinnedExpanded">
           <span>已置顶</span>
           <AppIcon
@@ -448,19 +454,19 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
           v-if="pinnedExpanded"
           :key="item.id"
           class="recent-row recent-row--pinned"
+          :data-full-title="conversationTitle(item)"
           @mouseleave="closeMenuSoon"
         >
           <button
             class="recent-item"
             type="button"
-            :title="item.title"
+            :aria-label="conversationTitle(item)"
             @click="go(`/chat/${item.id}`)"
           >
             <AppIcon name="message-square" :size="15" />
-            <span :title="item.title">{{ item.title }}</span>
-            <small v-if="item.sourceType === 'learning'" :title="item.sourceLabel">{{ item.sourceLabel }}</small>
+            <span>{{ conversationTitle(item) }}</span>
           </button>
-          <button class="recent-pin" type="button" aria-label="取消置顶" @click="toggleRecentPinned(item)">
+          <button class="recent-pin" type="button" aria-label="取消置顶" @click.stop="toggleRecentPinned(item)">
             <AppIcon name="pin-off" :size="15" />
           </button>
           <button
@@ -488,18 +494,18 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
           v-if="recentExpanded"
           :key="item.id"
           class="recent-row"
+          :data-full-title="conversationTitle(item)"
           @mouseleave="closeMenuSoon"
         >
           <button
             class="recent-item"
             type="button"
-            :title="item.sourceType === 'learning' ? `${item.title} - ${item.sourceLabel}` : item.title"
+            :aria-label="conversationTitle(item)"
             @click="go(`/chat/${item.id}`)"
           >
-            <span :title="item.title">{{ item.title }}</span>
-            <small v-if="item.sourceType === 'learning'" :title="item.sourceLabel">{{ item.sourceLabel }}</small>
+            <span>{{ conversationTitle(item) }}</span>
           </button>
-          <button class="recent-pin" type="button" aria-label="置顶" @click="toggleRecentPinned(item)">
+          <button class="recent-pin" type="button" aria-label="置顶" @click.stop="toggleRecentPinned(item)">
             <AppIcon name="pin" :size="15" />
           </button>
           <button
@@ -522,15 +528,33 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
     <footer class="sidebar-footer">
       <div class="theme-toggle-row">
         <span>主题</span>
-        <button type="button" aria-label="切换主题"><span /></button>
+        <button
+          class="theme-toggle"
+          :class="{ 'theme-toggle--dark': themeStore.mode === 'dark' }"
+          type="button"
+          :aria-label="themeStore.mode === 'dark' ? '切换到浅色主题' : '切换到深色主题'"
+          @click="themeStore.toggle"
+        >
+          <span />
+        </button>
       </div>
-      <button class="login-entry" type="button">
-        <span class="login-avatar"><AppIcon name="user" :size="20" /></span>
-        <span>
-          <strong>未登录</strong>
-          <small>点击登录或注册</small>
-        </span>
-      </button>
+      <div class="account-row">
+        <button class="login-entry" type="button" @click="handleUserClick">
+          <span class="login-avatar"><AppIcon name="user" :size="20" /></span>
+          <span>
+            <strong>{{ userDisplayName() }}</strong>
+            <small>{{ authStore.isAuthed ? '查看个人资料' : '点击登录或注册' }}</small>
+          </span>
+        </button>
+        <button v-if="authStore.isAuthed" class="logout-btn" type="button" @click="handleLogout">
+          退出
+        </button>
+      </div>
+      <UserProfileModal
+        v-if="profileOpen"
+        :open="profileOpen"
+        @close="profileOpen = false"
+      />
     </footer>
     </template>
 
@@ -679,11 +703,13 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
 <style scoped>
 .student-sidebar {
   width: 276px;
-  height: calc(100vh - 16px);
-  margin: 8px 0;
-  background: #fffffc;
-  border-right: 1px solid #dde3ef;
-  border-radius: 0 12px 12px 0;
+  height: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  background: var(--color-sidebar);
+  border-right: 1px solid var(--color-border);
+  border-radius: 0;
+  color: var(--color-text);
   display: flex;
   flex-direction: column;
   padding: 14px 12px 12px;
@@ -709,10 +735,10 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   z-index: 240;
   height: 49px;
   padding: 0 12px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--color-border);
   border-radius: 999px;
-  background: #fff;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-md);
   display: inline-flex;
   align-items: center;
   gap: 12px;
@@ -723,7 +749,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   height: 30px;
   border: 0;
   background: transparent;
-  color: #344054;
+  color: var(--color-text-muted);
   cursor: pointer;
   display: grid;
   place-items: center;
@@ -731,8 +757,8 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
 
 .collapsed-pill button:hover {
   border-radius: 7px;
-  background: #f2f4f7;
-  color: #111827;
+  background: var(--color-hover, rgba(0, 0, 0, 0.04));
+  color: var(--color-text);
 }
 
 .collapsed-pill :deep(.icon) {
@@ -756,7 +782,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   border: 0;
   cursor: pointer;
   background: transparent;
-  color: #202838;
+  color: var(--color-text);
   font: inherit;
 }
 
@@ -774,7 +800,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: #111827;
+  color: var(--color-text);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -795,7 +821,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   width: 32px;
   height: 32px;
   border-radius: 6px;
-  background: #fff;
+  background: var(--color-surface);
   overflow: hidden;
   justify-content: center;
 }
@@ -812,18 +838,19 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: #667085;
+  color: var(--color-text-muted);
   cursor: pointer;
   display: grid;
   place-items: center;
 }
 
 .sidebar-toggle:hover {
-  background: #f2f4f7;
-  color: #111827;
+  background: var(--color-hover, rgba(0, 0, 0, 0.04));
+  color: var(--color-text);
 }
 
 .nav {
+  flex: 0 0 auto;
   display: grid;
   gap: 6px;
   padding: 0 0 12px;
@@ -848,7 +875,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   padding: 0 44px 0 16px;
   font-size: 14px;
   font-weight: 700;
-  color: #273246;
+  color: var(--color-text);
 }
 
 .nav-item span {
@@ -857,13 +884,13 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
 }
 
 .nav-chevron {
-  color: #667085;
+  color: var(--color-text-muted);
 }
 
 .nav-item:hover,
 .nav-item--active {
-  background: #f2f4f7;
-  color: #111827;
+  background: var(--color-hover, rgba(0, 0, 0, 0.04));
+  color: var(--color-text);
 }
 
 .new-learning-btn,
@@ -873,7 +900,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
 .recent-more {
   border: 0;
   background: transparent;
-  color: #7b8494;
+  color: var(--color-text-muted);
   cursor: pointer;
   display: grid;
   place-items: center;
@@ -888,7 +915,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   right: 6px;
   width: 26px;
   height: 26px;
-  color: #667085;
+  color: var(--color-text-muted);
 }
 
 .learning-toggle-btn {
@@ -896,7 +923,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   right: 6px;
   width: 26px;
   height: 26px;
-  color: #667085;
+  color: var(--color-text-muted);
 }
 
 .tree-section-toggle {
@@ -904,7 +931,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   right: 4px;
   width: 24px;
   height: 24px;
-  color: #667085;
+  color: var(--color-text-muted);
 }
 
 .new-learning-btn--tree {
@@ -921,8 +948,8 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   width: max-content;
   padding: 6px 9px;
   border-radius: 6px;
-  background: #111827;
-  color: #fff;
+  background: var(--color-text);
+  color: var(--color-bg);
   font-size: 12px;
   font-weight: 600;
   pointer-events: none;
@@ -960,8 +987,8 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
 .tree-more:hover,
 .recent-pin:hover,
 .recent-more:hover {
-  background: #e6ebf3;
-  color: #111827;
+  background: var(--color-hover-strong, rgba(0, 0, 0, 0.08));
+  color: var(--color-text);
 }
 
 .floating-menu {
@@ -969,10 +996,10 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   z-index: 300;
   width: 198px;
   padding: 8px;
-  border: 1px solid #d9dee8;
+  border: 1px solid var(--color-border);
   border-radius: 14px;
-  background: #fff;
-  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.14);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-lg);
 }
 
 .menu-action {
@@ -981,7 +1008,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   border: 0;
   border-radius: 10px;
   background: transparent;
-  color: #111827;
+  color: var(--color-text);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -999,16 +1026,16 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
 }
 
 .menu-action:hover {
-  background: #f2f4f7;
+  background: var(--color-hover, rgba(0, 0, 0, 0.04));
 }
 
 .menu-action--danger {
-  color: #ff2457;
+  color: var(--color-danger);
 }
 
 .menu-divider {
   height: 1px;
-  background: #e6ebf3;
+  background: var(--color-border);
   margin: 6px 6px;
 }
 
@@ -1028,7 +1055,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: #667085;
+  color: var(--color-text-muted);
   cursor: pointer;
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) auto;
@@ -1048,8 +1075,8 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
 
 .tree-item:hover,
 .tree-item--active {
-  background: #f2f4f7;
-  color: #111827;
+  background: var(--color-hover, rgba(0, 0, 0, 0.04));
+  color: var(--color-text);
 }
 
 .tree-item span {
@@ -1061,7 +1088,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
 }
 
 .tree-item small {
-  color: #8a94a6;
+  color: var(--color-text-muted);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -1070,7 +1097,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   min-height: 34px;
   grid-template-columns: 18px minmax(0, 1fr);
   padding-right: 58px;
-  color: #273246;
+  color: var(--color-text);
   font-weight: 700;
 }
 
@@ -1110,7 +1137,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   border-radius: 6px;
   background: transparent;
   padding: 0 4px;
-  color: #111827;
+  color: var(--color-text);
   cursor: pointer;
   font-size: 12px;
   font-weight: 700;
@@ -1122,12 +1149,12 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
 }
 
 .recent-title:hover {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--color-hover, rgba(0, 0, 0, 0.04));
 }
 
 .recent-title-chevron {
   opacity: 0;
-  color: #667085;
+  color: var(--color-text-muted);
   transition: opacity 0.16s ease;
 }
 
@@ -1146,7 +1173,11 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   gap: 6px;
   padding: 6px 58px 6px 4px;
   text-align: left;
-  color: #111827;
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+  letter-spacing: 0;
 }
 
 .recent-row--pinned .recent-item {
@@ -1174,8 +1205,38 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
 }
 
 .recent-row:hover .recent-item {
-  background: rgba(0, 0, 0, 0.04);
-  color: #111827;
+  background: var(--color-hover);
+  color: var(--color-text);
+}
+
+.recent-row::after {
+  content: attr(data-full-title);
+  position: absolute;
+  left: 4px;
+  top: calc(100% + 4px);
+  z-index: 80;
+  max-width: 218px;
+  padding: 5px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: var(--shadow-sm);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 18px;
+  letter-spacing: 0;
+  white-space: normal;
+  word-break: break-all;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+
+.recent-row:hover::after {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .recent-item span {
@@ -1183,11 +1244,14 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: 14px;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
 }
 
 .recent-item small {
-  color: #8a94a6;
+  color: var(--color-text-muted);
   font-size: 12px;
   max-width: 82px;
   overflow: hidden;
@@ -1198,7 +1262,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
 .recent-pin {
   border: 0;
   background: transparent;
-  color: #98a2b3;
+  color: var(--color-text-muted);
   cursor: pointer;
   display: grid;
   place-items: center;
@@ -1206,82 +1270,107 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
 }
 
 .recent-pin:hover {
-  background: rgba(0, 0, 0, 0.04);
-  color: #111827;
+  background: var(--color-hover, rgba(0, 0, 0, 0.04));
+  color: var(--color-text);
 }
 
 .settings {
   margin-top: auto;
   height: 44px;
-  border-top: 1px solid #e6ebf3;
+  border-top: 1px solid var(--color-border);
   padding-top: 20px;
   display: flex;
   align-items: center;
   gap: 12px;
   font-size: 16px;
-  color: #344054;
+  color: var(--color-text-muted);
   display: none;
 }
 
 .sidebar-footer {
+  flex: 0 0 auto;
   margin-top: auto;
   padding: 10px 0 0;
-  border-top: 1px solid #edf0f5;
+  border-top: 1px solid var(--color-border);
   display: grid;
   gap: 16px;
 }
 
 .theme-toggle-row {
   min-height: 46px;
-  border: 1px solid #e4e7ec;
+  border: 1px solid var(--color-border);
   border-radius: 10px;
-  background: #fff;
+  background: var(--color-surface);
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 12px;
-  color: #111827;
+  color: var(--color-text);
   font-size: 14px;
   font-weight: 700;
 }
 
-.theme-toggle-row button {
+.theme-toggle {
   width: 44px;
   height: 26px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--color-border);
   border-radius: 999px;
-  background: #f5f5f5;
+  background: var(--color-hover, rgba(0, 0, 0, 0.04));
   cursor: pointer;
   padding: 2px;
+  transition: background 0.18s ease, border-color 0.18s ease;
 }
 
-.theme-toggle-row button span {
+.theme-toggle span {
   display: block;
   width: 20px;
   height: 20px;
   border-radius: 999px;
-  background: #fff;
+  background: var(--color-surface);
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.16);
+  transition: transform 0.18s ease;
+}
+
+.theme-toggle--dark {
+  background: var(--color-text);
+  border-color: var(--color-text);
+}
+
+.theme-toggle--dark span {
+  transform: translateX(18px);
+}
+
+.account-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
 }
 
 .login-entry {
   border: 0;
   background: transparent;
-  color: #111827;
+  color: var(--color-text);
   cursor: pointer;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 18px 8px;
+  min-width: 0;
+  padding: 4px 6px 8px;
   text-align: left;
+  border-radius: 10px;
+}
+
+.login-entry:hover {
+  background: var(--color-hover, rgba(0, 0, 0, 0.04));
 }
 
 .login-avatar {
   width: 34px;
   height: 34px;
   border-radius: 999px;
-  background: #f2f4f7;
-  color: #344054;
+  background: var(--color-hover, rgba(0, 0, 0, 0.04));
+  color: var(--color-text-muted);
   display: grid;
   place-items: center;
 }
@@ -1294,12 +1383,33 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
 .login-entry strong {
   font-size: 14px;
   font-weight: 800;
+  max-width: 132px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .login-entry small {
-  color: #667085;
+  color: var(--color-text-muted);
   font-size: 12px;
   margin-top: 1px;
+}
+
+.logout-btn {
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.logout-btn:hover {
+  background: var(--color-hover, rgba(0, 0, 0, 0.04));
+  color: var(--color-text);
 }
 
 .modal-backdrop {
@@ -1317,9 +1427,10 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
 .create-project-modal {
   position: relative;
   width: min(512px, 100%);
-  border: 1px solid #d9dee8;
+  border: 1px solid var(--color-border);
   border-radius: 16px;
-  background: #fff;
+  background: var(--color-surface);
+  color: var(--color-text);
   box-shadow: 0 20px 56px rgba(15, 23, 42, 0.18);
   padding: 16px;
   overflow: visible;
@@ -1347,7 +1458,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
 .create-project-modal h2 {
   flex: 1;
   margin: 0;
-  color: #111827;
+  color: var(--color-text);
   font-size: 20px;
   font-weight: 500;
 }
@@ -1360,7 +1471,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: #344054;
+  color: var(--color-text-muted);
   cursor: pointer;
   display: grid;
   place-items: center;
@@ -1375,7 +1486,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
 .rename-modal header button:hover,
 .project-modal header button:hover,
 .create-project-modal header button:hover {
-  background: #f2f4f7;
+  background: var(--color-hover);
 }
 
 .rename-form,
@@ -1390,7 +1501,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
 .create-project-modal label {
   display: grid;
   gap: 8px;
-  color: #111827;
+  color: var(--color-text);
   font-size: 14px;
   font-weight: 500;
 }
@@ -1399,17 +1510,17 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   height: 42px;
   min-width: 0;
   width: 100%;
-  border: 1px solid #dbe2ec;
+  border: 1px solid var(--color-border);
   border-radius: 8px;
-  background: #fff;
-  color: #111827;
+  background: var(--color-surface);
+  color: var(--color-text);
   box-sizing: border-box;
   padding: 0 12px;
   font-size: 14px;
 }
 
 .rename-form input:focus {
-  border-color: #111827;
+  border-color: var(--color-text);
   outline: none;
 }
 
@@ -1430,26 +1541,26 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
 }
 
 .rename-cancel {
-  border: 1px solid #dbe2ec;
-  background: #fff;
-  color: #344054;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
 }
 
 .rename-submit {
-  border: 1px solid #111827;
-  background: #111827;
-  color: #fff;
+  border: 1px solid var(--color-text);
+  background: var(--color-text);
+  color: var(--color-bg);
 }
 
 .project-form small {
-  color: #8a94a6;
+  color: var(--color-text-muted);
   font-size: 12px;
   line-height: 1.5;
 }
 
 .project-name-field {
   height: 38px;
-  border: 1px solid #dbe2ec;
+  border: 1px solid var(--color-border);
   border-radius: 8px;
   display: grid;
   grid-template-columns: 36px minmax(0, 1fr);
@@ -1471,7 +1582,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
 }
 
 .project-icon-trigger:hover {
-  background: #f4f4f5 !important;
+  background: var(--color-hover) !important;
 }
 
 .project-icon-trigger--muted {
@@ -1488,10 +1599,10 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
 .create-project-modal input {
   min-width: 0;
   width: 100%;
-  border: 1px solid #dbe2ec;
+  border: 1px solid var(--color-border);
   border-radius: 8px;
-  background: #fff;
-  color: #111827;
+  background: var(--color-surface);
+  color: var(--color-text);
   box-sizing: border-box;
   font-size: 14px;
   font-weight: 400;
@@ -1514,8 +1625,8 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
 }
 
 .project-form input:disabled {
-  background: #f8fafc;
-  color: #8a94a6;
+  background: var(--color-hover);
+  color: var(--color-text-muted);
 }
 
 .delete-project-btn {
@@ -1523,7 +1634,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   height: 38px;
   border: 1px solid #ff2457;
   border-radius: 999px;
-  background: #fff;
+  background: var(--color-surface);
   color: #ff2457;
   padding: 0 14px;
   cursor: pointer;
@@ -1536,9 +1647,9 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   top: 126px;
   width: 260px;
   padding: 12px 12px 0;
-  border: 1px solid #d9dee8;
+  border: 1px solid var(--color-border);
   border-radius: 16px;
-  background: #fff;
+  background: var(--color-surface);
   box-shadow: 0 18px 44px rgba(15, 23, 42, 0.16);
   z-index: 2;
   overflow: hidden;
@@ -1558,7 +1669,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
 
 .palette-colors {
   padding-bottom: 12px;
-  border-bottom: 1px solid #e6ebf3;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .palette-color {
@@ -1571,8 +1682,8 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
 }
 
 .palette-color--active {
-  border: 3px solid #fff;
-  outline: 2px solid #111827;
+  border: 3px solid var(--color-surface);
+  outline: 2px solid var(--color-text);
   outline-offset: -1px;
   box-shadow: none;
 }
@@ -1588,7 +1699,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   border: 0;
   border-radius: 999px;
   background: transparent;
-  color: #111827;
+  color: var(--color-text);
   cursor: pointer;
   display: grid;
   place-items: center;
@@ -1597,12 +1708,12 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
 }
 
 .palette-icons button:hover {
-  background: #f2f4f7;
+  background: var(--color-hover);
 }
 
 .palette-icon--active {
-  background: #f4f4f5 !important;
-  box-shadow: inset 0 0 0 1px #e5e7eb;
+  background: var(--color-hover) !important;
+  box-shadow: inset 0 0 0 1px var(--color-border);
 }
 
 .palette-icons button :deep(svg) {
@@ -1617,9 +1728,9 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   margin: 0 -12px;
   padding: 0 20px;
   border: 0;
-  border-top: 1px solid #e6ebf3;
-  background: #fff;
-  color: #111827;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
   text-align: left;
   cursor: pointer;
   font-size: 14px;
@@ -1631,8 +1742,8 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   margin: 0;
   padding: 12px;
   border-radius: 12px;
-  background: #f2f4f7;
-  color: #667085;
+  background: var(--color-hover);
+  color: var(--color-text-muted);
   font-size: 14px;
   line-height: 1.5;
 }
@@ -1647,7 +1758,7 @@ function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
   border: 0;
   border-radius: 999px;
   background: #c7c7c7;
-  color: #fff;
+  color: var(--color-bg);
   padding: 0 14px;
   cursor: not-allowed;
   font-weight: 700;

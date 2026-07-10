@@ -1,5 +1,4 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import ChatView from '@/views/ChatView.vue'
 import KnowledgeBaseView from '@/views/KnowledgeBaseView.vue'
 import { getStoredToken } from '@/api/request'
 import { useAuthStore as useAdminAuthStore } from '@/stores/adminAuth'
@@ -8,8 +7,8 @@ const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     { path: '/', redirect: '/learning' },
-    { path: '/chat', name: 'chat', component: ChatView },
-    { path: '/chat/:id', name: 'chat-detail', component: ChatView, props: true },
+    { path: '/chat', name: 'chat', component: () => import('@/views/student/StudentChatView.vue') },
+    { path: '/chat/:id', name: 'chat-detail', component: () => import('@/views/student/StudentChatView.vue'), props: true },
     { path: '/learning', name: 'learning-home', component: () => import('@/views/student/LearningHomeView.vue') },
     { path: '/learning/new', name: 'learning-new', component: () => import('@/views/student/LearningHomeView.vue') },
     { path: '/learning/projects', name: 'learning-projects', component: () => import('@/views/student/LearningProjectsView.vue') },

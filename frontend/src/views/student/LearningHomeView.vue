@@ -13,8 +13,15 @@ const step = ref<'home' | 'profile'>('home')
 const selectedLibraryId = ref(1)
 const libraryModalOpen = ref(false)
 const uploadModalOpen = ref(false)
+const modelMenuOpen = ref(false)
+const selectedModelKey = ref('qwen-plus')
 
 const selectedLibrary = computed(() => courseLibraries.find((item) => item.id === selectedLibraryId.value))
+const modelOptions = [
+  { key: 'qwen-plus', name: 'Qwen Plus', desc: '最强大的推理能力' },
+  { key: 'gpt-4o', name: 'GPT-4 Omni', desc: '适合日常对话' },
+]
+const selectedModel = computed(() => modelOptions.find((item) => item.key === selectedModelKey.value) ?? modelOptions[0]!)
 
 const resourceOptions = ref([
   { key: 'path', label: '学习路径', checked: true },
@@ -39,6 +46,11 @@ const quickActions = [
 function selectLibrary(id: number) {
   selectedLibraryId.value = id
   libraryModalOpen.value = false
+}
+
+function selectModel(key: string) {
+  selectedModelKey.value = key
+  modelMenuOpen.value = false
 }
 
 function submitPrompt() {
@@ -66,10 +78,11 @@ function createProject() {
             placeholder="例如：基于 Java 面向对象资料库，帮我做 3 天复习计划，并生成练习题和思维导图"
             @keydown.ctrl.enter.prevent="submitPrompt"
           />
+          <span v-if="!prompt" class="prompt-placeholder">处理任何事务</span>
           <div class="prompt-toolbar">
-            <div class="prompt-tools">
+            <div class="prompt-tools prompt-tools--left">
               <button type="button" title="上传文件" @click="uploadModalOpen = true">
-                <AppIcon name="plus" :size="22" />
+                <AppIcon name="paperclip" :size="21" />
               </button>
               <button type="button" title="语音输入">
                 <AppIcon name="microphone" :size="20" />
@@ -78,21 +91,68 @@ function createProject() {
                 <AppIcon name="eye" :size="20" />
               </button>
               <button class="library-chip" type="button" @click="libraryModalOpen = true">
-                <AppIcon name="notebook" :size="17" />
+                <AppIcon name="folder" :size="17" />
                 {{ selectedLibrary?.name }}
                 <AppIcon name="close" :size="14" />
               </button>
             </div>
-            <button class="send-btn" type="button" @click="submitPrompt">
-              <AppIcon name="send" :size="22" />
+            <div class="prompt-tools prompt-tools--right">
+              <div class="model-switch" @click.stop>
+                <button class="model-trigger" type="button" @click="modelMenuOpen = !modelMenuOpen">
+                  <span>{{ selectedModel.name }}</span>
+                  <AppIcon :name="modelMenuOpen ? 'chevron-up' : 'chevron-down'" :size="13" />
+                </button>
+                <transition name="model-menu">
+                  <div v-if="modelMenuOpen" class="model-menu">
+                    <button
+                      v-for="item in modelOptions"
+                      :key="item.key"
+                      class="model-option"
+                      :class="{ 'is-active': item.key === selectedModelKey }"
+                      type="button"
+                      @click="selectModel(item.key)"
+                    >
+                      <span>
+                        <strong>{{ item.name }}</strong>
+                        <small>{{ item.desc }}</small>
+                      </span>
+                      <AppIcon v-if="item.key === selectedModelKey" name="check" :size="16" />
+                    </button>
+                  </div>
+                </transition>
+              </div>
+              <span class="model-label">5.6 Sol 轻度</span>
+              <button type="button" title="璇煶杈撳叆">
+                <AppIcon name="microphone" :size="20" />
+              </button>
+              <button class="send-btn" type="button" @click="submitPrompt">
+                <AppIcon name="upload" :size="21" />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="prompt-subbar">
+          <div class="subbar-left">
+            <button class="subbar-action" type="button" @click="libraryModalOpen = true">
+              <AppIcon name="folder" :size="17" />
+              <span>选择项目</span>
+            </button>
+            <button class="subbar-action" type="button">
+              <AppIcon name="activity" :size="16" />
+              <span>连接插件</span>
             </button>
           </div>
+          <button class="subbar-action subbar-action--right" type="button">
+            <AppIcon name="monitor" :size="16" />
+            <span>下载桌面应用</span>
+          </button>
         </div>
 
         <div class="action-chips">
           <button v-for="item in quickActions" :key="item.label" type="button" @click="prompt = item.label">
-            <AppIcon :name="item.icon" :size="20" />
-            {{ item.label }}
+            <span class="action-icon"><AppIcon :name="item.icon" :size="18" /></span>
+            <span>{{ item.label }}</span>
           </button>
         </div>
 
@@ -211,17 +271,31 @@ button {
 }
 
 .home-center {
-  max-width: 980px;
-  margin: 108px auto 0;
+  max-width: 770px;
+  margin: 112px auto 0;
   text-align: center;
 }
 
 .home-center h1,
 .profile-flow h1 {
   color: var(--color-text);
-  font-size: 34px;
-  font-weight: 800;
+  font-size: 28px;
+  font-weight: 600;
   letter-spacing: 0;
+}
+
+.home-center > h1 {
+  font-size: 0;
+}
+
+.home-center > h1::before {
+  content: "我们该做什么？";
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.home-center > p {
+  display: none;
 }
 
 .home-center p,
@@ -232,26 +306,47 @@ button {
 }
 
 .prompt-box {
-  margin-top: 42px;
-  min-height: 188px;
-  border: 1px solid #2563eb;
-  border-radius: 8px;
+  position: relative;
+  margin-top: 32px;
+  min-height: 150px;
+  border: 1px solid var(--color-border);
+  border-radius: 24px;
   background: var(--color-surface);
-  box-shadow: 0 12px 36px rgba(37, 99, 235, 0.08);
-  padding: 22px;
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
+  padding: 0;
   text-align: left;
+  box-sizing: border-box;
 }
 
 .prompt-box textarea {
   width: 100%;
-  height: 86px;
+  min-height: 118px;
+  max-height: 200px;
   resize: none;
   border: 0;
   outline: 0;
   background: transparent;
   color: var(--color-text);
   font-size: 16px;
-  line-height: 1.7;
+  line-height: 1.6;
+  padding: 14px 12px 60px 16px;
+  box-sizing: border-box;
+  border-radius: 24px;
+  display: block;
+}
+
+.prompt-box textarea::placeholder {
+  color: transparent;
+}
+
+.prompt-placeholder {
+  position: absolute;
+  left: 16px;
+  top: 15px;
+  color: var(--color-text-muted);
+  font-size: 16px;
+  line-height: 1.6;
+  pointer-events: none;
 }
 
 .prompt-toolbar,
@@ -267,12 +362,23 @@ button {
 }
 
 .prompt-toolbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
   justify-content: space-between;
   gap: 16px;
+  min-height: 48px;
+  padding: 8px 10px;
+  background: linear-gradient(to top, var(--color-surface) 70%, transparent);
+  border-bottom-left-radius: 24px;
+  border-bottom-right-radius: 24px;
+  pointer-events: none;
 }
 
 .prompt-tools {
-  gap: 12px;
+  gap: 8px;
+  pointer-events: auto;
 }
 
 .prompt-tools button,
@@ -285,53 +391,158 @@ button {
   cursor: pointer;
 }
 
+.prompt-tools--left > button:not(:first-child) {
+  display: none;
+}
+
 .prompt-tools > button {
-  width: 42px;
-  height: 42px;
+  width: 32px;
+  height: 32px;
   border-radius: 8px;
   display: grid;
   place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
 }
 
-.library-chip {
-  width: auto !important;
-  padding: 0 12px;
-  display: inline-flex !important;
-  align-items: center;
-  gap: 8px;
-  font-weight: 700;
+.prompt-toolbar .library-chip {
+  display: none !important;
+}
+
+.model-label {
+  color: var(--color-text-muted);
+  font-size: 0;
+  white-space: nowrap;
+}
+
+.model-label::before {
+  content: "5.6 Sol 轻度⌄";
+  font-size: 16px;
 }
 
 .send-btn {
-  width: 48px;
-  height: 48px;
-  border: 1px solid var(--color-primary);
-  border-radius: 8px;
-  background: var(--color-primary);
-  color: #fff;
+  width: 32px !important;
+  height: 32px !important;
+  border: 0 !important;
+  border-radius: 50% !important;
+  background: var(--color-hover-strong) !important;
+  color: var(--color-text-muted) !important;
   display: grid;
   place-items: center;
   cursor: pointer;
 }
 
-.action-chips {
-  justify-content: center;
-  gap: 14px;
-  flex-wrap: wrap;
-  margin-top: 26px;
+.prompt-subbar {
+  width: calc(100% - 40px);
+  min-height: 42px;
+  margin: 0 auto;
+  padding: 0 12px;
+  border-radius: 0 0 16px 16px;
+  background: var(--color-hover);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
 }
 
-.action-chips button {
-  height: 44px;
+.subbar-left {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.subbar-left .subbar-action:not(:first-child),
+.subbar-action--right {
+  display: none;
+}
+
+.subbar-action {
+  height: 32px;
+  border: 0;
   border-radius: 8px;
-  padding: 0 16px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
   display: inline-flex;
   align-items: center;
+  gap: 7px;
+  padding: 0 4px;
+  font-size: 14px;
+}
+
+.subbar-action:hover {
+  background: var(--color-hover-strong);
+}
+
+/* kept for the profile step and hidden in the home input toolbar */
+.library-chip {
+  width: auto !important;
+  height: 36px !important;
+  padding: 0 12px;
+  border: 1px solid var(--color-border) !important;
+  border-radius: 10px !important;
+  background: var(--color-surface) !important;
+  display: inline-flex !important;
+  align-items: center;
   gap: 8px;
+  color: var(--color-text) !important;
+  font-size: 13px;
   font-weight: 700;
 }
 
+.action-chips {
+  width: 260px;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 10px;
+  margin: 22px 0 0 28px;
+}
+
+.action-chips button {
+  height: 42px;
+  border-radius: 8px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  border-color: transparent;
+  background: transparent;
+  color: #8a8a8a;
+  font-weight: 500;
+  text-align: left;
+}
+
+.action-chips button:hover {
+  background: var(--color-hover);
+  color: var(--color-text);
+}
+
+.action-icon {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.action-chips button:nth-child(1) .action-icon { color: #2563eb; }
+.action-chips button:nth-child(2) .action-icon { color: #ef4444; }
+.action-chips button:nth-child(3) .action-icon { color: #16a34a; }
+.action-chips button:nth-child(4) .action-icon { color: #f97316; }
+.action-chips button:nth-child(5) .action-icon { color: #7c3aed; }
+.action-chips button:nth-child(6) .action-icon { color: #0ea5e9; }
+
+.action-chips button span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .upload-row {
+  display: none;
   justify-content: center;
   gap: 10px;
   margin-top: 30px;
@@ -342,6 +553,126 @@ button {
   height: 34px;
   border-radius: 8px;
   padding: 0 14px;
+}
+
+.prompt-tools--right .model-label {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 8px;
+  color: var(--color-text-muted);
+  cursor: default;
+}
+
+.prompt-tools--right .model-label:hover {
+  background: var(--color-hover);
+  color: var(--color-text);
+}
+
+.prompt-tools--right .model-label::before {
+  content: "Qwen Plus⌄";
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.prompt-tools--right > .model-label {
+  display: none !important;
+}
+
+.model-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.model-trigger {
+  height: 32px !important;
+  width: auto !important;
+  padding: 0 8px !important;
+  border: 0 !important;
+  border-radius: 8px !important;
+  background: transparent !important;
+  color: var(--color-text) !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.model-trigger:hover {
+  background: var(--color-hover) !important;
+}
+
+.model-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  width: 276px;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
+  z-index: 30;
+}
+
+.model-option {
+  width: 100% !important;
+  height: auto !important;
+  min-height: 52px;
+  padding: 8px 10px !important;
+  border: 0 !important;
+  border-radius: 7px !important;
+  background: transparent !important;
+  color: var(--color-text) !important;
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.model-option:hover,
+.model-option.is-active {
+  background: var(--color-hover) !important;
+}
+
+.model-option span {
+  display: grid;
+  gap: 3px;
+}
+
+.model-option strong {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.model-option small {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.model-option svg {
+  color: #10a37f;
+}
+
+.model-menu-enter-active,
+.model-menu-leave-active {
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.model-menu-enter-from,
+.model-menu-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
 }
 
 .profile-flow {

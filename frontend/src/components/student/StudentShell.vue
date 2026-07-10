@@ -13,15 +13,17 @@ import StudentSidebar from './StudentSidebar.vue'
 
 <style scoped>
 .student-shell {
-  min-height: 100vh;
+  height: 100vh;
   display: flex;
   background: var(--color-bg);
+  color: var(--color-text);
+  overflow: hidden;
 }
 
 .student-main {
   flex: 1;
   min-width: 0;
-  height: 100vh;
+  height: 100%;
   overflow: auto;
 }
 </style>
