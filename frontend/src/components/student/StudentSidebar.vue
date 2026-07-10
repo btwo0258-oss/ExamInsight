@@ -21,6 +21,7 @@ const authStore = useAuthStore()
 const conversationStore = useConversationStore()
 const sidebarCollapsed = ref(false)
 const learningExpanded = ref(true)
+const projectsExpanded = ref(true)
 const menuOpen = ref(false)
 const menuPos = ref({ x: 0, y: 0 })
 const menuItems = ref<MenuAction[]>([])
@@ -69,8 +70,12 @@ const activeSection = computed(() => {
 
 const activeLearningId = computed(() => {
   const rawId = route.params.id
-  return typeof rawId === 'string' ? Number(rawId) : null
+  if (typeof rawId !== 'string') return null
+  const id = Number(rawId)
+  return Number.isFinite(id) ? id : null
 })
+
+const currentLearningId = computed(() => activeLearningId.value ?? learningPlans[0]?.id ?? 1)
 
 const pinnedRecent = computed(() => recentConversations.slice(0, 2))
 const normalRecent = computed(() => recentConversations.slice(2))
@@ -98,6 +103,17 @@ function openProjectSettings() {
 
 function openCreateProject() {
   createProjectOpen.value = true
+}
+
+function openLearningHome() {
+  learningExpanded.value = true
+  go('/learning')
+}
+
+function openLearningProjects() {
+  learningExpanded.value = true
+  projectsExpanded.value = true
+  go('/learning/projects')
 }
 
 async function createNewChat() {
@@ -179,10 +195,17 @@ const historyMenuItems: MenuAction[] = [
           class="nav-item"
           :class="{ 'nav-item--active': activeSection === 'learning' }"
           type="button"
-          @click="learningExpanded = !learningExpanded"
+          @click="openLearningHome"
         >
           <AppIcon name="graduation" :size="17" />
           <span>智能学习</span>
+        </button>
+        <button
+          class="learning-toggle-btn"
+          type="button"
+          aria-label="展开智能学习"
+          @click.stop="learningExpanded = !learningExpanded"
+        >
           <AppIcon
             class="nav-chevron"
             :name="learningExpanded ? 'chevron-down' : 'chevron-right'"
@@ -193,7 +216,7 @@ const historyMenuItems: MenuAction[] = [
           class="new-learning-btn"
           type="button"
           aria-label="新建智能学习"
-          @click.stop="openCreateProject"
+          @click.stop="go('/learning/new')"
         >
           <AppIcon name="edit" :size="15" />
           <span class="nav-tooltip">新建智能学习</span>
@@ -201,19 +224,51 @@ const historyMenuItems: MenuAction[] = [
       </div>
 
       <div v-if="learningExpanded" class="learning-tree">
-        <div v-for="plan in learningPlans" :key="plan.id" class="tree-row">
+        <div class="tree-row tree-row--section">
           <button
-            class="tree-item"
-            :class="{ 'tree-item--active': activeLearningId === plan.id }"
+            class="tree-item tree-item--section"
+            :class="{ 'tree-item--active': route.path.startsWith('/learning/projects') }"
             type="button"
-            @click="go(`/learning/${plan.id}`)"
+            @click="openLearningProjects"
           >
-            <AppIcon name="notebook" :size="15" />
-            <span>{{ plan.title.replace('方案', '') }}</span>
-            <small>{{ plan.updatedAt }}</small>
+            <AppIcon name="folder" :size="15" />
+            <span>学习项目</span>
           </button>
-          <button class="tree-more" type="button" @click="openMenu($event, learningMenuItems)">
-            <AppIcon name="more-horizontal" :size="15" />
+          <button
+            class="tree-section-toggle"
+            type="button"
+            aria-label="展开学习项目"
+            @click.stop="projectsExpanded = !projectsExpanded"
+          >
+            <AppIcon :name="projectsExpanded ? 'chevron-down' : 'chevron-right'" :size="14" />
+          </button>
+        </div>
+        <template v-if="projectsExpanded">
+          <div v-for="plan in learningPlans" :key="plan.id" class="tree-row tree-row--project">
+            <button
+              class="tree-item"
+              :class="{ 'tree-item--active': activeLearningId === plan.id }"
+              type="button"
+              @click="go(`/learning/${plan.id}`)"
+            >
+              <AppIcon name="notebook" :size="15" />
+              <span>{{ plan.title.replace('方案', '') }}</span>
+              <small>{{ plan.updatedAt }}</small>
+            </button>
+            <button class="tree-more" type="button" @click="openMenu($event, learningMenuItems)">
+              <AppIcon name="more-horizontal" :size="15" />
+            </button>
+          </div>
+        </template>
+        <div class="tree-row tree-row--section">
+          <button
+            class="tree-item tree-item--section"
+            :class="{ 'tree-item--active': route.path.includes('/mistakes') }"
+            type="button"
+            @click="go(`/learning/${currentLearningId}/mistakes`)"
+          >
+            <AppIcon name="alert-circle" :size="15" />
+            <span>错题本</span>
           </button>
         </div>
       </div>
@@ -575,6 +630,8 @@ const historyMenuItems: MenuAction[] = [
 }
 
 .new-learning-btn,
+.learning-toggle-btn,
+.tree-section-toggle,
 .tree-more,
 .recent-more {
   border: 0;
@@ -592,6 +649,22 @@ const historyMenuItems: MenuAction[] = [
   right: 6px;
   width: 26px;
   height: 26px;
+  color: #667085;
+}
+
+.learning-toggle-btn {
+  position: absolute;
+  right: 34px;
+  width: 26px;
+  height: 26px;
+  color: #667085;
+}
+
+.tree-section-toggle {
+  position: absolute;
+  right: 4px;
+  width: 24px;
+  height: 24px;
   color: #667085;
 }
 
@@ -623,6 +696,8 @@ const historyMenuItems: MenuAction[] = [
 .recent-row:hover .recent-pin,
 .recent-row:hover .recent-more,
 .new-learning-btn:focus-visible,
+.learning-toggle-btn:focus-visible,
+.tree-section-toggle:focus-visible,
 .tree-more:focus-visible,
 .recent-pin:focus-visible,
 .recent-more:focus-visible {
@@ -630,6 +705,8 @@ const historyMenuItems: MenuAction[] = [
 }
 
 .new-learning-btn:hover,
+.learning-toggle-btn:hover,
+.tree-section-toggle:hover,
 .tree-more:hover,
 .recent-pin:hover,
 .recent-more:hover {
@@ -691,6 +768,10 @@ const historyMenuItems: MenuAction[] = [
   padding: 2px 0 6px 30px;
 }
 
+.tree-row--section {
+  margin-top: 2px;
+}
+
 .tree-item {
   width: 100%;
   min-height: 34px;
@@ -733,6 +814,26 @@ const historyMenuItems: MenuAction[] = [
   color: #8a94a6;
   font-size: 12px;
   white-space: nowrap;
+}
+
+.tree-item--section {
+  min-height: 34px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  padding-right: 30px;
+  color: #273246;
+  font-weight: 700;
+}
+
+.tree-row--section + .tree-row--project {
+  margin-top: 2px;
+}
+
+.tree-row--project .tree-item {
+  padding-left: 22px;
+}
+
+.tree-row--project {
+  padding-left: 16px;
 }
 
 .recent {

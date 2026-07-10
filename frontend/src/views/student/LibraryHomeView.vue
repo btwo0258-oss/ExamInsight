@@ -43,10 +43,10 @@ const visibleAssets = computed(() => {
   if (activeFilter.value === 'knowledge') return knowledgeAssets.value
   if (activeFilter.value === 'mindmap') return []
   if (activeFilter.value === 'image') {
-    return fileAssets.value.filter((asset) => asset.source.type.includes('图片'))
+    return fileAssets.value.filter((asset) => asset.kind === 'file' && asset.source.type.includes('图片'))
   }
   if (activeFilter.value === 'file') {
-    return fileAssets.value.filter((asset) => !asset.source.type.includes('图片'))
+    return fileAssets.value.filter((asset) => asset.kind === 'file' && !asset.source.type.includes('图片'))
   }
   return [...knowledgeAssets.value, ...fileAssets.value]
 })

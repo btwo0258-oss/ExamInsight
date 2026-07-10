@@ -1,221 +1,181 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
 import StudentShell from '@/components/student/StudentShell.vue'
 import LibrarySelectModal from '@/components/student/LibrarySelectModal.vue'
 import UploadMaterialModal from '@/components/student/UploadMaterialModal.vue'
 import { courseLibraries, learningPlans } from '@/mock'
 
-const route = useRoute()
 const router = useRouter()
-
-const queryLibraryId = Number(route.query.libraryId)
-const goal = ref(
-  '我想系统学习 Java 面向对象，目标是理解核心概念并能在项目中熟练应用',
-)
-const selectedLibraryId = ref(
-  courseLibraries.some((item) => item.id === queryLibraryId) ? queryLibraryId : 1,
-)
+const prompt = ref('')
+const step = ref<'home' | 'profile'>('home')
+const selectedLibraryId = ref(1)
 const libraryModalOpen = ref(false)
 const uploadModalOpen = ref(false)
 
-const selectedLibrary = computed(() =>
-  courseLibraries.find((item) => item.id === selectedLibraryId.value),
-)
-const activePlan = computed(() => learningPlans[0])
+const selectedLibrary = computed(() => courseLibraries.find((item) => item.id === selectedLibraryId.value))
 
-const profileItems = [
-  { icon: 'graduation', label: '专业方向', value: '计算机科学与技术' },
-  { icon: 'book', label: '知识基础', value: '中等' },
-  { icon: 'alert-circle', label: '易错点', value: '继承、接口理解' },
-  { icon: 'heart', label: '学习偏好', value: '图文 + 代码示例' },
+const resourceOptions = ref([
+  { key: 'path', label: '学习路径', checked: true },
+  { key: 'handout', label: '讲义', checked: true },
+  { key: 'exercise', label: '练习题', checked: true },
+  { key: 'mindmap', label: '思维导图', checked: true },
+  { key: 'ppt', label: 'PPT', checked: false },
+  { key: 'code', label: '代码案例', checked: false },
+  { key: 'reading', label: '拓展阅读', checked: false },
+  { key: 'mistake', label: '错题本', checked: false },
+])
+
+const quickActions = [
+  { icon: 'clipboard', label: '生成学习方案' },
+  { icon: 'clipboard-x', label: '错题诊断' },
+  { icon: 'edit', label: '生成练习题' },
+  { icon: 'presentation', label: '生成 PPT/讲义' },
+  { icon: 'mind-topic', label: '生成思维导图' },
+  { icon: 'camera', label: '拍照问答' },
 ]
-
-const progressSteps = [
-  { id: 1, title: '画像分析', desc: '分析你的学习背景与需求', status: '进行中' },
-  { id: 2, title: '资料理解', desc: '理解已上传资料与知识点', status: '等待中' },
-  { id: 3, title: '资源生成', desc: '生成个性化学习资源包', status: '等待中' },
-  { id: 4, title: '路径规划', desc: '规划最优学习路径', status: '等待中' },
-]
-
-const quickGoals = ['两周掌握继承与多态', '期末复习重点', '准备面试', '完成课程作业']
 
 function selectLibrary(id: number) {
   selectedLibraryId.value = id
   libraryModalOpen.value = false
 }
 
-function startAnalysis() {
-  router.push(`/learning/${activePlan.value.id}`)
+function submitPrompt() {
+  if (!prompt.value.trim()) {
+    prompt.value = '我下周要考 Java 面向对象，继承、多态和接口分不清，帮我做 3 天复习。'
+  }
+  step.value = 'profile'
+}
+
+function createProject() {
+  router.push(`/learning/${learningPlans[0]!.id}`)
 }
 </script>
 
 <template>
   <StudentShell>
-    <div class="learning-page">
-      <header class="page-title">
-        <h1>智能学习</h1>
-        <p>基于你的学习目标和资料库，生成个性化学习方案与资源。</p>
-      </header>
+    <div class="learning-home">
+      <section v-if="step === 'home'" class="home-center">
+        <h1>今天想解决什么学习问题？</h1>
+        <p>选择资料库、上传文件或直接提问，AI 会自动生成学习路径和资源包。</p>
 
-      <div class="top-grid">
-        <section class="ask-panel">
-          <div class="ask-title">
-            <span class="icon-box"><AppIcon name="message-square" :size="22" /></span>
-            <h2>今天想解决什么学习问题？</h2>
-          </div>
-
-          <div class="setup-grid">
-            <label class="select-field">
-              <span>选择课程（可选）</span>
-              <select>
-                <option>Java 面向对象程序设计</option>
-                <option>人工智能导论</option>
-                <option>大学英语四级阅读</option>
-              </select>
-            </label>
-            <div class="selected-library-card">
-              <span>已选择资料库</span>
-              <button v-if="selectedLibrary" type="button" @click="libraryModalOpen = true">
-                {{ selectedLibrary.name }}
+        <div class="prompt-box">
+          <textarea
+            v-model="prompt"
+            placeholder="例如：基于 Java 面向对象资料库，帮我做 3 天复习计划，并生成练习题和思维导图"
+            @keydown.ctrl.enter.prevent="submitPrompt"
+          />
+          <div class="prompt-toolbar">
+            <div class="prompt-tools">
+              <button type="button" title="上传文件" @click="uploadModalOpen = true">
+                <AppIcon name="plus" :size="22" />
+              </button>
+              <button type="button" title="语音输入">
+                <AppIcon name="microphone" :size="20" />
+              </button>
+              <button type="button" title="图片识别">
+                <AppIcon name="eye" :size="20" />
+              </button>
+              <button class="library-chip" type="button" @click="libraryModalOpen = true">
+                <AppIcon name="notebook" :size="17" />
+                {{ selectedLibrary?.name }}
                 <AppIcon name="close" :size="14" />
               </button>
-              <button v-else type="button" @click="libraryModalOpen = true">选择资料库</button>
             </div>
-          </div>
-
-          <label class="goal-box">
-            <textarea
-              v-model="goal"
-              maxlength="500"
-              placeholder="例如：我想系统学习 Java 面向对象，目标是理解核心概念并能在项目中熟练应用"
-            />
-            <span>{{ goal.length }}/500</span>
-          </label>
-
-          <div class="quick-goals">
-            <span>推荐目标：</span>
-            <button v-for="item in quickGoals" :key="item" type="button" @click="goal = item">
-              {{ item }}
+            <button class="send-btn" type="button" @click="submitPrompt">
+              <AppIcon name="send" :size="22" />
             </button>
           </div>
+        </div>
 
-          <div class="action-row">
-            <button class="outline-btn" type="button" @click="uploadModalOpen = true">
-              <AppIcon name="upload-cloud" :size="22" />
-              上传资料
-            </button>
-            <button class="outline-btn" type="button" @click="libraryModalOpen = true">
-              <AppIcon name="folder" :size="22" />
-              选择资料库
-            </button>
-            <button class="primary-btn" type="button" @click="startAnalysis">
-              <AppIcon name="play" :size="20" />
-              开始智能分析
-            </button>
-          </div>
-        </section>
+        <div class="action-chips">
+          <button v-for="item in quickActions" :key="item.label" type="button" @click="prompt = item.label">
+            <AppIcon :name="item.icon" :size="20" />
+            {{ item.label }}
+          </button>
+        </div>
 
-        <aside class="profile-panel">
-          <div class="panel-title">
-            <AppIcon name="user" :size="22" />
-            <h2>个性化依据</h2>
-          </div>
-          <div class="profile-list">
-            <article v-for="item in profileItems" :key="item.label" class="profile-item">
-              <AppIcon :name="item.icon" :size="20" />
-              <span>{{ item.label }}</span>
-              <strong>{{ item.value }}</strong>
-            </article>
-          </div>
-        </aside>
-      </div>
+        <div class="upload-row">
+          <span>也可以直接上传：</span>
+          <button type="button" @click="uploadModalOpen = true">PDF</button>
+          <button type="button" @click="uploadModalOpen = true">DOCX</button>
+          <button type="button" @click="uploadModalOpen = true">Markdown</button>
+          <button type="button" @click="uploadModalOpen = true">图片</button>
+        </div>
+      </section>
 
-      <div class="content-grid">
-        <section class="panel progress-panel">
-          <div class="panel-title">
-            <AppIcon name="clock" :size="22" />
-            <h2>分析进度</h2>
+      <section v-else class="profile-flow">
+        <header class="flow-head">
+          <button type="button" @click="step = 'home'">
+            <AppIcon name="chevron-left" :size="18" />
+          </button>
+          <div>
+            <h1>补全学习画像</h1>
+            <p>通过少量确认，让系统生成更贴合你的学习项目。</p>
           </div>
-          <div class="progress-list">
-            <article v-for="step in progressSteps" :key="step.id" class="progress-step">
-              <span class="step-number">{{ step.id }}</span>
-              <div>
-                <h3>{{ step.title }}</h3>
-                <p>{{ step.desc }}</p>
-              </div>
-              <small :class="{ active: step.id === 1 }">{{ step.status }}</small>
-            </article>
-          </div>
-        </section>
+        </header>
 
-        <section class="panel plan-panel">
-          <div class="panel-title title-between">
-            <div>
-              <AppIcon name="book" :size="22" />
-              <h2>学习方案预览</h2>
+        <div class="chat-row chat-row--user">
+          <div class="message message--user">{{ prompt }}</div>
+          <span class="avatar">学</span>
+        </div>
+        <div class="chat-row">
+          <span class="avatar avatar--ai"><AppIcon name="brain" :size="18" /></span>
+          <div class="message">为了生成更适合你的学习项目，我需要确认 3 件事。</div>
+        </div>
+
+        <div class="choice-grid">
+          <article class="choice-card">
+            <span class="number">1</span>
+            <h2>目标类型</h2>
+            <div class="chips">
+              <button class="selected" type="button">考试复习</button>
+              <button type="button">课程作业</button>
+              <button type="button">面试准备</button>
+              <button type="button">项目实战</button>
             </div>
-            <button type="button" @click="router.push(`/learning/${activePlan.id}`)">
-              查看完整方案
-              <AppIcon name="chevron-right" :size="16" />
-            </button>
-          </div>
+          </article>
+          <article class="choice-card">
+            <span class="number">2</span>
+            <h2>学习偏好</h2>
+            <div class="chips">
+              <button class="selected" type="button">图文讲解</button>
+              <button class="selected" type="button">代码示例</button>
+              <button type="button">先练后讲</button>
+              <button type="button">先讲后练</button>
+            </div>
+          </article>
+          <article class="choice-card">
+            <span class="number">3</span>
+            <h2>资源类型（可选）</h2>
+            <div class="check-grid">
+              <label v-for="item in resourceOptions" :key="item.key">
+                <input v-model="item.checked" type="checkbox" />
+                <span>{{ item.label }}</span>
+              </label>
+            </div>
+          </article>
+        </div>
 
-          <div class="path-list">
-            <article
-              v-for="stage in activePlan.stages.slice(0, 3)"
-              :key="stage.id"
-              class="path-card"
-            >
-              <span>{{ stage.id }}</span>
-              <div>
-                <h3>{{ stage.title }} <small>（预计 {{ stage.duration }}）</small></h3>
-                <p>{{ stage.goal }}</p>
-                <em>知识点 {{ stage.resources.length + 6 }} 个</em>
-              </div>
-            </article>
+        <section class="confirm-panel">
+          <h2>生成配置确认</h2>
+          <div class="confirm-list">
+            <span>资料来源</span>
+            <strong>{{ selectedLibrary?.name }}</strong>
+            <span>计划周期</span>
+            <strong>3 天</strong>
+            <span>重点知识</span>
+            <strong>继承 / 多态 / 接口</strong>
+            <span>生成资源</span>
+            <strong>{{ resourceOptions.filter((item) => item.checked).map((item) => item.label).join('、') }}</strong>
           </div>
-          <button class="expand-btn" type="button" @click="router.push(`/learning/${activePlan.id}`)">
-            展开后续阶段（共 {{ activePlan.stages.length }} 个阶段）
-            <AppIcon name="chevron-down" :size="16" />
-          </button>
+          <footer>
+            <button class="primary-btn" type="button" @click="createProject">开始生成学习项目</button>
+            <button class="outline-btn" type="button">继续补充要求</button>
+          </footer>
         </section>
-
-        <section class="panel resource-panel">
-          <div class="panel-title">
-            <AppIcon name="folder" :size="22" />
-            <h2>资源包</h2>
-          </div>
-          <div class="resource-grid">
-            <article v-for="item in activePlan.resources" :key="item.id" class="resource-tile">
-              <AppIcon
-                :name="
-                  item.group === '文档'
-                    ? 'file'
-                    : item.group === '结构图'
-                      ? 'mind-topic'
-                      : item.group === '练习'
-                        ? 'edit'
-                        : 'code'
-                "
-                :size="34"
-              />
-              <h3>{{ item.title }}</h3>
-              <p>{{ item.desc }}</p>
-              <span>{{ item.group }}</span>
-            </article>
-          </div>
-          <button class="link-row" type="button" @click="router.push(`/learning/${activePlan.id}/resources`)">
-            查看全部资源
-            <AppIcon name="chevron-right" :size="16" />
-          </button>
-        </section>
-      </div>
-
-      <div v-if="selectedLibrary" class="selected-source">
-        当前资料来源：{{ selectedLibrary.name }}，{{ selectedLibrary.fileCount }} 个文件，{{ selectedLibrary.chunkCount }} 个知识片段
-      </div>
+      </section>
     </div>
 
     <LibrarySelectModal
@@ -229,488 +189,356 @@ function startAnalysis() {
 </template>
 
 <style scoped>
-.learning-page {
+.learning-home {
   min-height: 100%;
-  padding: 38px 28px 56px;
-  background: #fffffc;
+  background: var(--color-bg);
+  padding: 48px 32px;
 }
 
-.learning-page,
-.learning-page * {
+.learning-home,
+.learning-home * {
   box-sizing: border-box;
-}
-
-.page-title {
-  max-width: 1260px;
-  margin: 0 auto 26px;
 }
 
 h1,
 h2,
-h3,
 p {
   margin: 0;
 }
 
-h1 {
+button {
+  font: inherit;
+}
+
+.home-center {
+  max-width: 980px;
+  margin: 108px auto 0;
+  text-align: center;
+}
+
+.home-center h1,
+.profile-flow h1 {
+  color: var(--color-text);
   font-size: 34px;
   font-weight: 800;
-  color: #111827;
+  letter-spacing: 0;
 }
 
-.page-title p {
-  margin-top: 8px;
-  color: #667085;
+.home-center p,
+.flow-head p {
+  margin-top: 14px;
+  color: var(--color-text-muted);
+  font-size: 16px;
 }
 
-.top-grid,
-.content-grid,
-.selected-source {
-  max-width: 1260px;
-  margin-left: auto;
-  margin-right: auto;
-}
-
-.top-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 314px;
-  gap: 16px;
-  margin-bottom: 24px;
-}
-
-.ask-panel,
-.profile-panel,
-.panel {
-  background: #fffffc;
-  border: 1px solid #dbe2ec;
+.prompt-box {
+  margin-top: 42px;
+  min-height: 188px;
+  border: 1px solid #2563eb;
   border-radius: 8px;
-  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.03);
+  background: var(--color-surface);
+  box-shadow: 0 12px 36px rgba(37, 99, 235, 0.08);
+  padding: 22px;
+  text-align: left;
 }
 
-.ask-panel {
-  padding: 24px;
-}
-
-.ask-title,
-.panel-title,
-.panel-title > div {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.icon-box {
-  width: 42px;
-  height: 42px;
-  display: grid;
-  place-items: center;
-  border-radius: 8px;
-  background: #f2f4f7;
-  color: #111827;
-}
-
-.setup-grid {
-  margin-top: 18px;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-}
-
-.select-field,
-.selected-library-card {
-  display: grid;
-  gap: 8px;
-}
-
-.select-field span,
-.selected-library-card > span {
-  color: #344054;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.select-field select,
-.selected-library-card button {
-  height: 44px;
-  border: 1px solid #cfd7e3;
-  border-radius: 8px;
-  background: #fffffc;
-  color: #1f2937;
-  padding: 0 12px;
-}
-
-.selected-library-card button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  cursor: pointer;
-}
-
-h2 {
-  font-size: 20px;
-  font-weight: 800;
-  color: #1f2937;
-}
-
-.goal-box {
-  position: relative;
-  display: block;
-  margin-top: 16px;
-}
-
-.goal-box textarea {
+.prompt-box textarea {
   width: 100%;
-  min-height: 128px;
+  height: 86px;
   resize: none;
-  border: 1px solid #cfd7e3;
-  border-radius: 8px;
-  padding: 18px 18px 34px;
-  color: #1f2937;
-  background: #fffffc;
-  outline: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 16px;
   line-height: 1.7;
 }
 
-.goal-box textarea:focus {
-  border-color: #111827;
-  box-shadow: 0 0 0 3px rgba(17, 24, 39, 0.08);
-}
-
-.goal-box span {
-  position: absolute;
-  right: 16px;
-  bottom: 12px;
-  color: #7b8494;
-  font-size: 13px;
-}
-
-.action-row {
-  margin-top: 22px;
-  display: grid;
-  grid-template-columns: 160px 180px 1fr;
-  gap: 16px;
-  align-items: center;
-}
-
-.quick-goals {
-  margin-top: 12px;
+.prompt-toolbar,
+.prompt-tools,
+.action-chips,
+.upload-row,
+.flow-head,
+.chat-row,
+.chips,
+.confirm-panel footer {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
 }
 
-.quick-goals span {
-  color: #667085;
-  font-size: 13px;
+.prompt-toolbar {
+  justify-content: space-between;
+  gap: 16px;
 }
 
-.quick-goals button {
-  height: 28px;
-  border: 1px solid #dbe2ec;
-  border-radius: 999px;
-  background: #f8fafc;
-  color: #344054;
-  padding: 0 10px;
+.prompt-tools {
+  gap: 12px;
+}
+
+.prompt-tools button,
+.action-chips button,
+.upload-row button,
+.chips button {
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
   cursor: pointer;
-  font-size: 13px;
 }
 
-.outline-btn,
-.primary-btn,
-.title-between button,
-.expand-btn,
-.link-row {
-  height: 52px;
+.prompt-tools > button {
+  width: 42px;
+  height: 42px;
   border-radius: 8px;
+  display: grid;
+  place-items: center;
+}
+
+.library-chip {
+  width: auto !important;
+  padding: 0 12px;
+  display: inline-flex !important;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.send-btn {
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--color-primary);
+  border-radius: 8px;
+  background: var(--color-primary);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.action-chips {
+  justify-content: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 26px;
+}
+
+.action-chips button {
+  height: 44px;
+  border-radius: 8px;
+  padding: 0 16px;
   display: inline-flex;
   align-items: center;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.upload-row {
   justify-content: center;
   gap: 10px;
-  cursor: pointer;
-  font-weight: 700;
+  margin-top: 30px;
+  color: var(--color-text-muted);
 }
 
-.outline-btn {
-  border: 1px solid #cfd7e3;
-  background: #fffffc;
-  color: #1f2937;
-}
-
-.primary-btn {
-  justify-self: end;
-  min-width: 178px;
-  border: 1px solid #111827;
-  background: #111827;
-  color: #fff;
-  font-size: 16px;
-  box-shadow: 0 10px 22px rgba(17, 24, 39, 0.12);
-}
-
-.profile-panel {
-  padding: 24px 18px;
-}
-
-.profile-list {
-  display: grid;
-  gap: 12px;
-  margin-top: 22px;
-}
-
-.profile-item {
-  min-height: 56px;
-  border: 1px solid #dbe2ec;
-  border-radius: 8px;
-  padding: 0 12px;
-  display: grid;
-  grid-template-columns: 24px 1fr auto;
-  align-items: center;
-  gap: 10px;
-}
-
-.profile-item span {
-  color: #344054;
-  font-weight: 700;
-}
-
-.profile-item strong {
-  max-width: 132px;
-  padding: 5px 10px;
-  border-radius: 6px;
-  background: #f2f4f7;
-  color: #4b5563;
-  font-size: 13px;
-  font-weight: 600;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.content-grid {
-  display: grid;
-  grid-template-columns: 300px minmax(0, 1fr) 400px;
-  gap: 16px;
-  align-items: start;
-}
-
-.panel {
-  padding: 24px;
-}
-
-.panel-title {
-  margin-bottom: 22px;
-}
-
-.title-between {
-  justify-content: space-between;
-}
-
-.title-between button,
-.expand-btn,
-.link-row {
-  border: 1px solid #dbe2ec;
-  background: #f8fafc;
-  color: #344054;
+.upload-row button {
   height: 34px;
-  padding: 0 12px;
-  white-space: nowrap;
+  border-radius: 8px;
+  padding: 0 14px;
 }
 
-.plan-panel .panel-title h2 {
-  white-space: nowrap;
+.profile-flow {
+  max-width: 1260px;
+  margin: 0 auto;
 }
 
-.progress-list {
-  display: grid;
-  gap: 18px;
-}
-
-.progress-step {
-  display: grid;
-  grid-template-columns: 36px 1fr auto;
+.flow-head {
   gap: 14px;
-  align-items: start;
+  margin-bottom: 36px;
 }
 
-.step-number {
+.flow-head > button {
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  color: var(--color-text);
+}
+
+.chat-row {
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.chat-row--user {
+  justify-content: flex-end;
+}
+
+.avatar {
   width: 34px;
   height: 34px;
   border-radius: 999px;
   display: grid;
   place-items: center;
-  border: 1px solid #d4dce8;
-  background: #fffffc;
-  color: #667085;
+  background: #f2f4f7;
+  color: var(--color-text);
   font-weight: 800;
+  flex: 0 0 auto;
 }
 
-.progress-step:first-child .step-number {
-  background: #111827;
-  border-color: #111827;
-  color: #fff;
-}
-
-.progress-step h3 {
-  font-size: 16px;
-  color: #1f2937;
-}
-
-.progress-step p {
-  margin-top: 5px;
-  color: #7b8494;
-  font-size: 13px;
-}
-
-.progress-step small {
-  align-self: center;
-  border: 1px solid #dbe2ec;
-  border-radius: 6px;
-  padding: 4px 8px;
-  color: #7b8494;
-  white-space: nowrap;
-}
-
-.progress-step small.active {
-  background: #eef6ff;
-  border-color: #bfdbfe;
+.avatar--ai {
+  background: #eff6ff;
   color: #2563eb;
 }
 
-.path-list {
-  display: grid;
-  gap: 12px;
-}
-
-.path-card {
-  display: grid;
-  grid-template-columns: 36px 1fr;
-  gap: 14px;
-  align-items: start;
-}
-
-.path-card > span {
-  width: 34px;
-  height: 34px;
-  border-radius: 999px;
-  display: grid;
-  place-items: center;
-  background: #111827;
-  color: #fff;
-  font-weight: 800;
-}
-
-.path-card > div {
-  border: 1px solid #dbe2ec;
-  background: #f8fafc;
+.message {
+  max-width: 620px;
+  border: 1px solid var(--color-border);
   border-radius: 8px;
-  padding: 14px 16px;
+  background: var(--color-surface);
+  padding: 14px 18px;
+  color: var(--color-text);
+  line-height: 1.7;
 }
 
-.path-card h3 {
-  font-size: 16px;
-  color: #1f2937;
+.message--user {
+  background: #f4f6f8;
 }
 
-.path-card h3 small {
-  color: #7b8494;
-  font-weight: 500;
-}
-
-.path-card p {
-  margin-top: 8px;
-  color: #4b5563;
-  line-height: 1.6;
-}
-
-.path-card em {
-  display: block;
-  margin-top: 10px;
-  color: #667085;
-  font-size: 13px;
-  font-style: normal;
-}
-
-.expand-btn {
-  width: fit-content;
-  margin: 16px auto 0;
-  border-color: transparent;
-  background: transparent;
-  color: #111827;
-}
-
-.resource-grid {
+.choice-grid {
+  margin-top: 28px;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
 }
 
-.resource-tile {
-  min-height: 206px;
-  border: 1px solid #dbe2ec;
+.choice-card,
+.confirm-panel {
+  border: 1px solid var(--color-border);
   border-radius: 8px;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  gap: 8px;
-  color: #344054;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
 }
 
-.resource-tile h3 {
-  font-size: 16px;
-  color: #1f2937;
+.choice-card {
+  position: relative;
+  padding: 24px;
+  min-height: 188px;
 }
 
-.resource-tile p {
-  flex: 1;
-  color: #7b8494;
-  line-height: 1.5;
+.choice-card h2,
+.confirm-panel h2 {
+  color: var(--color-text);
+  font-size: 20px;
+  font-weight: 800;
 }
 
-.resource-tile span {
-  margin-top: auto;
-  padding: 4px 10px;
-  border-radius: 6px;
-  background: #f2f4f7;
-  color: #667085;
-  font-size: 13px;
+.number {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: var(--color-primary);
+  color: #fff;
+  font-weight: 800;
+  margin-bottom: 14px;
 }
 
-.link-row {
-  width: fit-content;
-  margin: 22px auto 0;
-  border-color: transparent;
-  background: transparent;
-  color: #111827;
-}
-
-.selected-source {
+.chips {
+  gap: 10px;
+  flex-wrap: wrap;
   margin-top: 18px;
-  color: #667085;
-  font-size: 13px;
 }
 
-@media (max-width: 1180px) {
-  .top-grid,
-  .content-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .primary-btn {
-    justify-self: stretch;
-  }
+.chips button {
+  height: 36px;
+  border-radius: 8px;
+  padding: 0 14px;
 }
 
-@media (max-width: 760px) {
-  .learning-page {
-    padding: 24px 16px 40px;
+.chips button.selected {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  box-shadow: inset 0 0 0 1px var(--color-primary);
+}
+
+.check-grid {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 13px 18px;
+}
+
+.check-grid label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text);
+  font-weight: 700;
+}
+
+.confirm-panel {
+  margin-top: 24px;
+  padding: 24px 28px;
+}
+
+.confirm-list {
+  margin-top: 22px;
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.confirm-list span,
+.confirm-list strong {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.confirm-list span {
+  color: var(--color-text-muted);
+}
+
+.confirm-list strong {
+  color: var(--color-text);
+}
+
+.confirm-panel footer {
+  justify-content: center;
+  gap: 18px;
+  margin-top: 24px;
+}
+
+.primary-btn,
+.outline-btn {
+  height: 46px;
+  border-radius: 8px;
+  padding: 0 42px;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.primary-btn {
+  border: 1px solid var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.outline-btn {
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+@media (max-width: 1020px) {
+  .home-center {
+    margin-top: 40px;
   }
 
-  .action-row,
-  .setup-grid,
-  .resource-grid {
+  .choice-grid {
     grid-template-columns: 1fr;
   }
 }

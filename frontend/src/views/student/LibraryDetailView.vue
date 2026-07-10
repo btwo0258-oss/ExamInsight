@@ -9,7 +9,7 @@ import { courseLibraries, recentUploads } from '@/mock'
 const route = useRoute()
 const router = useRouter()
 const uploadOpen = ref(false)
-const library = computed(() => courseLibraries.find((item) => item.id === Number(route.params.id)) ?? courseLibraries[0])
+const library = computed(() => courseLibraries.find((item) => item.id === Number(route.params.id)) ?? courseLibraries[0]!)
 </script>
 
 <template>
