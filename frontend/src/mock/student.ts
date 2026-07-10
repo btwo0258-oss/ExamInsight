@@ -4,6 +4,8 @@ export type RecentConversation = {
   id: number
   title: string
   desc: string
+  sourceLabel: string
+  sourceType: 'chat' | 'learning'
 }
 
 export type CourseLibrary = {
@@ -115,9 +117,11 @@ export type LearningPlan = {
 }
 
 export const recentConversations: RecentConversation[] = [
-  { id: 101, title: 'Java 多态问题', desc: '父类引用与动态绑定' },
-  { id: 102, title: '接口和抽象类区别', desc: '适用场景对比' },
-  { id: 103, title: '实验报告内容与步骤', desc: '根据模板整理报告' },
+  { id: 101, title: 'Java 多态问题', desc: '父类引用与动态绑定', sourceLabel: 'Java OOP 继承与多态强化计划', sourceType: 'learning' },
+  { id: 102, title: '接口和抽象类区别', desc: '适用场景对比', sourceLabel: 'Java OOP 继承与多态强化计划', sourceType: 'learning' },
+  { id: 103, title: '实验报告内容与步骤', desc: '根据模板整理报告', sourceLabel: '普通对话', sourceType: 'chat' },
+  { id: 104, title: '二叉树遍历复习', desc: '前序、中序、后序对比', sourceLabel: '数据结构期末复习', sourceType: 'learning' },
+  { id: 105, title: 'PPT 制作方案调整', desc: '汇报结构与页面标题', sourceLabel: '普通对话', sourceType: 'chat' },
 ]
 
 export const courseLibraries: CourseLibrary[] = [

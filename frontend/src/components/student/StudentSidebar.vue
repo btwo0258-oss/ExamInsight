@@ -15,19 +15,64 @@ type MenuAction = {
   divided?: boolean
 }
 
+type SidebarProject = (typeof learningPlans)[number] & {
+  pinned?: boolean
+}
+
+type SidebarRecent = (typeof recentConversations)[number] & {
+  pinned?: boolean
+}
+
+const PROJECTS_STORAGE_KEY = 'examinsight.student.sidebar.projects'
+const RECENTS_STORAGE_KEY = 'examinsight.student.sidebar.recents'
+
+function readStoredList<T>(key: string, fallback: T[]): T[] {
+  try {
+    const raw = sessionStorage.getItem(key)
+    if (!raw) return fallback
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function persistList<T>(key: string, list: T[]) {
+  sessionStorage.setItem(key, JSON.stringify(list))
+}
+
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const conversationStore = useConversationStore()
+const sidebarProjects = ref<SidebarProject[]>(
+  readStoredList(
+    PROJECTS_STORAGE_KEY,
+    learningPlans.map((plan) => ({ ...plan, pinned: false })),
+  ),
+)
+const sidebarRecents = ref<SidebarRecent[]>(
+  readStoredList(
+    RECENTS_STORAGE_KEY,
+    recentConversations.map((item, index) => ({ ...item, pinned: index < 2 })),
+  ),
+)
 const sidebarCollapsed = ref(false)
 const learningExpanded = ref(true)
 const projectsExpanded = ref(true)
+const pinnedExpanded = ref(true)
+const recentExpanded = ref(true)
 const menuOpen = ref(false)
+const menuHovering = ref(false)
 const menuPos = ref({ x: 0, y: 0 })
 const menuItems = ref<MenuAction[]>([])
 const projectSettingsOpen = ref(false)
 const createProjectOpen = ref(false)
 const iconPaletteOpen = ref(false)
+const editingOpen = ref(false)
+const editingKind = ref<'project' | 'recent'>('project')
+const editingId = ref<number | null>(null)
+const editingTitle = ref('')
 const paletteColors = ['#000', '#ff4444', '#ed7d31', '#f6c343', '#4caf5d', '#3b82f6', '#8b5cf6', '#df6f68']
 const paletteIcons = [
   'folder',
@@ -75,10 +120,15 @@ const activeLearningId = computed(() => {
   return Number.isFinite(id) ? id : null
 })
 
-const currentLearningId = computed(() => activeLearningId.value ?? learningPlans[0]?.id ?? 1)
+const orderedProjects = computed(() => [
+  ...sidebarProjects.value.filter((project) => project.pinned),
+  ...sidebarProjects.value.filter((project) => !project.pinned),
+])
 
-const pinnedRecent = computed(() => recentConversations.slice(0, 2))
-const normalRecent = computed(() => recentConversations.slice(2))
+const currentLearningId = computed(() => activeLearningId.value ?? orderedProjects.value[0]?.id ?? 1)
+
+const pinnedRecent = computed(() => sidebarRecents.value.filter((item) => item.pinned))
+const normalRecent = computed(() => sidebarRecents.value.filter((item) => !item.pinned))
 
 function go(path: string) {
   router.push(path)
@@ -90,10 +140,19 @@ function openMenu(e: MouseEvent, items: MenuAction[]) {
   menuItems.value = items
   menuPos.value = { x: rect.right - 6, y: rect.bottom + 4 }
   menuOpen.value = true
+  menuHovering.value = true
 }
 
 function closeMenu() {
   menuOpen.value = false
+  menuHovering.value = false
+}
+
+function closeMenuSoon() {
+  menuHovering.value = false
+  window.setTimeout(() => {
+    if (!menuHovering.value) closeMenu()
+  }, 120)
 }
 
 function openProjectSettings() {
@@ -129,28 +188,118 @@ function toggleSidebar() {
   closeMenu()
 }
 
-const learningMenuItems: MenuAction[] = [
-  { label: '置顶项目', icon: 'pin', action: closeMenu },
-  { label: '项目设置', icon: 'settings', action: openProjectSettings },
-  { label: '删除项目', icon: 'trash', danger: true, divided: true, action: closeMenu },
-]
+function persistProjects() {
+  persistList(PROJECTS_STORAGE_KEY, sidebarProjects.value)
+}
 
-const historyMenuItems: MenuAction[] = [
-  { label: '重命名', icon: 'edit', action: closeMenu },
-  { label: '移至智能学习', icon: 'graduation', action: closeMenu },
-  { label: '置顶', icon: 'pin', action: closeMenu },
-  { label: '删除', icon: 'trash', danger: true, divided: true, action: closeMenu },
-]
+function persistRecents() {
+  persistList(RECENTS_STORAGE_KEY, sidebarRecents.value)
+}
+
+function openRename(kind: 'project' | 'recent', id: number, title: string) {
+  editingKind.value = kind
+  editingId.value = id
+  editingTitle.value = title
+  editingOpen.value = true
+  closeMenu()
+}
+
+function submitRename() {
+  const title = editingTitle.value.trim()
+  if (!title || editingId.value === null) return
+
+  if (editingKind.value === 'project') {
+    const project = sidebarProjects.value.find((item) => item.id === editingId.value)
+    if (project) {
+      project.title = title
+      persistProjects()
+    }
+  } else {
+    const recent = sidebarRecents.value.find((item) => item.id === editingId.value)
+    if (recent) {
+      recent.title = title
+      persistRecents()
+    }
+  }
+
+  editingOpen.value = false
+  editingId.value = null
+  editingTitle.value = ''
+}
+
+function toggleProjectPinned(project: SidebarProject) {
+  const target = sidebarProjects.value.find((item) => item.id === project.id)
+  if (target) {
+    target.pinned = !target.pinned
+    persistProjects()
+  }
+  closeMenu()
+}
+
+function deleteProject(project: SidebarProject) {
+  sidebarProjects.value = sidebarProjects.value.filter((item) => item.id !== project.id)
+  persistProjects()
+  if (activeLearningId.value === project.id) {
+    go(orderedProjects.value[0] ? `/learning/${orderedProjects.value[0].id}` : '/learning')
+  }
+  closeMenu()
+}
+
+function toggleRecentPinned(item: SidebarRecent) {
+  const target = sidebarRecents.value.find((recent) => recent.id === item.id)
+  if (target) {
+    target.pinned = !target.pinned
+    persistRecents()
+  }
+  closeMenu()
+}
+
+function deleteRecent(item: SidebarRecent) {
+  sidebarRecents.value = sidebarRecents.value.filter((recent) => recent.id !== item.id)
+  persistRecents()
+  closeMenu()
+}
+
+function openProjectMenu(e: MouseEvent, project: SidebarProject) {
+  openMenu(e, [
+    { label: '重命名', icon: 'edit', action: () => openRename('project', project.id, project.title) },
+    {
+      label: project.pinned ? '取消置顶' : '置顶项目',
+      icon: project.pinned ? 'pin-off' : 'pin',
+      action: () => toggleProjectPinned(project),
+    },
+    { label: '项目设置', icon: 'settings', action: openProjectSettings },
+    { label: '删除项目', icon: 'trash', danger: true, divided: true, action: () => deleteProject(project) },
+  ])
+}
+
+function openRecentMenu(e: MouseEvent, item: SidebarRecent) {
+  openMenu(e, [
+    { label: '重命名', icon: 'edit', action: () => openRename('recent', item.id, item.title) },
+    {
+      label: item.pinned ? '取消置顶' : '置顶',
+      icon: item.pinned ? 'pin-off' : 'pin',
+      action: () => toggleRecentPinned(item),
+    },
+    { label: '删除', icon: 'trash', danger: true, divided: true, action: () => deleteRecent(item) },
+  ])
+}
 </script>
 
 <template>
   <aside class="student-sidebar" :class="{ 'student-sidebar--collapsed': sidebarCollapsed }">
     <div v-if="sidebarCollapsed" class="collapsed-pill">
       <button type="button" aria-label="展开侧边栏" @click="toggleSidebar">
-        <AppIcon name="sidebar-left" :size="18" />
+        <AppIcon name="sidebar-left" :size="17" />
       </button>
       <button type="button" aria-label="新对话" @click="createNewChat">
-        <AppIcon name="edit" :size="20" />
+        <AppIcon name="edit" :size="17" />
+      </button>
+      <button type="button" aria-label="资料库" @click="go('/library')">
+        <AppIcon name="folder" :size="17" />
+      </button>
+      <button type="button" aria-label="智能学习" @click="openLearningHome">
+        <AppIcon name="graduation" :size="17" />
       </button>
     </div>
 
@@ -161,7 +310,7 @@ const historyMenuItems: MenuAction[] = [
         <span>ExamInsight</span>
       </button>
       <button class="sidebar-toggle" type="button" aria-label="收起侧边栏" @click="toggleSidebar">
-        <AppIcon name="sidebar-left" :size="18" />
+        <AppIcon name="sidebar-left" :size="17" />
       </button>
     </div>
 
@@ -212,15 +361,6 @@ const historyMenuItems: MenuAction[] = [
             :size="16"
           />
         </button>
-        <button
-          class="new-learning-btn"
-          type="button"
-          aria-label="新建智能学习"
-          @click.stop="go('/learning/new')"
-        >
-          <AppIcon name="edit" :size="15" />
-          <span class="nav-tooltip">新建智能学习</span>
-        </button>
       </div>
 
       <div v-if="learningExpanded" class="learning-tree">
@@ -231,7 +371,7 @@ const historyMenuItems: MenuAction[] = [
             type="button"
             @click="openLearningProjects"
           >
-            <AppIcon name="folder" :size="15" />
+            <AppIcon name="briefcase" :size="15" />
             <span>学习项目</span>
           </button>
           <button
@@ -242,20 +382,39 @@ const historyMenuItems: MenuAction[] = [
           >
             <AppIcon :name="projectsExpanded ? 'chevron-down' : 'chevron-right'" :size="14" />
           </button>
+          <button
+            class="new-learning-btn new-learning-btn--tree"
+            type="button"
+            aria-label="新建智能学习"
+            @click.stop="go('/learning/new')"
+          >
+            <AppIcon name="edit" :size="15" />
+            <span class="nav-tooltip">新建智能学习</span>
+          </button>
         </div>
         <template v-if="projectsExpanded">
-          <div v-for="plan in learningPlans" :key="plan.id" class="tree-row tree-row--project">
+          <div
+            v-for="plan in orderedProjects"
+            :key="plan.id"
+            class="tree-row tree-row--project"
+            @mouseleave="closeMenuSoon"
+          >
             <button
               class="tree-item"
               :class="{ 'tree-item--active': activeLearningId === plan.id }"
               type="button"
+              :title="plan.title.replace('方案', '')"
               @click="go(`/learning/${plan.id}`)"
             >
-              <AppIcon name="notebook" :size="15" />
-              <span>{{ plan.title.replace('方案', '') }}</span>
-              <small>{{ plan.updatedAt }}</small>
+              <AppIcon name="book" :size="15" />
+              <span :title="plan.title.replace('方案', '')">{{ plan.title.replace('方案', '') }}</span>
             </button>
-            <button class="tree-more" type="button" @click="openMenu($event, learningMenuItems)">
+            <button
+              class="tree-more"
+              type="button"
+              @mouseenter="menuHovering = true"
+              @click="openProjectMenu($event, plan)"
+            >
               <AppIcon name="more-horizontal" :size="15" />
             </button>
           </div>
@@ -276,46 +435,79 @@ const historyMenuItems: MenuAction[] = [
 
     <section class="recent">
       <div class="recent-section">
-        <div class="recent-title">
+        <button class="recent-title" type="button" @click="pinnedExpanded = !pinnedExpanded">
           <span>已置顶</span>
-          <AppIcon name="chevron-down" :size="12" />
-        </div>
-        <div v-for="item in pinnedRecent" :key="item.id" class="recent-row recent-row--pinned">
+          <AppIcon
+            class="recent-title-chevron"
+            :name="pinnedExpanded ? 'chevron-down' : 'chevron-right'"
+            :size="12"
+          />
+        </button>
+        <div
+          v-for="item in pinnedRecent"
+          v-if="pinnedExpanded"
+          :key="item.id"
+          class="recent-row recent-row--pinned"
+          @mouseleave="closeMenuSoon"
+        >
           <button
             class="recent-item"
             type="button"
+            :title="item.title"
             @click="go(`/chat/${item.id}`)"
           >
             <AppIcon name="message-square" :size="15" />
-            <span>{{ item.title }}</span>
+            <span :title="item.title">{{ item.title }}</span>
+            <small v-if="item.sourceType === 'learning'" :title="item.sourceLabel">{{ item.sourceLabel }}</small>
           </button>
-          <button class="recent-pin" type="button" aria-label="置顶">
+          <button class="recent-pin" type="button" aria-label="取消置顶" @click="toggleRecentPinned(item)">
             <AppIcon name="pin-off" :size="15" />
           </button>
-          <button class="recent-more" type="button" @click="openMenu($event, historyMenuItems)">
+          <button
+            class="recent-more"
+            type="button"
+            @mouseenter="menuHovering = true"
+            @click="openRecentMenu($event, item)"
+          >
             <AppIcon name="more-horizontal" :size="15" />
           </button>
         </div>
       </div>
 
       <div class="recent-section">
-        <div class="recent-title">
+        <button class="recent-title" type="button" @click="recentExpanded = !recentExpanded">
           <span>最近</span>
-          <AppIcon name="chevron-down" :size="12" />
-        </div>
-        <div v-for="item in normalRecent" :key="item.id" class="recent-row">
+          <AppIcon
+            class="recent-title-chevron"
+            :name="recentExpanded ? 'chevron-down' : 'chevron-right'"
+            :size="12"
+          />
+        </button>
+        <div
+          v-for="item in normalRecent"
+          v-if="recentExpanded"
+          :key="item.id"
+          class="recent-row"
+          @mouseleave="closeMenuSoon"
+        >
           <button
             class="recent-item"
             type="button"
+            :title="item.sourceType === 'learning' ? `${item.title} - ${item.sourceLabel}` : item.title"
             @click="go(`/chat/${item.id}`)"
           >
-            <span>{{ item.title }}</span>
-            <small>{{ item.desc }}</small>
+            <span :title="item.title">{{ item.title }}</span>
+            <small v-if="item.sourceType === 'learning'" :title="item.sourceLabel">{{ item.sourceLabel }}</small>
           </button>
-          <button class="recent-pin" type="button" aria-label="置顶">
+          <button class="recent-pin" type="button" aria-label="置顶" @click="toggleRecentPinned(item)">
             <AppIcon name="pin" :size="15" />
           </button>
-          <button class="recent-more" type="button" @click="openMenu($event, historyMenuItems)">
+          <button
+            class="recent-more"
+            type="button"
+            @mouseenter="menuHovering = true"
+            @click="openRecentMenu($event, item)"
+          >
             <AppIcon name="more-horizontal" :size="15" />
           </button>
         </div>
@@ -346,6 +538,8 @@ const historyMenuItems: MenuAction[] = [
       v-if="menuOpen"
       class="floating-menu"
       :style="{ left: `${menuPos.x}px`, top: `${menuPos.y}px` }"
+      @mouseenter="menuHovering = true"
+      @mouseleave="closeMenuSoon"
       @click.stop
     >
       <template v-for="item in menuItems" :key="item.label">
@@ -355,6 +549,25 @@ const historyMenuItems: MenuAction[] = [
           <span>{{ item.label }}</span>
         </button>
       </template>
+    </div>
+
+    <div v-if="editingOpen" class="modal-backdrop" @click.self="editingOpen = false">
+      <section class="rename-modal">
+        <header>
+          <h2>{{ editingKind === 'project' ? '重命名学习项目' : '重命名对话' }}</h2>
+          <button type="button" @click="editingOpen = false">×</button>
+        </header>
+        <form class="rename-form" @submit.prevent="submitRename">
+          <label>
+            <span>名称</span>
+            <input v-model="editingTitle" autofocus maxlength="40" />
+          </label>
+          <footer>
+            <button class="rename-cancel" type="button" @click="editingOpen = false">取消</button>
+            <button class="rename-submit" type="submit">保存</button>
+          </footer>
+        </form>
+      </section>
     </div>
 
     <div v-if="projectSettingsOpen" class="modal-backdrop" @click.self="projectSettingsOpen = false">
@@ -465,15 +678,17 @@ const historyMenuItems: MenuAction[] = [
 
 <style scoped>
 .student-sidebar {
-  width: 320px;
-  height: 100vh;
+  width: 276px;
+  height: calc(100vh - 16px);
+  margin: 8px 0;
   background: #fffffc;
   border-right: 1px solid #dde3ef;
+  border-radius: 0 12px 12px 0;
   display: flex;
   flex-direction: column;
   padding: 14px 12px 12px;
   gap: 12px;
-  transition: width 0.16s ease, padding 0.16s ease, border-color 0.16s ease;
+  transition: width 0.16s ease, padding 0.16s ease, border-color 0.16s ease, height 0.16s ease;
   overflow: hidden;
 }
 
@@ -481,6 +696,7 @@ const historyMenuItems: MenuAction[] = [
   width: 0;
   min-width: 0;
   padding: 0;
+  margin: 0;
   border-right-color: transparent;
   background: transparent;
   overflow: visible;
@@ -492,25 +708,46 @@ const historyMenuItems: MenuAction[] = [
   top: 20px;
   z-index: 240;
   height: 49px;
-  padding: 0 14px;
+  padding: 0 12px;
   border: 1px solid #e5e7eb;
   border-radius: 999px;
   background: #fff;
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
   display: inline-flex;
   align-items: center;
-  gap: 18px;
+  gap: 12px;
 }
 
 .collapsed-pill button {
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
   border: 0;
   background: transparent;
   color: #344054;
   cursor: pointer;
   display: grid;
   place-items: center;
+}
+
+.collapsed-pill button:hover {
+  border-radius: 7px;
+  background: #f2f4f7;
+  color: #111827;
+}
+
+.collapsed-pill :deep(.icon) {
+  width: 17px;
+  height: 17px;
+}
+
+.sidebar-toggle :deep(.icon) {
+  width: 17px;
+  height: 17px;
+}
+
+.collapsed-pill :deep(.icon *),
+.sidebar-toggle :deep(.icon *) {
+  stroke-width: 2;
 }
 
 .nav-item,
@@ -641,7 +878,9 @@ const historyMenuItems: MenuAction[] = [
   display: grid;
   place-items: center;
   border-radius: 6px;
-  opacity: 1;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.16s ease, background 0.16s ease, color 0.16s ease;
 }
 
 .new-learning-btn {
@@ -654,7 +893,7 @@ const historyMenuItems: MenuAction[] = [
 
 .learning-toggle-btn {
   position: absolute;
-  right: 34px;
+  right: 6px;
   width: 26px;
   height: 26px;
   color: #667085;
@@ -666,6 +905,12 @@ const historyMenuItems: MenuAction[] = [
   width: 24px;
   height: 24px;
   color: #667085;
+}
+
+.new-learning-btn--tree {
+  right: 30px;
+  width: 24px;
+  height: 24px;
 }
 
 .nav-tooltip {
@@ -692,6 +937,10 @@ const historyMenuItems: MenuAction[] = [
   transform: translateY(0);
 }
 
+.nav-row:hover .new-learning-btn,
+.nav-row:hover .learning-toggle-btn,
+.tree-row:hover .new-learning-btn,
+.tree-row:hover .tree-section-toggle,
 .tree-row:hover .tree-more,
 .recent-row:hover .recent-pin,
 .recent-row:hover .recent-more,
@@ -702,6 +951,7 @@ const historyMenuItems: MenuAction[] = [
 .recent-pin:focus-visible,
 .recent-more:focus-visible {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .new-learning-btn:hover,
@@ -819,7 +1069,7 @@ const historyMenuItems: MenuAction[] = [
 .tree-item--section {
   min-height: 34px;
   grid-template-columns: 18px minmax(0, 1fr);
-  padding-right: 30px;
+  padding-right: 58px;
   color: #273246;
   font-weight: 700;
 }
@@ -829,6 +1079,7 @@ const historyMenuItems: MenuAction[] = [
 }
 
 .tree-row--project .tree-item {
+  grid-template-columns: 18px minmax(0, 1fr);
   padding-left: 22px;
 }
 
@@ -838,11 +1089,13 @@ const historyMenuItems: MenuAction[] = [
 
 .recent {
   min-height: 0;
-  max-height: 260px;
-  overflow: hidden;
+  flex: 1;
+  max-height: none;
+  overflow-y: auto;
   display: grid;
   align-content: start;
   gap: 18px;
+  padding-right: 2px;
 }
 
 .recent-section {
@@ -851,13 +1104,36 @@ const historyMenuItems: MenuAction[] = [
 }
 
 .recent-title {
-  padding: 0 4px 4px;
+  width: 100%;
+  min-height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 0 4px;
   color: #111827;
+  cursor: pointer;
   font-size: 12px;
   font-weight: 700;
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 2px;
+  justify-content: space-between;
+  gap: 6px;
+  text-align: left;
+}
+
+.recent-title:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.recent-title-chevron {
+  opacity: 0;
+  color: #667085;
+  transition: opacity 0.16s ease;
+}
+
+.recent-title:hover .recent-title-chevron,
+.recent-title:focus-visible .recent-title-chevron {
+  opacity: 1;
 }
 
 .recent-item {
@@ -874,7 +1150,7 @@ const historyMenuItems: MenuAction[] = [
 }
 
 .recent-row--pinned .recent-item {
-  grid-template-columns: 18px minmax(0, 1fr);
+  grid-template-columns: 18px minmax(0, 1fr) auto;
 }
 
 .recent-pin,
@@ -884,8 +1160,9 @@ const historyMenuItems: MenuAction[] = [
   width: 24px;
   height: 24px;
   opacity: 0;
+  pointer-events: none;
   transform: translateY(-50%);
-  transition: opacity 0.2s ease;
+  transition: opacity 0.16s ease, background 0.16s ease, color 0.16s ease;
 }
 
 .recent-pin {
@@ -912,6 +1189,9 @@ const historyMenuItems: MenuAction[] = [
 .recent-item small {
   color: #8a94a6;
   font-size: 12px;
+  max-width: 82px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -1032,6 +1312,7 @@ const historyMenuItems: MenuAction[] = [
   background: rgba(15, 23, 42, 0.38);
 }
 
+.rename-modal,
 .project-modal,
 .create-project-modal {
   position: relative;
@@ -1048,6 +1329,11 @@ const historyMenuItems: MenuAction[] = [
   width: min(512px, 100%);
 }
 
+.rename-modal {
+  width: min(420px, 100%);
+}
+
+.rename-modal header,
 .project-modal header,
 .create-project-modal header {
   display: flex;
@@ -1056,6 +1342,7 @@ const historyMenuItems: MenuAction[] = [
   margin-bottom: 18px;
 }
 
+.rename-modal h2,
 .project-modal h2,
 .create-project-modal h2 {
   flex: 1;
@@ -1065,6 +1352,7 @@ const historyMenuItems: MenuAction[] = [
   font-weight: 500;
 }
 
+.rename-modal header button,
 .project-modal header button,
 .create-project-modal header button {
   width: 28px;
@@ -1084,17 +1372,20 @@ const historyMenuItems: MenuAction[] = [
   font-size: 0 !important;
 }
 
+.rename-modal header button:hover,
 .project-modal header button:hover,
 .create-project-modal header button:hover {
   background: #f2f4f7;
 }
 
+.rename-form,
 .project-form,
 .create-project-modal {
   display: grid;
   gap: 16px;
 }
 
+.rename-form label,
 .project-form label,
 .create-project-modal label {
   display: grid;
@@ -1102,6 +1393,52 @@ const historyMenuItems: MenuAction[] = [
   color: #111827;
   font-size: 14px;
   font-weight: 500;
+}
+
+.rename-form input {
+  height: 42px;
+  min-width: 0;
+  width: 100%;
+  border: 1px solid #dbe2ec;
+  border-radius: 8px;
+  background: #fff;
+  color: #111827;
+  box-sizing: border-box;
+  padding: 0 12px;
+  font-size: 14px;
+}
+
+.rename-form input:focus {
+  border-color: #111827;
+  outline: none;
+}
+
+.rename-form footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.rename-cancel,
+.rename-submit {
+  height: 36px;
+  border-radius: 8px;
+  padding: 0 14px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.rename-cancel {
+  border: 1px solid #dbe2ec;
+  background: #fff;
+  color: #344054;
+}
+
+.rename-submit {
+  border: 1px solid #111827;
+  background: #111827;
+  color: #fff;
 }
 
 .project-form small {
