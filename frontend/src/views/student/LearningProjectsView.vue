@@ -3,14 +3,22 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
 import StudentShell from '@/components/student/StudentShell.vue'
-import { courseLibraries, learningPlans } from '@/mock'
+import { courseLibraries } from '@/mock'
+import { useLearningStore } from '@/stores/learning'
+
+type ViewMode = 'grid' | 'list'
 
 const router = useRouter()
+const learningStore = useLearningStore()
+const learningPlans = computed(() => learningStore.plans)
 const keyword = ref('')
 const status = ref('全部状态')
+const statusMenuOpen = ref(false)
+const viewMode = ref<ViewMode>('grid')
+const statusOptions = ['全部状态', '进行中', '已生成', '已完成', '待完善']
 
 const filteredPlans = computed(() =>
-  learningPlans.filter((plan) => {
+  learningPlans.value.filter((plan) => {
     const hitKeyword = !keyword.value || plan.title.includes(keyword.value)
     const hitStatus = status.value === '全部状态' || plan.status === status.value
     return hitKeyword && hitStatus
@@ -20,11 +28,42 @@ const filteredPlans = computed(() =>
 function libraryName(id: number) {
   return courseLibraries.find((item) => item.id === id)?.name ?? '未选择资料库'
 }
+
+function selectStatus(value: string) {
+  status.value = value
+  statusMenuOpen.value = false
+}
+
+function statusIcon(value: string) {
+  const iconMap: Record<string, string> = {
+    全部状态: 'list-filter',
+    进行中: 'play',
+    已生成: 'file',
+    已完成: 'check',
+    待完善: 'clock',
+  }
+  return iconMap[value] ?? 'list-filter'
+}
+
+function resourceIcon(group: string) {
+  if (group === '思维导图') return 'mind-topic'
+  if (group === '代码案例') return 'code'
+  if (group === 'PPT') return 'presentation'
+  return 'file'
+}
+
+function metaText(plan: { period: string; libraryId: number; targetType: string; updatedAt: string }) {
+  return `${plan.period}｜${libraryName(plan.libraryId)}｜${plan.targetType}｜${plan.updatedAt}`
+}
+
+function resourceText(plan: { resources: Array<{ group: string }> }) {
+  return plan.resources.map((resource) => resource.group).join('、') || '暂无资源'
+}
 </script>
 
 <template>
   <StudentShell>
-    <div class="projects-page">
+    <div class="projects-page" @click="statusMenuOpen = false">
       <header class="page-head">
         <div>
           <h1>学习项目</h1>
@@ -35,92 +74,101 @@ function libraryName(id: number) {
             <AppIcon name="search" :size="18" />
             <input v-model="keyword" placeholder="搜索项目" />
           </label>
-          <select v-model="status">
-            <option>全部状态</option>
-            <option>进行中</option>
-            <option>已生成</option>
-            <option>已完成</option>
-            <option>待完善</option>
-          </select>
+          <div class="status-menu-wrap" @click.stop>
+            <button class="status-trigger" type="button" @click="statusMenuOpen = !statusMenuOpen">
+              <AppIcon :name="statusIcon(status)" :size="17" />
+              {{ status }}
+              <AppIcon name="chevron-down" :size="14" />
+            </button>
+            <div v-if="statusMenuOpen" class="status-menu">
+              <button
+                v-for="option in statusOptions"
+                :key="option"
+                type="button"
+                @click="selectStatus(option)"
+              >
+                <AppIcon :name="statusIcon(option)" :size="18" />
+                {{ option }}
+              </button>
+            </div>
+          </div>
+          <div class="view-switch" aria-label="切换展示方式">
+            <button
+              type="button"
+              :class="{ active: viewMode === 'grid' }"
+              title="网格展示"
+              @click="viewMode = 'grid'"
+            >
+              <AppIcon name="grid" :size="17" />
+            </button>
+            <button
+              type="button"
+              :class="{ active: viewMode === 'list' }"
+              title="列表展示"
+              @click="viewMode = 'list'"
+            >
+              <AppIcon name="list" :size="17" />
+            </button>
+          </div>
           <button type="button" @click="router.push('/learning/new')">新建学习</button>
         </div>
       </header>
 
-      <section class="summary-grid">
-        <article>
-          <span class="summary-icon summary-icon--blue"><AppIcon name="file" :size="28" /></span>
-          <div><small>项目总数</small><strong>{{ learningPlans.length }}</strong></div>
-        </article>
-        <article>
-          <span class="summary-icon summary-icon--green"><AppIcon name="play" :size="28" /></span>
-          <div><small>进行中</small><strong>{{ learningPlans.filter((item) => item.status === '进行中').length }}</strong></div>
-        </article>
-        <article>
-          <span class="summary-icon summary-icon--purple"><AppIcon name="clock" :size="28" /></span>
-          <div><small>本周学习</small><strong>6.5h</strong></div>
-        </article>
-        <article>
-          <span class="summary-icon summary-icon--orange"><AppIcon name="bar-chart" :size="28" /></span>
-          <div><small>平均正确率</small><strong>72%</strong></div>
-        </article>
-      </section>
+      <section class="projects-view">
+        <div class="summary-grid">
+          <article>
+            <span class="summary-icon summary-icon--blue"><AppIcon name="file" :size="28" /></span>
+            <div><small>项目总数</small><strong>{{ learningPlans.length }}</strong></div>
+          </article>
+          <article>
+            <span class="summary-icon summary-icon--green"><AppIcon name="play" :size="28" /></span>
+            <div><small>进行中</small><strong>{{ learningPlans.filter((item) => item.status === '进行中').length }}</strong></div>
+          </article>
+          <article>
+            <span class="summary-icon summary-icon--purple"><AppIcon name="clock" :size="28" /></span>
+            <div><small>本周学习</small><strong>6.5h</strong></div>
+          </article>
+          <article>
+            <span class="summary-icon summary-icon--orange"><AppIcon name="bar-chart" :size="28" /></span>
+            <div><small>平均正确率</small><strong>72%</strong></div>
+          </article>
+        </div>
 
-      <section class="project-grid">
-        <article v-for="plan in filteredPlans" :key="plan.id" class="project-card">
-          <header>
-            <h2>{{ plan.title }}</h2>
-            <span :class="`status status--${plan.status}`">{{ plan.status }}</span>
-          </header>
-          <p class="meta">{{ plan.period }}｜{{ libraryName(plan.libraryId) }}｜{{ plan.targetType }}</p>
+        <div class="project-list" :class="`project-list--${viewMode}`">
+          <article v-for="plan in filteredPlans" :key="plan.id" class="project-card">
+            <header class="card-header">
+              <h2 :title="plan.title">{{ plan.title }}</h2>
+              <span :class="`status status--${plan.status}`">{{ plan.status }}</span>
+            </header>
+            <p class="meta" :title="metaText(plan)">{{ metaText(plan) }}</p>
 
-          <div class="progress-row">
-            <span>已完成 {{ plan.progress }}%</span>
-            <i><b :style="{ width: `${plan.progress}%` }" /></i>
-          </div>
+            <div class="progress-row">
+              <span>已完成 {{ plan.progress }}%</span>
+              <i><b :style="{ width: `${plan.progress}%` }" /></i>
+            </div>
 
-          <div class="stats">
-            <div><small>任务</small><strong>{{ plan.taskDone }}/{{ plan.totalTasks }}</strong></div>
-            <div><small>练习</small><strong>{{ plan.exerciseDone }}/{{ plan.totalExercises }}</strong></div>
-            <div><small>正确率</small><strong>{{ plan.correctRate }}%</strong></div>
-          </div>
+            <div class="stats" :title="`任务 ${plan.taskDone}/${plan.totalTasks}，练习 ${plan.exerciseDone}/${plan.totalExercises}，正确率 ${plan.correctRate}%`">
+              <div><small>任务</small><strong>{{ plan.taskDone }}/{{ plan.totalTasks }}</strong></div>
+              <div><small>练习</small><strong>{{ plan.exerciseDone }}/{{ plan.totalExercises }}</strong></div>
+              <div><small>正确率</small><strong>{{ plan.correctRate }}%</strong></div>
+            </div>
 
-          <div class="resource-chips">
-            <span v-for="resource in plan.resources.slice(0, 3)" :key="resource.id">
-              <AppIcon
-                :name="resource.group === '思维导图' ? 'mind-topic' : resource.group === '代码案例' ? 'code' : resource.group === 'PPT' ? 'presentation' : 'file'"
-                :size="15"
-              />
-              {{ resource.group }}
-            </span>
-          </div>
+            <div class="resource-chips" :title="resourceText(plan)">
+              <span v-for="resource in plan.resources" :key="resource.id">
+                <AppIcon :name="resourceIcon(resource.group)" :size="15" />
+                {{ resource.group }}
+              </span>
+            </div>
 
-          <footer>
-            <button class="primary-btn" type="button" @click="router.push(`/learning/${plan.id}/study`)">
-              {{ plan.status === '已生成' ? '开始学习' : plan.status === '待完善' ? '继续配置' : plan.status === '已完成' ? '查看报告' : '继续学习' }}
-            </button>
-            <button class="outline-btn" type="button" @click="router.push(`/learning/${plan.id}`)">
-              {{ plan.status === '已生成' ? '查看详情' : '查看工作台' }}
-            </button>
-          </footer>
-        </article>
-      </section>
-
-      <section class="recent-panel">
-        <header>
-          <h2>最近更新</h2>
-          <button type="button">查看全部项目 <AppIcon name="chevron-right" :size="15" /></button>
-        </header>
-        <div class="recent-table">
-          <div class="table-head">
-            <span>项目名称</span>
-            <span>最后更新</span>
-            <span>进度</span>
-          </div>
-          <div v-for="plan in learningPlans.slice(0, 3)" :key="plan.id" class="table-row">
-            <span>{{ plan.title }}</span>
-            <span>{{ plan.updatedAt }}</span>
-            <span class="mini-progress">{{ plan.progress }}% <i><b :style="{ width: `${plan.progress}%` }" /></i></span>
-          </div>
+            <footer>
+              <button class="primary-btn" type="button" @click="router.push(`/learning/${plan.id}/study`)">
+                {{ plan.status === '已生成' ? '开始学习' : plan.status === '待完善' ? '继续配置' : plan.status === '已完成' ? '查看报告' : '继续学习' }}
+              </button>
+              <button class="outline-btn" type="button" @click="router.push(`/learning/${plan.id}`)">
+                {{ plan.status === '已生成' ? '查看详情' : '查看工作台' }}
+              </button>
+            </footer>
+          </article>
         </div>
       </section>
     </div>
@@ -146,15 +194,12 @@ p {
 }
 
 button,
-input,
-select {
+input {
   font: inherit;
 }
 
 .page-head,
-.summary-grid,
-.project-grid,
-.recent-panel {
+.projects-view {
   max-width: 1320px;
   margin-left: auto;
   margin-right: auto;
@@ -185,7 +230,7 @@ h1 {
 }
 
 .search,
-.head-actions select {
+.status-trigger {
   height: 44px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
@@ -209,8 +254,81 @@ h1 {
   background: transparent;
 }
 
-.head-actions select {
+.status-menu-wrap {
+  position: relative;
+}
+
+.status-trigger {
+  min-width: 142px;
   padding: 0 12px;
+  cursor: pointer;
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.status-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  width: 178px;
+  padding: 8px;
+  border: 1px solid #dbe2ec;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 18px 46px rgba(15, 23, 42, 0.14);
+}
+
+.status-menu button {
+  width: 100%;
+  height: 42px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #111827;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.status-menu button:hover {
+  background: #f2f4f7;
+}
+
+.view-switch {
+  height: 44px;
+  padding: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.view-switch button {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.view-switch button:hover,
+.view-switch button.active {
+  background: #f2f4f7;
   color: var(--color-text);
 }
 
@@ -237,8 +355,7 @@ h1 {
 }
 
 .summary-grid article,
-.project-card,
-.recent-panel {
+.project-card {
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: var(--color-surface);
@@ -279,18 +396,46 @@ h1 {
   font-size: 30px;
 }
 
-.project-grid {
+.project-list {
   margin-top: 26px;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 2px 2px 12px;
+}
+
+.project-list--grid {
+  display: flex;
+  flex-wrap: wrap;
   gap: 18px;
 }
 
-.project-card {
-  padding: 20px;
+.project-list--list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 
-.project-card header {
+.project-card {
+  height: 392px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.project-list--grid .project-card {
+  flex: 0 0 calc((100% - 54px) / 4);
+}
+
+.project-list--list .project-card {
+  width: 100%;
+  height: auto;
+  min-height: 128px;
+  padding: 18px 20px;
+  position: relative;
+}
+
+.card-header {
+  min-height: 50px;
+  max-height: 50px;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -298,9 +443,14 @@ h1 {
 }
 
 .project-card h2 {
+  min-width: 0;
   color: var(--color-text);
   font-size: 17px;
   line-height: 1.4;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 
 .status {
@@ -318,21 +468,27 @@ h1 {
 
 .meta {
   margin-top: 14px;
+  min-height: 42px;
+  max-height: 42px;
   color: var(--color-text-muted);
   font-size: 13px;
   line-height: 1.6;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 
 .progress-row {
   margin-top: 20px;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
   color: var(--color-text-muted);
   font-size: 13px;
 }
 
-.progress-row i,
-.mini-progress i {
+.progress-row i {
   display: block;
   height: 6px;
   border-radius: 999px;
@@ -340,8 +496,7 @@ h1 {
   overflow: hidden;
 }
 
-.progress-row b,
-.mini-progress b {
+.progress-row b {
   display: block;
   height: 100%;
   border-radius: inherit;
@@ -350,13 +505,14 @@ h1 {
 
 .stats {
   margin-top: 18px;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  display: flex;
   gap: 8px;
   text-align: center;
 }
 
 .stats > div {
+  flex: 1 1 0;
+  min-width: 0;
   border-right: 1px solid var(--color-border);
 }
 
@@ -373,9 +529,12 @@ h1 {
 
 .resource-chips {
   margin-top: 18px;
+  max-height: 68px;
+  min-height: 68px;
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  overflow: hidden;
 }
 
 .resource-chips span {
@@ -388,18 +547,86 @@ h1 {
   gap: 5px;
   color: #4b5563;
   font-size: 13px;
+  max-width: 100%;
+  white-space: nowrap;
 }
 
 .project-card footer {
-  margin-top: 20px;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  margin-top: auto;
+  display: flex;
   gap: 12px;
+}
+
+.project-list--list .card-header {
+  min-height: 24px;
+  max-height: 24px;
+  align-items: center;
+  padding-right: 210px;
+  justify-content: flex-start;
+}
+
+.project-list--list .project-card h2 {
+  flex: 0 1 auto;
+  font-size: 16px;
+  line-height: 1.5;
+  display: block;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.project-list--list .status {
+  margin-left: 8px;
+}
+
+.project-list--list .meta {
+  margin-top: 8px;
+  min-height: 22px;
+  max-height: 22px;
+  line-height: 22px;
+  display: block;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding-right: 210px;
+}
+
+.project-list--list .resource-chips {
+  margin-top: 12px;
+  min-height: 30px;
+  max-height: 30px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  padding-right: 210px;
+}
+
+.project-list--list .progress-row,
+.project-list--list .stats {
+  display: none;
+}
+
+.project-list--list .project-card footer {
+  position: absolute;
+  right: 20px;
+  top: 58px;
+  width: 190px;
+  margin-top: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.project-list--list .primary-btn,
+.project-list--list .outline-btn {
+  height: 34px;
+  flex: 0 0 auto;
+  padding: 0 12px;
+  font-size: 13px;
 }
 
 .primary-btn,
 .outline-btn {
   height: 42px;
+  flex: 1 1 0;
+  min-width: 0;
   border-radius: 8px;
   cursor: pointer;
   font-weight: 800;
@@ -411,70 +638,13 @@ h1 {
   color: var(--color-text);
 }
 
-.recent-panel {
-  margin-top: 22px;
-  padding: 20px;
-}
-
-.recent-panel header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-}
-
-.recent-panel header h2 {
-  color: var(--color-text);
-  font-size: 18px;
-}
-
-.recent-panel header button {
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-surface);
-  color: var(--color-text);
-  height: 34px;
-  padding: 0 12px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.recent-table {
-  margin-top: 18px;
-}
-
-.table-head,
-.table-row {
-  display: grid;
-  grid-template-columns: 1fr 180px 260px;
-  gap: 18px;
-  align-items: center;
-  min-height: 44px;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.table-head {
-  color: var(--color-text-muted);
-  font-size: 13px;
-}
-
-.table-row {
-  color: var(--color-text);
-}
-
-.mini-progress {
-  display: grid;
-  grid-template-columns: 52px 1fr;
-  align-items: center;
-  gap: 12px;
-}
-
 @media (max-width: 1280px) {
-  .summary-grid,
-  .project-grid {
+  .summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .project-list--grid .project-card {
+    flex-basis: calc((100% - 18px) / 2);
   }
 }
 
@@ -485,9 +655,13 @@ h1 {
     align-items: stretch;
   }
 
-  .summary-grid,
-  .project-grid {
+  .summary-grid {
     grid-template-columns: 1fr;
   }
+
+  .project-list--grid .project-card {
+    flex-basis: 100%;
+  }
+
 }
 </style>

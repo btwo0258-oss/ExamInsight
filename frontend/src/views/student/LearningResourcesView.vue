@@ -3,11 +3,12 @@ import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
 import StudentShell from '@/components/student/StudentShell.vue'
-import { learningPlans } from '@/mock'
+import { useLearningStore } from '@/stores/learning'
 
 const route = useRoute()
 const router = useRouter()
-const plan = computed(() => learningPlans.find((item) => item.id === Number(route.params.id)) ?? learningPlans[0]!)
+const learningStore = useLearningStore()
+const plan = computed(() => learningStore.getPlan(Number(route.params.id)) ?? learningStore.plans[0]!)
 const tabs = ['讲义', 'PPT', '练习题', '思维导图', '代码案例', '拓展阅读', '导出文件']
 const activeTab = ref('讲义')
 const activeResource = computed(() => plan.value.resources.find((item) => item.group === activeTab.value) ?? plan.value.resources[0])
@@ -20,6 +21,10 @@ function iconName(group: string) {
   if (group === '拓展阅读') return 'book'
   if (group === '导出文件') return 'download'
   return 'file'
+}
+
+function generateActiveResource() {
+  if (activeResource.value) learningStore.generateResource(plan.value.id, activeResource.value.id)
 }
 </script>
 
@@ -77,7 +82,14 @@ function iconName(group: string) {
 
           <div class="tool-row">
             <button type="button"><AppIcon name="edit" :size="16" /> 编辑</button>
-            <button type="button"><AppIcon name="refresh" :size="16" /> 重新生成</button>
+            <button
+              type="button"
+              :disabled="activeResource?.status === '生成中'"
+              @click="generateActiveResource"
+            >
+              <AppIcon name="refresh" :size="16" />
+              {{ activeResource?.status === '生成中' ? '生成中...' : activeResource?.status === '未选择' ? '生成' : '重新生成' }}
+            </button>
             <button type="button"><AppIcon name="file" :size="16" /> 导出 PDF</button>
             <button type="button"><AppIcon name="notebook" :size="16" /> 导出 DOCX</button>
             <button type="button"><AppIcon name="code" :size="16" /> 导出 Markdown</button>

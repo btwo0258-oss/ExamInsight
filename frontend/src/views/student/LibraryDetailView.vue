@@ -4,12 +4,16 @@ import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
 import StudentShell from '@/components/student/StudentShell.vue'
 import UploadMaterialModal from '@/components/student/UploadMaterialModal.vue'
-import { courseLibraries, recentUploads } from '@/mock'
+import { courseLibraries } from '@/mock'
+import { useLibraryResourceStore } from '@/stores/libraryResource'
 
 const route = useRoute()
 const router = useRouter()
+const libraryResourceStore = useLibraryResourceStore()
 const uploadOpen = ref(false)
 const library = computed(() => courseLibraries.find((item) => item.id === Number(route.params.id)) ?? courseLibraries[0]!)
+const files = computed(() => libraryResourceStore.resources.filter((item) => item.id.startsWith('mock-') || item.libraryId === library.value.id))
+const fileCount = computed(() => library.value.fileCount + libraryResourceStore.resources.filter((item) => item.libraryId === library.value.id).length)
 </script>
 
 <template>
@@ -47,7 +51,7 @@ const library = computed(() => courseLibraries.find((item) => item.id === Number
 
       <section class="stats">
         <article>
-          <strong>{{ library.fileCount }}</strong>
+          <strong>{{ fileCount }}</strong>
           <span>文件</span>
         </article>
         <article>
@@ -80,7 +84,7 @@ const library = computed(() => courseLibraries.find((item) => item.id === Number
               </tr>
             </thead>
             <tbody>
-              <tr v-for="file in recentUploads" :key="file.id">
+              <tr v-for="file in files" :key="file.id">
                 <td>
                   <AppIcon name="file" :size="18" />
                   {{ file.name }}
@@ -132,7 +136,7 @@ const library = computed(() => courseLibraries.find((item) => item.id === Number
       </div>
     </div>
 
-    <UploadMaterialModal :open="uploadOpen" @close="uploadOpen = false" />
+    <UploadMaterialModal :open="uploadOpen" :library-id="library.id" @close="uploadOpen = false" />
   </StudentShell>
 </template>
 

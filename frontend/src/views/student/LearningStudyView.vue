@@ -1,15 +1,37 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
 import StudentShell from '@/components/student/StudentShell.vue'
-import { learningPlans } from '@/mock'
+import { useLearningStore } from '@/stores/learning'
 
 const route = useRoute()
 const router = useRouter()
-const plan = computed(() => learningPlans.find((item) => item.id === Number(route.params.id)) ?? learningPlans[0]!)
-const today = computed(() => plan.value.days[1] ?? plan.value.days[0])
+const learningStore = useLearningStore()
+const plan = computed(() => learningStore.getPlan(Number(route.params.id)) ?? learningStore.plans[0]!)
+const today = computed(() => plan.value.days.find((day) => day.tasks.some((task) => !task.done)) ?? plan.value.days[0])
 const exercise = computed(() => plan.value.exercises[0])
+const selectedAnswer = ref('')
+const quizResult = ref<ReturnType<typeof learningStore.submitExercise>>()
+const todayDone = computed(() => today.value?.tasks.filter((task) => task.done).length ?? 0)
+const todayProgress = computed(() => {
+  const total = today.value?.tasks.length ?? 0
+  return total ? Math.round((todayDone.value / total) * 100) : 0
+})
+
+function setTaskDone(taskId: number, done: boolean) {
+  learningStore.markTaskDone(plan.value.id, taskId, done)
+}
+
+function markCurrentDone() {
+  const task = today.value?.tasks.find((item) => !item.done)
+  if (task) setTaskDone(task.id, true)
+}
+
+function submitQuiz() {
+  if (!exercise.value || !selectedAnswer.value) return
+  quizResult.value = learningStore.submitExercise(plan.value.id, exercise.value.id, selectedAnswer.value)
+}
 </script>
 
 <template>
@@ -26,7 +48,7 @@ const exercise = computed(() => plan.value.exercises[0])
         </div>
         <div class="top-actions">
           <button class="outline-btn" type="button" @click="router.push(`/learning/${plan.id}`)">返回工作台</button>
-          <button class="primary-btn" type="button">标记完成</button>
+          <button class="primary-btn" type="button" @click="markCurrentDone">标记完成</button>
         </div>
       </header>
 
@@ -39,19 +61,23 @@ const exercise = computed(() => plan.value.exercises[0])
             class="task-row"
             :class="{ active: index === 0 }"
           >
-            <input :checked="task.done || index === 0" type="checkbox" />
+            <input
+              :checked="task.done"
+              type="checkbox"
+              @change="setTaskDone(task.id, ($event.target as HTMLInputElement).checked)"
+            />
             <span>{{ task.title }}</span>
           </label>
           <div class="today-progress">
-            <strong>33%</strong>
-            <span>1 / 3 完成</span>
+            <strong>{{ todayProgress }}%</strong>
+            <span>{{ todayDone }} / {{ today?.tasks.length ?? 0 }} 完成</span>
             <small>学习时长 18 分钟</small>
             <small>预计完成 32 分钟</small>
           </div>
         </aside>
 
         <section class="content-panel panel">
-          <h1>动态绑定：为什么 Animal a = new Dog() 调用 Dog 的方法？</h1>
+          <h1>{{ exercise?.knowledge ?? today?.title }}：核心概念讲解</h1>
           <nav class="tabs">
             <button class="active" type="button">讲解</button>
             <button type="button">例题</button>
@@ -63,22 +89,21 @@ const exercise = computed(() => plan.value.exercises[0])
             <div class="lesson-copy">
               <h2>1. 概念讲解</h2>
               <p>
-                动态绑定也叫运行时绑定：程序运行时，JVM 会根据对象的实际类型决定调用哪个方法。
-                所以父类引用变量指向子类对象时，如果方法被重写，最终执行的是子类实现。
+                {{ exercise?.explanation ?? today?.desc }}
               </p>
               <ul>
-                <li>编译阶段：看引用类型，检查语法是否合法。</li>
-                <li>运行阶段：看对象的实际类型，决定执行哪个被重写的方法。</li>
+                <li>先结合资料明确核心概念和适用场景。</li>
+                <li>再通过练习获得反馈，并根据错题调整复习计划。</li>
               </ul>
               <div class="diagram">
-                <span>父类引用<br />Animal a</span>
+                <span>资料理解<br />{{ exercise?.knowledge }}</span>
                 <AppIcon name="chevron-right" :size="22" />
-                <span>子类对象<br />new Dog()</span>
+                <span>专项练习<br />提交答案</span>
                 <AppIcon name="chevron-right" :size="22" />
-                <span>运行时绑定<br />调用 Dog 方法</span>
+                <span>反馈复盘<br />更新掌握度</span>
               </div>
             </div>
-            <pre><code>class Animal {
+            <pre v-if="exercise?.code"><code>class Animal {
   void speak() {
     System.out.println("Animal");
   }
@@ -95,13 +120,17 @@ class Dog extends Animal {
           <section class="quiz-card">
             <header>
               <h2>随堂小测 1/3</h2>
-              <button class="primary-btn" type="button">提交答案</button>
+              <button class="primary-btn" type="button" :disabled="!selectedAnswer" @click="submitQuiz">提交答案</button>
             </header>
             <p>{{ exercise?.title }}</p>
             <label v-for="option in exercise?.options" :key="option">
-              <input :checked="option === exercise?.answer" name="quiz" type="radio" />
+              <input v-model="selectedAnswer" :value="option" name="quiz" type="radio" />
               <span>{{ option }}</span>
             </label>
+            <p v-if="quizResult" class="quiz-feedback" :class="{ correct: quizResult.correct }">
+              {{ quizResult.correct ? '回答正确。' : `回答错误，正确答案是 ${quizResult.correctAnswer}。` }}
+              {{ quizResult.explanation }}
+            </p>
           </section>
         </section>
 

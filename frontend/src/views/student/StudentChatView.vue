@@ -11,10 +11,12 @@ import MessageList from '@/components/main-area/mode3-chat/message/MessageList.v
 import { useAuthStore } from '@/stores/auth'
 import { useConversationStore } from '@/stores/conversation'
 import { useMessageStore } from '@/stores/message'
+import { useLibraryResourceStore } from '@/stores/libraryResource'
 
 const authStore = useAuthStore()
 const conversationStore = useConversationStore()
 const messageStore = useMessageStore()
+const libraryResourceStore = useLibraryResourceStore()
 
 const activeChatId = computed(() => conversationStore.currentId)
 
@@ -102,6 +104,15 @@ async function onSend(text: string, files?: File[]) {
     return
   }
 
+  if (files?.length) {
+    libraryResourceStore.addFiles(
+      files,
+      '聊天上传',
+      null,
+      currentConversation.value?.knowledgeBaseId ?? null,
+    )
+  }
+
   if (!activeChatId.value) {
     const result = await messageStore.createConversation({ firstMessage: text, files })
     const newChatId = result.id
@@ -152,6 +163,10 @@ function onGenerateMindmap(messageId: string, content: string) {
 }
 
 function onMindMapSaved() {
+  libraryResourceStore.addChatGenerated(
+    `${mindMapTitle.value.trim() || pageTitle.value}思维导图`,
+    currentConversation.value?.knowledgeBaseId ?? null,
+  )
   showMindMapPanel.value = false
 }
 

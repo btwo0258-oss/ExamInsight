@@ -74,6 +74,7 @@ export type Exercise = {
   options: string[]
   answer: string
   userAnswer?: string
+  submitted?: boolean
   explanation: string
 }
 
@@ -89,6 +90,7 @@ export type WrongQuestion = {
 
 export type LearningPlan = {
   id: number
+  relatedProjectId?: number | null
   title: string
   goal: string
   updatedAt: string

@@ -1,15 +1,21 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
 import StudentShell from '@/components/student/StudentShell.vue'
-import { learningPlans } from '@/mock'
+import { useLearningStore } from '@/stores/learning'
 
 const route = useRoute()
 const router = useRouter()
-const plan = computed(() => learningPlans.find((item) => item.id === Number(route.params.id)) ?? learningPlans[0]!)
-const wrong = computed(() => plan.value.wrongQuestions[0])
-const exercise = computed(() => plan.value.exercises[0])
+const learningStore = useLearningStore()
+const plan = computed(() => learningStore.getPlan(Number(route.params.id)) ?? learningStore.plans[0]!)
+const activeWrongId = ref(plan.value.wrongQuestions.find((item) => !item.synced)?.id ?? plan.value.wrongQuestions[0]?.id)
+const wrong = computed(() => plan.value.wrongQuestions.find((item) => item.id === activeWrongId.value) ?? plan.value.wrongQuestions[0])
+const exercise = computed(() => plan.value.exercises.find((item) => item.id === wrong.value?.id) ?? plan.value.exercises[0])
+
+function addToReview() {
+  if (wrong.value) learningStore.addWrongToReview(plan.value.id, wrong.value.id)
+}
 </script>
 
 <template>
@@ -59,7 +65,9 @@ const exercise = computed(() => plan.value.exercises[0])
           </section>
 
           <footer>
-            <button class="primary-btn" type="button">加入复习计划</button>
+            <button class="primary-btn" type="button" :disabled="wrong?.synced" @click="addToReview">
+              {{ wrong?.synced ? '已加入复习计划' : '加入复习计划' }}
+            </button>
             <button class="outline-btn" type="button">生成 5 道同类题</button>
             <button class="outline-btn" type="button" @click="router.push(`/learning/${plan.id}`)">返回错题本</button>
           </footer>
@@ -79,6 +87,7 @@ const exercise = computed(() => plan.value.exercises[0])
             class="wrong-row"
             :class="{ active: item.id === wrong?.id }"
             type="button"
+            @click="activeWrongId = item.id"
           >
             <span>{{ item.title }}</span>
             <small>{{ item.knowledge.join(' / ') }}</small>

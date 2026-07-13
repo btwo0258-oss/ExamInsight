@@ -3,11 +3,13 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
 import StudentShell from '@/components/student/StudentShell.vue'
-import { courseLibraries, learningPlans } from '@/mock'
+import { courseLibraries } from '@/mock'
+import { useLearningStore } from '@/stores/learning'
 
 const route = useRoute()
 const router = useRouter()
-const plan = computed(() => learningPlans.find((item) => item.id === Number(route.params.id)) ?? learningPlans[0]!)
+const learningStore = useLearningStore()
+const plan = computed(() => learningStore.getPlan(Number(route.params.id)) ?? learningStore.plans[0]!)
 const library = computed(() => courseLibraries.find((item) => item.id === plan.value.libraryId))
 
 function resourceIcon(group: string) {
@@ -61,7 +63,11 @@ function resourceIcon(group: string) {
                 </div>
               </header>
               <label v-for="task in day.tasks" :key="task.id" class="task-row">
-                <input :checked="task.done" type="checkbox" />
+                <input
+                  :checked="task.done"
+                  type="checkbox"
+                  @change="learningStore.markTaskDone(plan.id, task.id, ($event.target as HTMLInputElement).checked)"
+                />
                 <span>{{ task.title }}</span>
                 <small>{{ task.duration }}</small>
               </label>

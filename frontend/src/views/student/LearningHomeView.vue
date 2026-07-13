@@ -1,27 +1,64 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import AttachmentCard from '@/components/main-area/mode3-chat/input/AttachmentCard.vue'
 import StudentShell from '@/components/student/StudentShell.vue'
 import LibrarySelectModal from '@/components/student/LibrarySelectModal.vue'
-import UploadMaterialModal from '@/components/student/UploadMaterialModal.vue'
-import { courseLibraries, learningPlans } from '@/mock'
+import ProjectSelectModal from '@/components/student/ProjectSelectModal.vue'
+import { courseLibraries } from '@/mock'
+import type { LearningResource } from '@/mock'
+import { useLearningStore } from '@/stores/learning'
+import { useLibraryResourceStore } from '@/stores/libraryResource'
 
+const route = useRoute()
 const router = useRouter()
+const learningStore = useLearningStore()
+const libraryResourceStore = useLibraryResourceStore()
 const prompt = ref('')
 const step = ref<'home' | 'profile'>('home')
 const selectedLibraryId = ref(1)
+const selectedProjectId = ref<number | null>(null)
+const files = ref<File[]>([])
+const fileEl = ref<HTMLInputElement | null>(null)
+const showUploadError = ref(false)
+const uploadErrorMessage = ref('')
+const targetType = ref('考试复习')
+const preferences = ref(['图文讲解', '代码示例'])
+const studyPeriod = ref('3 天')
+const foundationLevel = ref('基础一般')
+const weakPointText = ref('')
+const dailyTime = ref('每天 60-90 分钟')
+const studyDepth = ref('快速复习')
+const supplementOpen = ref(false)
+const supplementDraft = ref('')
+const extraRequirement = ref('')
 const libraryModalOpen = ref(false)
-const uploadModalOpen = ref(false)
+const projectModalOpen = ref(false)
 const modelMenuOpen = ref(false)
 const selectedModelKey = ref('qwen-plus')
 
 const selectedLibrary = computed(() => courseLibraries.find((item) => item.id === selectedLibraryId.value))
+const selectedProject = computed(() => learningStore.getPlan(selectedProjectId.value ?? -1))
 const modelOptions = [
   { key: 'qwen-plus', name: 'Qwen Plus', desc: '最强大的推理能力' },
   { key: 'gpt-4o', name: 'GPT-4 Omni', desc: '适合日常对话' },
 ]
 const selectedModel = computed(() => modelOptions.find((item) => item.key === selectedModelKey.value) ?? modelOptions[0]!)
+const targetOptions = ['考试复习', '课程作业', '面试准备', '项目实战']
+const preferenceOptions = ['图文讲解', '代码示例', '先练后讲', '先讲后练']
+const foundationOptions = ['零基础', '基础薄弱', '基础一般', '有一定基础', '只补薄弱点']
+const depthOptions = ['快速复习', '系统学习', '刷题强化', '项目实操']
+const resourceGroupMap: Record<string, LearningResource['group'] | undefined> = {
+  handout: '讲义',
+  exercise: '练习题',
+  mindmap: '思维导图',
+  ppt: 'PPT',
+  code: '代码案例',
+  reading: '拓展阅读',
+  mistake: '导出文件',
+}
 
 const resourceOptions = ref([
   { key: 'path', label: '学习路径', checked: true },
@@ -33,6 +70,17 @@ const resourceOptions = ref([
   { key: 'reading', label: '拓展阅读', checked: false },
   { key: 'mistake', label: '错题本', checked: false },
 ])
+
+const selectedResourceLabels = computed(() =>
+  resourceOptions.value.filter((item) => item.checked).map((item) => item.label),
+)
+const profileFocusText = computed(() => weakPointText.value.trim() || selectedLibrary.value?.tags.slice(0, 3).join(' / ') || '待确认')
+const materialSourceText = computed(() => {
+  const sources = [selectedLibrary.value?.name]
+  if (files.value.length) sources.push(`${files.value.length} 个上传文件`)
+  if (selectedProject.value) sources.push(selectedProject.value.title)
+  return sources.filter(Boolean).join('、')
+})
 
 const quickActions = [
   { icon: 'clipboard', label: '生成学习方案' },
@@ -48,21 +96,169 @@ function selectLibrary(id: number) {
   libraryModalOpen.value = false
 }
 
+function selectProject(id: number | null) {
+  selectedProjectId.value = id
+  const project = id === null ? undefined : learningStore.getPlan(id)
+  if (project) selectedLibraryId.value = project.libraryId
+  files.value.forEach((file) => {
+    libraryResourceStore.addFile(file, '智能学习上传', id, project?.libraryId ?? null)
+  })
+  projectModalOpen.value = false
+}
+
+function triggerUpload() {
+  fileEl.value?.click()
+}
+
+function onFileChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const selectedFiles = Array.from(input.files ?? [])
+  const allowedExtensions = ['.pdf', '.docx', '.md', '.txt']
+  const maxSize = 21 * 1024 * 1024
+
+  if (files.value.length + selectedFiles.length > 5) {
+    uploadErrorMessage.value = '最多只能上传 5 个文件'
+    showUploadError.value = true
+    input.value = ''
+    return
+  }
+
+  for (const file of selectedFiles) {
+    const extension = file.name.slice(file.name.lastIndexOf('.')).toLowerCase()
+    if (!allowedExtensions.includes(extension)) {
+      uploadErrorMessage.value = `文件 ${file.name} 格式不支持，仅支持 PDF、DOCX、Markdown、TXT`
+      showUploadError.value = true
+      continue
+    }
+    if (file.size > maxSize) {
+      uploadErrorMessage.value = `文件 ${file.name} 超过 21MB 限制`
+      showUploadError.value = true
+      continue
+    }
+    files.value.push(file)
+    libraryResourceStore.addFile(
+      file,
+      '智能学习上传',
+      selectedProjectId.value,
+      selectedProject.value?.libraryId ?? null,
+    )
+  }
+  input.value = ''
+}
+
+function removeFile(index: number) {
+  files.value.splice(index, 1)
+}
+
 function selectModel(key: string) {
   selectedModelKey.value = key
   modelMenuOpen.value = false
+}
+
+function togglePreference(value: string) {
+  preferences.value = preferences.value.includes(value)
+    ? preferences.value.filter((item) => item !== value)
+    : [...preferences.value, value]
+}
+
+function setResourceChecked(key: string, checked = true) {
+  const option = resourceOptions.value.find((item) => item.key === key)
+  if (option) option.checked = checked
+}
+
+function inferProfileFromPrompt(text: string) {
+  if (/面试|简历|秋招|春招|offer/i.test(text)) targetType.value = '面试准备'
+  else if (/作业|实验|报告|论文|课程设计/i.test(text)) targetType.value = '课程作业'
+  else if (/项目|实战|开发|作品/i.test(text)) targetType.value = '项目实战'
+  else if (/考|复习|期末|期中|测验|四六级|cet/i.test(text)) targetType.value = '考试复习'
+
+  if (/零基础|从零|完全不会/i.test(text)) foundationLevel.value = '零基础'
+  else if (/基础差|不懂|不会|分不清|薄弱|混淆/i.test(text)) foundationLevel.value = '基础薄弱'
+  else if (/只.*薄弱|专项|强化|补弱/i.test(text)) foundationLevel.value = '只补薄弱点'
+  else if (/熟悉|掌握|有基础/i.test(text)) foundationLevel.value = '有一定基础'
+
+  const periodMatch = text.match(/(\d+)\s*(天|周|个月|月)/)
+  if (periodMatch) studyPeriod.value = `${periodMatch[1]} ${periodMatch[2]}`
+  else if (/下周/i.test(text)) studyPeriod.value = '1 周'
+  else if (/明天/i.test(text)) studyPeriod.value = '1 天'
+
+  const timeMatch = text.match(/每天.{0,8}?(\d+)\s*(分钟|小时)/)
+  if (timeMatch) dailyTime.value = `每天 ${timeMatch[1]} ${timeMatch[2]}`
+  else if (/周末/i.test(text)) dailyTime.value = '周末集中学习'
+
+  const inferredPreferences = new Set(preferences.value)
+  if (/代码|编程|程序|debug|案例/i.test(text)) inferredPreferences.add('代码示例')
+  if (/题|刷题|练习|测验|错题/i.test(text)) inferredPreferences.add('先练后讲')
+  if (/图|导图|框架|结构/i.test(text)) inferredPreferences.add('图文讲解')
+  if (/先讲|讲解|概念/i.test(text)) inferredPreferences.add('先讲后练')
+  preferences.value = Array.from(inferredPreferences)
+
+  if (/不要\s*ppt|不需要\s*ppt|不用\s*ppt|别.*ppt/i.test(text)) setResourceChecked('ppt', false)
+  else if (/ppt|演示|汇报/i.test(text)) setResourceChecked('ppt')
+  if (/导图|思维导图|结构图/i.test(text)) setResourceChecked('mindmap')
+  if (/代码|案例|编程/i.test(text)) setResourceChecked('code')
+  if (/拓展|阅读|资料/i.test(text)) setResourceChecked('reading')
+  if (/错题|易错/i.test(text)) setResourceChecked('mistake')
+  if (/题|练习|刷题|测验/i.test(text)) setResourceChecked('exercise')
+
+  if (/刷题|题海|错题/i.test(text)) studyDepth.value = '刷题强化'
+  else if (/项目|实战|开发/i.test(text)) studyDepth.value = '项目实操'
+  else if (/系统|完整|从头/i.test(text)) studyDepth.value = '系统学习'
+
+  const matchedTags = selectedLibrary.value?.tags.filter((tag) => text.includes(tag)) ?? []
+  if (matchedTags.length) weakPointText.value = matchedTags.join(' / ')
+  else if (/分不清|混淆|薄弱|不会|不懂/i.test(text)) weakPointText.value = selectedLibrary.value?.tags.slice(0, 3).join(' / ') ?? ''
 }
 
 function submitPrompt() {
   if (!prompt.value.trim()) {
     prompt.value = '我下周要考 Java 面向对象，继承、多态和接口分不清，帮我做 3 天复习。'
   }
+  inferProfileFromPrompt(prompt.value)
   step.value = 'profile'
 }
 
-function createProject() {
-  router.push(`/learning/${learningPlans[0]!.id}`)
+function applySupplement() {
+  const text = supplementDraft.value.trim()
+  if (!text) {
+    supplementOpen.value = false
+    return
+  }
+  extraRequirement.value = text
+  inferProfileFromPrompt(`${prompt.value} ${text}`)
+  supplementOpen.value = false
 }
+
+function createProject() {
+  const resourceGroups = resourceOptions.value
+    .filter((item) => item.checked)
+    .map((item) => resourceGroupMap[item.key])
+    .filter((group): group is LearningResource['group'] => Boolean(group))
+  const plan = learningStore.createPlan({
+    prompt: prompt.value.trim(),
+    libraryId: selectedLibraryId.value,
+    projectId: selectedProjectId.value,
+    targetType: targetType.value,
+    preferences: preferences.value,
+    resourceGroups,
+    period: studyPeriod.value,
+    foundation: foundationLevel.value,
+    weakPoints: profileFocusText.value,
+    dailyTime: dailyTime.value,
+    studyDepth: studyDepth.value,
+    supplementalRequirement: extraRequirement.value,
+  })
+  router.push(`/learning/${plan.id}`)
+}
+
+watch(
+  () => route.query.libraryId,
+  (value) => {
+    const libraryId = Number(value)
+    if (courseLibraries.some((item) => item.id === libraryId)) selectedLibraryId.value = libraryId
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -72,16 +268,27 @@ function createProject() {
         <h1>今天想解决什么学习问题？</h1>
         <p>选择资料库、上传文件或直接提问，AI 会自动生成学习路径和资源包。</p>
 
+        <div class="upload-row">
+          <span>也可以直接上传：</span>
+          <button type="button" @click="triggerUpload">PDF</button>
+          <button type="button" @click="triggerUpload">DOCX</button>
+          <button type="button" @click="triggerUpload">Markdown</button>
+          <button type="button" @click="triggerUpload">TXT</button>
+        </div>
+
         <div class="prompt-box">
+          <div v-if="files.length" class="attachment-previews">
+            <AttachmentCard v-for="(file, index) in files" :key="`${file.name}-${file.lastModified}`" :file="file" @remove="removeFile(index)" />
+          </div>
           <textarea
             v-model="prompt"
             placeholder="例如：基于 Java 面向对象资料库，帮我做 3 天复习计划，并生成练习题和思维导图"
             @keydown.ctrl.enter.prevent="submitPrompt"
           />
-          <span v-if="!prompt" class="prompt-placeholder">处理任何事务</span>
+          <span v-if="!prompt && !files.length" class="prompt-placeholder">处理任何事务</span>
           <div class="prompt-toolbar">
             <div class="prompt-tools prompt-tools--left">
-              <button type="button" title="上传文件" @click="uploadModalOpen = true">
+              <button type="button" title="上传文件" @click="triggerUpload">
                 <AppIcon name="paperclip" :size="21" />
               </button>
               <button type="button" title="语音输入">
@@ -131,22 +338,20 @@ function createProject() {
             </div>
           </div>
         </div>
+        <input ref="fileEl" hidden multiple type="file" accept=".pdf,.docx,.md,.txt" @change="onFileChange" />
 
         <div class="prompt-subbar">
           <div class="subbar-left">
-            <button class="subbar-action" type="button" @click="libraryModalOpen = true">
+            <button class="subbar-action" type="button" @click="projectModalOpen = true">
               <AppIcon name="folder" :size="17" />
-              <span>选择项目</span>
+              <span>{{ selectedProject ? selectedProject.title : '选择项目 · 无' }}</span>
+              <AppIcon name="chevron-right" :size="13" />
             </button>
             <button class="subbar-action" type="button">
               <AppIcon name="activity" :size="16" />
               <span>连接插件</span>
             </button>
           </div>
-          <button class="subbar-action subbar-action--right" type="button">
-            <AppIcon name="monitor" :size="16" />
-            <span>下载桌面应用</span>
-          </button>
         </div>
 
         <div class="action-chips">
@@ -156,13 +361,6 @@ function createProject() {
           </button>
         </div>
 
-        <div class="upload-row">
-          <span>也可以直接上传：</span>
-          <button type="button" @click="uploadModalOpen = true">PDF</button>
-          <button type="button" @click="uploadModalOpen = true">DOCX</button>
-          <button type="button" @click="uploadModalOpen = true">Markdown</button>
-          <button type="button" @click="uploadModalOpen = true">图片</button>
-        </div>
       </section>
 
       <section v-else class="profile-flow">
@@ -182,7 +380,7 @@ function createProject() {
         </div>
         <div class="chat-row">
           <span class="avatar avatar--ai"><AppIcon name="brain" :size="18" /></span>
-          <div class="message">为了生成更适合你的学习项目，我需要确认 3 件事。</div>
+          <div class="message">我已根据你的对话预填学习画像，请确认目标、偏好、资源和学习约束。</div>
         </div>
 
         <div class="choice-grid">
@@ -190,20 +388,30 @@ function createProject() {
             <span class="number">1</span>
             <h2>目标类型</h2>
             <div class="chips">
-              <button class="selected" type="button">考试复习</button>
-              <button type="button">课程作业</button>
-              <button type="button">面试准备</button>
-              <button type="button">项目实战</button>
+              <button
+                v-for="option in targetOptions"
+                :key="option"
+                :class="{ selected: targetType === option }"
+                type="button"
+                @click="targetType = option"
+              >
+                {{ option }}
+              </button>
             </div>
           </article>
           <article class="choice-card">
             <span class="number">2</span>
             <h2>学习偏好</h2>
             <div class="chips">
-              <button class="selected" type="button">图文讲解</button>
-              <button class="selected" type="button">代码示例</button>
-              <button type="button">先练后讲</button>
-              <button type="button">先讲后练</button>
+              <button
+                v-for="option in preferenceOptions"
+                :key="option"
+                :class="{ selected: preferences.includes(option) }"
+                type="button"
+                @click="togglePreference(option)"
+              >
+                {{ option }}
+              </button>
             </div>
           </article>
           <article class="choice-card">
@@ -218,21 +426,76 @@ function createProject() {
           </article>
         </div>
 
+        <section class="detail-panel">
+          <div class="panel-title">
+            <span class="number">4</span>
+            <h2>学习约束</h2>
+          </div>
+          <div class="detail-grid">
+            <label>
+              <span>计划周期</span>
+              <input v-model="studyPeriod" placeholder="例如：3 天" />
+            </label>
+            <label>
+              <span>当前基础</span>
+              <select v-model="foundationLevel">
+                <option v-for="option in foundationOptions" :key="option">{{ option }}</option>
+              </select>
+            </label>
+            <label>
+              <span>每日时间</span>
+              <input v-model="dailyTime" placeholder="例如：每天 60 分钟" />
+            </label>
+            <label>
+              <span>输出深度</span>
+              <select v-model="studyDepth">
+                <option v-for="option in depthOptions" :key="option">{{ option }}</option>
+              </select>
+            </label>
+            <label class="detail-field--wide">
+              <span>薄弱知识点</span>
+              <input v-model="weakPointText" placeholder="例如：继承 / 多态 / 接口" />
+            </label>
+          </div>
+        </section>
+
         <section class="confirm-panel">
           <h2>生成配置确认</h2>
           <div class="confirm-list">
             <span>资料来源</span>
-            <strong>{{ selectedLibrary?.name }}</strong>
+            <strong>{{ materialSourceText }}</strong>
             <span>计划周期</span>
-            <strong>3 天</strong>
+            <strong>{{ studyPeriod }}</strong>
+            <span>目标类型</span>
+            <strong>{{ targetType }}</strong>
+            <span>当前基础</span>
+            <strong>{{ foundationLevel }}</strong>
             <span>重点知识</span>
-            <strong>继承 / 多态 / 接口</strong>
+            <strong>{{ profileFocusText }}</strong>
+            <span>学习偏好</span>
+            <strong>{{ preferences.join('、') || '待确认' }}</strong>
+            <span>每日时间</span>
+            <strong>{{ dailyTime }}</strong>
+            <span>输出深度</span>
+            <strong>{{ studyDepth }}</strong>
             <span>生成资源</span>
-            <strong>{{ resourceOptions.filter((item) => item.checked).map((item) => item.label).join('、') }}</strong>
+            <strong>{{ selectedResourceLabels.join('、') || '仅生成学习路径' }}</strong>
+            <span v-if="extraRequirement">补充要求</span>
+            <strong v-if="extraRequirement">{{ extraRequirement }}</strong>
+          </div>
+          <div v-if="supplementOpen" class="supplement-box">
+            <textarea
+              v-model="supplementDraft"
+              rows="3"
+              placeholder="例如：每天最多 40 分钟，不要 PPT，多给代码题，重点按老师课件第三章来。"
+            />
+            <button class="outline-btn" type="button" @click="applySupplement">应用补充</button>
           </div>
           <footer>
             <button class="primary-btn" type="button" @click="createProject">开始生成学习项目</button>
-            <button class="outline-btn" type="button">继续补充要求</button>
+            <button class="outline-btn" type="button" @click="supplementOpen = !supplementOpen">
+              {{ supplementOpen ? '收起补充' : '继续补充要求' }}
+            </button>
           </footer>
         </section>
       </section>
@@ -244,7 +507,21 @@ function createProject() {
       @close="libraryModalOpen = false"
       @select="selectLibrary"
     />
-    <UploadMaterialModal :open="uploadModalOpen" @close="uploadModalOpen = false" />
+    <ProjectSelectModal
+      :open="projectModalOpen"
+      :selected-id="selectedProjectId"
+      @close="projectModalOpen = false"
+      @select="selectProject"
+    />
+    <ConfirmDialog
+      :open="showUploadError"
+      title="上传提示"
+      :message="uploadErrorMessage"
+      confirm-text="知道了"
+      cancel-text=""
+      @close="showUploadError = false"
+      @confirm="showUploadError = false"
+    />
   </StudentShell>
 </template>
 
@@ -333,6 +610,13 @@ button {
   box-sizing: border-box;
   border-radius: 24px;
   display: block;
+}
+
+.attachment-previews {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 14px 16px 0;
 }
 
 .prompt-box textarea::placeholder {
@@ -452,8 +736,8 @@ button {
   gap: 0;
 }
 
-.subbar-left .subbar-action:not(:first-child),
-.subbar-action--right {
+
+.subbar-left .subbar-action:not(:first-child) {
   display: none;
 }
 
@@ -542,10 +826,10 @@ button {
 }
 
 .upload-row {
-  display: none;
+  display: flex;
   justify-content: center;
   gap: 10px;
-  margin-top: 30px;
+  margin: 24px 0 -10px;
   color: var(--color-text-muted);
 }
 
@@ -743,6 +1027,7 @@ button {
 }
 
 .choice-card,
+.detail-panel,
 .confirm-panel {
   border: 1px solid var(--color-border);
   border-radius: 8px;
@@ -757,6 +1042,7 @@ button {
 }
 
 .choice-card h2,
+.detail-panel h2,
 .confirm-panel h2 {
   color: var(--color-text);
   font-size: 20px;
@@ -808,6 +1094,60 @@ button {
   font-weight: 700;
 }
 
+.detail-panel {
+  margin-top: 16px;
+  padding: 24px;
+}
+
+.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.panel-title .number {
+  margin-bottom: 0;
+}
+
+.detail-grid {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.detail-grid label {
+  display: grid;
+  gap: 8px;
+}
+
+.detail-grid span {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.detail-grid select,
+.detail-grid input,
+.supplement-box textarea {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  outline: 0;
+}
+
+.detail-grid select,
+.detail-grid input {
+  height: 40px;
+  padding: 0 12px;
+}
+
+.detail-field--wide {
+  grid-column: span 2;
+}
+
 .confirm-panel {
   margin-top: 24px;
   padding: 24px 28px;
@@ -835,6 +1175,22 @@ button {
 
 .confirm-list strong {
   color: var(--color-text);
+}
+
+.supplement-box {
+  margin-top: 18px;
+  display: grid;
+  gap: 12px;
+}
+
+.supplement-box textarea {
+  resize: vertical;
+  line-height: 1.6;
+  padding: 12px;
+}
+
+.supplement-box .outline-btn {
+  justify-self: end;
 }
 
 .confirm-panel footer {
@@ -871,6 +1227,14 @@ button {
 
   .choice-grid {
     grid-template-columns: 1fr;
+  }
+
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-field--wide {
+    grid-column: auto;
   }
 }
 </style>

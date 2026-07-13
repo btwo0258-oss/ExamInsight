@@ -1,14 +1,35 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
 import StudentShell from '@/components/student/StudentShell.vue'
-import { learningPlans } from '@/mock'
+import { useLearningStore } from '@/stores/learning'
 
 const route = useRoute()
 const router = useRouter()
-const plan = computed(() => learningPlans.find((item) => item.id === Number(route.params.id)) ?? learningPlans[0]!)
-const exercise = computed(() => plan.value.exercises[0]!)
+const learningStore = useLearningStore()
+const plan = computed(() => learningStore.getPlan(Number(route.params.id)) ?? learningStore.plans[0]!)
+const currentExerciseId = ref(plan.value.exercises[0]?.id)
+const exercise = computed(() => plan.value.exercises.find((item) => item.id === currentExerciseId.value) ?? plan.value.exercises[0])
+const selectedAnswer = ref('')
+const result = ref<ReturnType<typeof learningStore.submitExercise>>()
+const generationMessage = ref('')
+const correctCount = computed(() => Math.round((plan.value.correctRate / 100) * plan.value.exerciseDone))
+
+function submitAnswer() {
+  if (!exercise.value || !selectedAnswer.value) return
+  result.value = learningStore.submitExercise(plan.value.id, exercise.value.id, selectedAnswer.value)
+}
+
+function generateSimilar() {
+  if (!exercise.value) return
+  const generated = learningStore.generateSimilarExercise(plan.value.id, exercise.value.id)
+  if (!generated) return
+  currentExerciseId.value = generated.id
+  selectedAnswer.value = ''
+  result.value = undefined
+  generationMessage.value = '已生成 1 道同类题并切换到新题。'
+}
 </script>
 
 <template>
@@ -35,7 +56,7 @@ const exercise = computed(() => plan.value.exercises[0]!)
           <article class="question-card">
             <header>
               <div>
-                <h2>题目 5/12</h2>
+                <h2>题目 {{ plan.exercises.findIndex((item) => item.id === exercise?.id) + 1 }}/{{ plan.exercises.length }}</h2>
                 <span>{{ exercise?.difficulty }}</span>
               </div>
               <button type="button"><AppIcon name="star" :size="16" /> 收藏</button>
@@ -43,14 +64,18 @@ const exercise = computed(() => plan.value.exercises[0]!)
             <p>{{ exercise?.title }}</p>
             <pre v-if="exercise?.code"><code>{{ exercise.code }}</code></pre>
             <label v-for="option in exercise?.options" :key="option">
-              <input :checked="option === exercise.answer" name="answer" type="radio" />
+              <input v-model="selectedAnswer" :value="option" name="answer" type="radio" />
               <span>{{ option }}</span>
             </label>
             <footer>
-              <button class="primary-btn" type="button">提交答案</button>
-              <button class="outline-btn" type="button">看解析</button>
-              <button class="outline-btn" type="button">生成同类题</button>
+              <button class="primary-btn" type="button" :disabled="!selectedAnswer" @click="submitAnswer">提交答案</button>
+              <button class="outline-btn" type="button" @click="result = result ?? (exercise?.submitted ? { correct: exercise.userAnswer === exercise.answer, explanation: exercise.explanation, correctAnswer: exercise.answer } : undefined)">看解析</button>
+              <button class="outline-btn" type="button" @click="generateSimilar">生成同类题</button>
             </footer>
+            <p v-if="result" class="answer-feedback" :class="{ correct: result.correct }">
+              {{ result.correct ? '回答正确。' : `回答错误，正确答案是 ${result.correctAnswer}。` }} {{ result.explanation }}
+            </p>
+            <p v-if="generationMessage" class="generation-message">{{ generationMessage }}</p>
           </article>
         </section>
 
@@ -60,7 +85,7 @@ const exercise = computed(() => plan.value.exercises[0]!)
             <strong>{{ plan.correctRate }}%</strong>
             <span>{{ plan.exerciseDone }}/{{ plan.totalExercises }}</span>
           </div>
-          <div class="stat-row"><span>正确数</span><strong>{{ plan.exerciseDone }}</strong></div>
+          <div class="stat-row"><span>正确数</span><strong>{{ correctCount }}</strong></div>
           <div class="stat-row"><span>错误数</span><strong>{{ plan.wrongQuestions.length }}</strong></div>
 
           <section class="weak-section">

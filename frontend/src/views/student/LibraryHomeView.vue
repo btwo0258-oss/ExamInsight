@@ -4,15 +4,18 @@ import { useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
 import StudentShell from '@/components/student/StudentShell.vue'
 import UploadMaterialModal from '@/components/student/UploadMaterialModal.vue'
-import { courseLibraries, recentUploads, type CourseLibrary, type UploadedFile } from '@/mock'
+import { courseLibraries, type CourseLibrary } from '@/mock'
+import { useLibraryResourceStore } from '@/stores/libraryResource'
+import type { LibraryResource } from '@/stores/libraryResource'
 
 type LibraryFilter = 'all' | 'knowledge' | 'mindmap' | 'image' | 'file'
 type ViewMode = 'grid' | 'list'
 type LibraryAsset =
   | { kind: 'knowledge'; id: string; source: CourseLibrary }
-  | { kind: 'file'; id: string; source: UploadedFile }
+  | { kind: 'file'; id: string; source: LibraryResource }
 
 const router = useRouter()
+const libraryResourceStore = useLibraryResourceStore()
 const uploadOpen = ref(false)
 const newKnowledgeOpen = ref(false)
 const newMenuOpen = ref(false)
@@ -36,17 +39,19 @@ const knowledgeAssets = computed<LibraryAsset[]>(() =>
 )
 
 const fileAssets = computed<LibraryAsset[]>(() =>
-  recentUploads.map((source) => ({ kind: 'file', id: `file-${source.id}`, source })),
+  libraryResourceStore.resources.map((source) => ({ kind: 'file', id: `file-${source.id}`, source })),
 )
 
 const visibleAssets = computed(() => {
   if (activeFilter.value === 'knowledge') return knowledgeAssets.value
-  if (activeFilter.value === 'mindmap') return []
+  if (activeFilter.value === 'mindmap') {
+    return fileAssets.value.filter((asset) => asset.kind === 'file' && asset.source.category === 'mindmap')
+  }
   if (activeFilter.value === 'image') {
-    return fileAssets.value.filter((asset) => asset.kind === 'file' && asset.source.type.includes('图片'))
+    return fileAssets.value.filter((asset) => asset.kind === 'file' && asset.source.category === 'image')
   }
   if (activeFilter.value === 'file') {
-    return fileAssets.value.filter((asset) => asset.kind === 'file' && !asset.source.type.includes('图片'))
+    return fileAssets.value.filter((asset) => asset.kind === 'file' && asset.source.category === 'file')
   }
   return [...knowledgeAssets.value, ...fileAssets.value]
 })
@@ -108,23 +113,28 @@ function openKnowledgeFromMove() {
   newKnowledgeOpen.value = true
 }
 
-function fileSize(file: UploadedFile) {
-  const sizes: Record<number, string> = {
-    301: '64.7 KB',
-    302: '1.8 MB',
-    303: '22.4 KB',
-  }
-  return sizes[file.id] ?? '128 KB'
+function fileSize(file: LibraryResource) {
+  return file.size
 }
 
-function fileIconName(file: UploadedFile) {
+function fileIconName(file: LibraryResource) {
+  if (file.category === 'mindmap') return 'mind-topic'
   if (file.type === 'PDF') return 'file'
   if (file.type === 'Word') return 'book'
   return 'file'
 }
 
+function startLearning(libraryId: number) {
+  closeKnowledgeMenu()
+  router.push({ path: '/learning', query: { libraryId } })
+}
+
 function knowledgeTitle(item: CourseLibrary) {
   return item.name.replace('资料库', '').trim()
+}
+
+function knowledgeFileCount(item: CourseLibrary) {
+  return item.fileCount + libraryResourceStore.resources.filter((resource) => resource.libraryId === item.id).length
 }
 
 function assetModifiedAt(asset: LibraryAsset) {
@@ -247,7 +257,7 @@ function assetSize(asset: LibraryAsset) {
               <AppIcon name="folder" :size="22" />
             </span>
             <strong>{{ knowledgeTitle(asset.source) }}</strong>
-            <small>{{ asset.source.fileCount }} 个文档 · {{ asset.source.updatedAt }}</small>
+            <small>{{ knowledgeFileCount(asset.source) }} 个文档 · {{ asset.source.updatedAt }}</small>
             <button
               class="knowledge-more"
               type="button"
@@ -257,6 +267,10 @@ function assetSize(asset: LibraryAsset) {
               <AppIcon name="more-horizontal" :size="16" />
             </button>
             <div v-if="knowledgeMenuId === asset.id" class="floating-menu asset-floating-menu" @click.stop>
+              <button class="menu-action" type="button" @click="startLearning(asset.source.id)">
+                <AppIcon name="graduation" :size="17" />
+                开始智能学习
+              </button>
               <button class="menu-action" type="button" @click="closeKnowledgeMenu">
                 <AppIcon name="edit" :size="17" />
                 重命名
@@ -290,7 +304,7 @@ function assetSize(asset: LibraryAsset) {
             <span class="file-preview-icon">
               <AppIcon :name="fileIconName(asset.source)" :size="34" />
             </span>
-            <small>{{ asset.source.type }} · {{ fileSize(asset.source) }}</small>
+            <small>{{ asset.source.type }} · {{ fileSize(asset.source) }} · {{ asset.source.source }}</small>
           </template>
         </article>
       </section>
@@ -338,6 +352,10 @@ function assetSize(asset: LibraryAsset) {
             </template>
           </div>
           <div v-if="knowledgeMenuId === asset.id" class="floating-menu asset-floating-menu menu--row" @click.stop>
+            <button class="menu-action" type="button" @click="startLearning(asset.source.id)">
+              <AppIcon name="graduation" :size="17" />
+              开始智能学习
+            </button>
             <button class="menu-action" type="button" @click="closeKnowledgeMenu">
               <AppIcon name="edit" :size="17" />
               重命名
