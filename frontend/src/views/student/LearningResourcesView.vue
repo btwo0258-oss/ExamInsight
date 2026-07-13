@@ -9,8 +9,8 @@ const route = useRoute()
 const router = useRouter()
 const learningStore = useLearningStore()
 const plan = computed(() => learningStore.getPlan(Number(route.params.id)) ?? learningStore.plans[0]!)
-const tabs = ['讲义', 'PPT', '练习题', '思维导图', '代码案例', '拓展阅读', '导出文件']
-const activeTab = ref('讲义')
+const tabs = ['个性化学习手册', 'PPT', '练习题', '思维导图', '代码案例', '推荐阅读']
+const activeTab = ref('个性化学习手册')
 const activeResource = computed(() => plan.value.resources.find((item) => item.group === activeTab.value) ?? plan.value.resources[0])
 
 function iconName(group: string) {
@@ -18,13 +18,20 @@ function iconName(group: string) {
   if (group === '练习题') return 'edit'
   if (group === '思维导图') return 'mind-topic'
   if (group === '代码案例') return 'code'
-  if (group === '拓展阅读') return 'book'
-  if (group === '导出文件') return 'download'
+  if (group === '推荐阅读') return 'book'
   return 'file'
 }
 
 function generateActiveResource() {
   if (activeResource.value) learningStore.generateResource(plan.value.id, activeResource.value.id)
+}
+
+function selectResourceGroup(group: string) {
+  if (group === '练习题') {
+    router.push(`/learning/${plan.value.id}/practice`)
+    return
+  }
+  activeTab.value = group
 }
 </script>
 
@@ -47,7 +54,7 @@ function generateActiveResource() {
           :key="tab"
           :class="{ active: activeTab === tab }"
           type="button"
-          @click="activeTab = tab"
+          @click="selectResourceGroup(tab)"
         >
           {{ tab }}
         </button>
@@ -106,13 +113,14 @@ function generateActiveResource() {
               </select>
               <button type="button"><AppIcon name="search" :size="16" /></button>
             </div>
-            <h3>1. 基础概念</h3>
-            <h4>1.1 继承的定义</h4>
-            <p>
-              继承是面向对象编程中的一种机制，允许一个类获取另一个类的属性和方法，并在此基础上进行扩展。
-              对你来说，重点不是死记语法，而是理解“父类负责抽象共性，子类负责扩展差异”。
-            </p>
-            <pre><code>class Animal {
+            <template v-if="activeTab === '个性化学习手册'">
+              <h3>1. 基础概念</h3>
+              <h4>1.1 继承的定义</h4>
+              <p>
+                个性化学习手册会按你的薄弱点重新组织资料库内容，适合在每个阶段开始前先读一遍。
+                这里重点解释概念、常见误区和考试容易混淆的边界。
+              </p>
+              <pre><code>class Animal {
   void eat() {
     System.out.println("Animal is eating");
   }
@@ -123,8 +131,74 @@ class Dog extends Animal {
     System.out.println("Dog is barking");
   }
 }</code></pre>
-            <h4>1.2 多态的定义</h4>
-            <p>多态是指同一方法调用，由于对象的不同而产生不同的行为。理解它的关键是区分编译类型和运行类型。</p>
+              <h4>1.2 多态的定义</h4>
+              <p>多态是指同一方法调用，由于对象的不同而产生不同的行为。理解它的关键是区分编译类型和运行类型。</p>
+            </template>
+
+            <template v-else-if="activeTab === 'PPT'">
+              <div class="slide-preview">
+                <section>
+                  <small>Slide 01</small>
+                  <h3>继承与多态考前复习</h3>
+                  <p>目标、薄弱点、复习路径</p>
+                </section>
+                <section>
+                  <small>Slide 02</small>
+                  <h3>高频概念对比</h3>
+                  <p>继承 / 重写 / 动态绑定</p>
+                </section>
+                <section>
+                  <small>Slide 03</small>
+                  <h3>典型代码题</h3>
+                  <p>读代码判断输出与原因</p>
+                </section>
+              </div>
+            </template>
+
+            <template v-else-if="activeTab === '思维导图'">
+              <div class="mindmap-preview">
+                <strong>Java OOP</strong>
+                <span>继承</span>
+                <span>多态</span>
+                <span>接口</span>
+                <span>抽象类</span>
+                <span>动态绑定</span>
+                <span>方法重写</span>
+              </div>
+            </template>
+
+            <template v-else-if="activeTab === '代码案例'">
+              <div class="code-preview">
+                <aside>
+                  <button type="button">Animal.java</button>
+                  <button type="button">Dog.java</button>
+                  <button type="button">Demo.java</button>
+                </aside>
+                <pre><code>Animal animal = new Dog();
+animal.sound();
+
+// 编译类型：Animal
+// 运行类型：Dog
+// 输出：Dog</code></pre>
+              </div>
+            </template>
+
+            <template v-else-if="activeTab === '推荐阅读'">
+              <div class="reading-list">
+                <article>
+                  <h3>资料库片段：方法重写规则</h3>
+                  <p>从课程资料中提取和当前薄弱点最相关的讲解段落。</p>
+                </article>
+                <article>
+                  <h3>补充阅读：动态绑定机制</h3>
+                  <p>用于理解 JVM 在运行时选择子类方法的过程。</p>
+                </article>
+                <article>
+                  <h3>对比阅读：重载与重写</h3>
+                  <p>用于处理选择题中最常见的混淆点。</p>
+                </article>
+              </div>
+            </template>
           </article>
         </section>
 
@@ -135,7 +209,7 @@ class Dog extends Animal {
             :key="resource.id"
             class="file-row"
             type="button"
-            @click="activeTab = resource.group"
+            @click="selectResourceGroup(resource.group)"
           >
             <AppIcon :name="iconName(resource.group)" :size="20" />
             <span>{{ resource.fileName ?? resource.title }}</span>
@@ -395,6 +469,75 @@ pre {
   background: #f8fafc;
   color: var(--color-text);
   overflow: auto;
+}
+
+.slide-preview,
+.reading-list {
+  display: grid;
+  gap: 14px;
+}
+
+.slide-preview section,
+.reading-list article {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 18px;
+}
+
+.slide-preview small {
+  color: #2563eb;
+  font-weight: 800;
+}
+
+.mindmap-preview {
+  min-height: 360px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-content: center;
+  gap: 18px;
+  text-align: center;
+}
+
+.mindmap-preview strong,
+.mindmap-preview span {
+  min-height: 54px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #2563eb;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+}
+
+.mindmap-preview strong {
+  grid-column: 1 / -1;
+  background: #2563eb;
+  color: #fff;
+}
+
+.code-preview {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 14px;
+}
+
+.code-preview aside {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.code-preview aside button {
+  height: 34px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-align: left;
+  padding: 0 10px;
+  cursor: pointer;
 }
 
 .file-panel {

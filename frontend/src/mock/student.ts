@@ -56,7 +56,7 @@ export type LearningDay = {
 
 export type LearningResource = {
   id: number
-  group: '讲义' | 'PPT' | '练习题' | '思维导图' | '代码案例' | '拓展阅读' | '导出文件'
+  group: '个性化学习手册' | 'PPT' | '练习题' | '思维导图' | '代码案例' | '推荐阅读'
   title: string
   desc: string
   status: LearningResourceStatus
@@ -259,7 +259,7 @@ export const learningPlans: LearningPlan[] = [
         desc: '分清类、对象、继承、构造方法的职责',
         tasks: [
           { id: 1, title: '理解继承的语法与职责', duration: '30 分钟', done: true, type: '讲解' },
-          { id: 2, title: '阅读个性化讲义', duration: '25 分钟', done: true, type: '资料' },
+          { id: 2, title: '阅读个性化学习手册', duration: '25 分钟', done: true, type: '资料' },
           { id: 3, title: '完成 8 道基础题', duration: '30 分钟', done: false, type: '练习' },
         ],
       },
@@ -287,12 +287,12 @@ export const learningPlans: LearningPlan[] = [
     resources: [
       {
         id: 1,
-        group: '讲义',
-        title: '继承与多态个性化讲义',
+        group: '个性化学习手册',
+        title: '继承与多态个性化学习手册',
         desc: '按你的薄弱点重排继承、多态、接口的讲解顺序。',
         status: '已生成',
         action: '查看',
-        fileName: '继承与多态个性化讲义.docx',
+        fileName: '继承与多态个性化学习手册.md',
       },
       {
         id: 2,
@@ -332,21 +332,12 @@ export const learningPlans: LearningPlan[] = [
       },
       {
         id: 6,
-        group: '拓展阅读',
-        title: 'Java 多态深入阅读',
+        group: '推荐阅读',
+        title: 'Java 多态推荐阅读',
         desc: '补充 JVM 调用机制、重写和重载对比。',
         status: '未选择',
         action: '生成',
         fileName: 'Java多态深入阅读.pdf',
-      },
-      {
-        id: 7,
-        group: '导出文件',
-        title: '复习计划与资源汇总',
-        desc: '一键导出当前学习计划、资源清单和掌握度报告。',
-        status: '未选择',
-        action: '导出',
-        fileName: 'Java OOP 强化计划.md',
       },
     ],
     exercises: javaExercises,
@@ -379,7 +370,7 @@ export const learningPlans: LearningPlan[] = [
       { name: '画像分析', desc: '识别学习目标和薄弱点', status: 'done' },
       { name: '资料理解', desc: '解析资料库和上传笔记', status: 'done' },
       { name: '路径规划', desc: '生成 3 天学习路径', status: 'done' },
-      { name: '资源生成', desc: '生成讲义、练习题、导图和案例', status: 'done' },
+      { name: '资源生成', desc: '生成个性化学习手册、练习题、导图和案例', status: 'done' },
       { name: '效果评估', desc: '根据练习表现动态更新', status: 'running' },
     ],
   },
@@ -406,7 +397,7 @@ export const learningPlans: LearningPlan[] = [
     ],
     days: [],
     resources: [
-      { id: 1, group: '讲义', title: '数据结构速查讲义', desc: '按章节整理核心概念。', status: '已生成', action: '查看' },
+      { id: 1, group: '个性化学习手册', title: '数据结构个性化学习手册', desc: '按章节整理核心概念。', status: '已生成', action: '查看' },
       { id: 2, group: 'PPT', title: '期末复习 PPT', desc: '适合快速串讲。', status: '已生成', action: '查看' },
       { id: 3, group: '练习题', title: '数据结构题库', desc: '30 道专项题。', status: '已生成', action: '练习' },
     ],
@@ -422,7 +413,7 @@ export const learningPlans: LearningPlan[] = [
   {
     id: 3,
     title: 'Python 实验报告辅助',
-    goal: '基于实验资料生成文件处理实验报告、代码案例和导出文件。',
+    goal: '基于实验资料生成文件处理实验报告、代码案例和导出报告。',
     updatedAt: '昨天 18:45',
     libraryId: 3,
     status: '已完成',
@@ -442,8 +433,7 @@ export const learningPlans: LearningPlan[] = [
     days: [],
     resources: [
       { id: 1, group: '代码案例', title: '文件处理代码案例', desc: '读写 CSV 与异常处理。', status: '已生成', action: '查看' },
-      { id: 2, group: '讲义', title: '实验报告说明', desc: '报告结构和步骤说明。', status: '已生成', action: '查看' },
-      { id: 3, group: '导出文件', title: '实验报告导出包', desc: '含 docx 和 markdown。', status: '已生成', action: '下载' },
+      { id: 2, group: '个性化学习手册', title: '实验报告个性化学习手册', desc: '报告结构和步骤说明。', status: '已生成', action: '查看' },
     ],
     exercises: [],
     wrongQuestions: [],
@@ -476,7 +466,7 @@ export const learningPlans: LearningPlan[] = [
     days: [],
     resources: [
       { id: 1, group: '练习题', title: '网络层同类题', desc: '基于错题生成。', status: '生成中', action: '查看' },
-      { id: 2, group: '讲义', title: '薄弱点讲义', desc: '整理 TCP/IP 常见误区。', status: '未选择', action: '生成' },
+      { id: 2, group: '个性化学习手册', title: '薄弱点个性化学习手册', desc: '整理 TCP/IP 常见误区。', status: '未选择', action: '生成' },
     ],
     exercises: [],
     wrongQuestions: [],

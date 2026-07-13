@@ -20,6 +20,16 @@ export type CreateLearningPlanInput = {
   supplementalRequirement: string
 }
 
+export type UpdateLearningPlanInput = {
+  targetType: string
+  period: string
+  dailyTime: string
+  weakPoints: string
+  preferences: string[]
+  keepExercises: boolean
+  keepProgress: boolean
+}
+
 export type ExerciseResult = {
   correct: boolean
   explanation: string
@@ -84,7 +94,7 @@ export const useLearningStore = defineStore('learning', () => {
         task.done = false
         const actionMap = {
           讲解: `学习${topic}核心概念`,
-          资料: `阅读${topic}个性化讲义`,
+          资料: `阅读${topic}个性化学习手册`,
           练习: `完成${topic}专项练习`,
           复盘: `复盘${topic}薄弱点`,
           测验: `完成${topic}综合测验`,
@@ -135,6 +145,79 @@ export const useLearningStore = defineStore('learning', () => {
     })
     persist()
     return template
+  }
+
+  function setProfileValue(plan: LearningPlan, label: string, value: string) {
+    const item = plan.profile.find((profile) => profile.label === label)
+    if (item) item.value = value
+    else plan.profile.push({ label, value })
+  }
+
+  function periodDayCount(period: string) {
+    const match = period.match(/(\d+)\s*天/)
+    return match ? Number(match[1]) : 0
+  }
+
+  function adjustDayCount(plan: LearningPlan, nextCount: number) {
+    if (!nextCount || nextCount === plan.days.length) return
+    if (nextCount < plan.days.length) {
+      plan.days = plan.days.slice(0, nextCount)
+      updateProgress(plan)
+      return
+    }
+
+    const topics = plan.dashboard.map((item) => item.label)
+    const fallbackTopic = plan.profile.find((item) => item.label === '重点知识' || item.label === '薄弱点')?.value ?? plan.title
+    while (plan.days.length < nextCount) {
+      const nextDayId = Math.max(0, ...plan.days.map((day) => day.id)) + 1
+      const nextTaskId = Math.max(0, ...plan.days.flatMap((day) => day.tasks.map((task) => task.id))) + 1
+      const topic = topics[(nextDayId - 1) % Math.max(topics.length, 1)] ?? fallbackTopic
+      plan.days.push({
+        id: nextDayId,
+        title: `${topic}巩固复习`,
+        desc: `根据调整后的计划补充${topic}学习任务`,
+        tasks: [
+          { id: nextTaskId, title: `复习${topic}核心内容`, duration: '30 分钟', done: false, type: '讲解' },
+          { id: nextTaskId + 1, title: `完成${topic}阶段练习`, duration: '30 分钟', done: false, type: '练习' },
+          { id: nextTaskId + 2, title: `整理${topic}错题和笔记`, duration: '20 分钟', done: false, type: '复盘' },
+        ],
+      })
+    }
+    updateProgress(plan)
+  }
+
+  function updatePlanConfig(planId: number, input: UpdateLearningPlanInput) {
+    const plan = getPlan(planId)
+    if (!plan) return false
+
+    plan.targetType = input.targetType
+    plan.period = input.period
+    setProfileValue(plan, '目标', input.targetType)
+    setProfileValue(plan, '节奏', input.dailyTime)
+    setProfileValue(plan, '重点知识', input.weakPoints)
+    setProfileValue(plan, '薄弱点', input.weakPoints)
+    setProfileValue(plan, '学习偏好', input.preferences.join(' + ') || '待确认')
+
+    if (!input.keepProgress) {
+      plan.days.forEach((day) => {
+        day.tasks.forEach((task) => {
+          task.done = false
+        })
+      })
+    }
+    if (!input.keepExercises) {
+      plan.exercises.forEach((exercise) => {
+        exercise.userAnswer = undefined
+        exercise.submitted = false
+      })
+      plan.exerciseDone = 0
+      plan.correctRate = 0
+    }
+
+    adjustDayCount(plan, periodDayCount(input.period))
+    updateProgress(plan)
+    persist()
+    return true
   }
 
   function updateProgress(plan: LearningPlan) {
@@ -271,6 +354,7 @@ export const useLearningStore = defineStore('learning', () => {
     projectCount,
     getPlan,
     createPlan,
+    updatePlanConfig,
     markTaskDone,
     submitExercise,
     generateSimilarExercise,

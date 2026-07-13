@@ -28,7 +28,8 @@ const targetType = ref('考试复习')
 const preferences = ref(['图文讲解', '代码示例'])
 const studyPeriod = ref('3 天')
 const foundationLevel = ref('基础一般')
-const weakPointText = ref('')
+const weakPointDraft = ref('')
+const weakPointTags = ref<string[]>([])
 const dailyTime = ref('每天 60-90 分钟')
 const studyDepth = ref('快速复习')
 const supplementOpen = ref(false)
@@ -51,30 +52,28 @@ const preferenceOptions = ['图文讲解', '代码示例', '先练后讲', '先�
 const foundationOptions = ['零基础', '基础薄弱', '基础一般', '有一定基础', '只补薄弱点']
 const depthOptions = ['快速复习', '系统学习', '刷题强化', '项目实操']
 const resourceGroupMap: Record<string, LearningResource['group'] | undefined> = {
-  handout: '讲义',
+  handbook: '个性化学习手册',
   exercise: '练习题',
   mindmap: '思维导图',
   ppt: 'PPT',
   code: '代码案例',
-  reading: '拓展阅读',
-  mistake: '导出文件',
+  reading: '推荐阅读',
 }
 
 const resourceOptions = ref([
   { key: 'path', label: '学习路径', checked: true },
-  { key: 'handout', label: '讲义', checked: true },
+  { key: 'handbook', label: '个性化学习手册', checked: true },
   { key: 'exercise', label: '练习题', checked: true },
   { key: 'mindmap', label: '思维导图', checked: true },
   { key: 'ppt', label: 'PPT', checked: false },
   { key: 'code', label: '代码案例', checked: false },
-  { key: 'reading', label: '拓展阅读', checked: false },
-  { key: 'mistake', label: '错题本', checked: false },
+  { key: 'reading', label: '推荐阅读', checked: false },
 ])
 
 const selectedResourceLabels = computed(() =>
   resourceOptions.value.filter((item) => item.checked).map((item) => item.label),
 )
-const profileFocusText = computed(() => weakPointText.value.trim() || selectedLibrary.value?.tags.slice(0, 3).join(' / ') || '待确认')
+const profileFocusText = computed(() => weakPointTags.value.join(' / ') || selectedLibrary.value?.tags.slice(0, 3).join(' / ') || '待确认')
 const materialSourceText = computed(() => {
   const sources = [selectedLibrary.value?.name]
   if (files.value.length) sources.push(`${files.value.length} 个上传文件`)
@@ -86,7 +85,7 @@ const quickActions = [
   { icon: 'clipboard', label: '生成学习方案' },
   { icon: 'clipboard-x', label: '错题诊断' },
   { icon: 'edit', label: '生成练习题' },
-  { icon: 'presentation', label: '生成 PPT/讲义' },
+  { icon: 'presentation', label: '生成 PPT/手册' },
   { icon: 'mind-topic', label: '生成思维导图' },
   { icon: 'camera', label: '拍照问答' },
 ]
@@ -161,6 +160,24 @@ function togglePreference(value: string) {
     : [...preferences.value, value]
 }
 
+function addWeakPoint(value = weakPointDraft.value) {
+  const tags = value
+    .split(/[\s,，、/]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+  if (!tags.length) return
+  weakPointTags.value = Array.from(new Set([...weakPointTags.value, ...tags]))
+  weakPointDraft.value = ''
+}
+
+function removeWeakPoint(tag: string) {
+  weakPointTags.value = weakPointTags.value.filter((item) => item !== tag)
+}
+
+function setWeakPointTags(tags: string[]) {
+  weakPointTags.value = Array.from(new Set(tags.map((item) => item.trim()).filter(Boolean)))
+}
+
 function setResourceChecked(key: string, checked = true) {
   const option = resourceOptions.value.find((item) => item.key === key)
   if (option) option.checked = checked
@@ -197,8 +214,7 @@ function inferProfileFromPrompt(text: string) {
   else if (/ppt|演示|汇报/i.test(text)) setResourceChecked('ppt')
   if (/导图|思维导图|结构图/i.test(text)) setResourceChecked('mindmap')
   if (/代码|案例|编程/i.test(text)) setResourceChecked('code')
-  if (/拓展|阅读|资料/i.test(text)) setResourceChecked('reading')
-  if (/错题|易错/i.test(text)) setResourceChecked('mistake')
+  if (/推荐|拓展|阅读|资料/i.test(text)) setResourceChecked('reading')
   if (/题|练习|刷题|测验/i.test(text)) setResourceChecked('exercise')
 
   if (/刷题|题海|错题/i.test(text)) studyDepth.value = '刷题强化'
@@ -206,8 +222,8 @@ function inferProfileFromPrompt(text: string) {
   else if (/系统|完整|从头/i.test(text)) studyDepth.value = '系统学习'
 
   const matchedTags = selectedLibrary.value?.tags.filter((tag) => text.includes(tag)) ?? []
-  if (matchedTags.length) weakPointText.value = matchedTags.join(' / ')
-  else if (/分不清|混淆|薄弱|不会|不懂/i.test(text)) weakPointText.value = selectedLibrary.value?.tags.slice(0, 3).join(' / ') ?? ''
+  if (matchedTags.length) setWeakPointTags(matchedTags)
+  else if (/分不清|混淆|薄弱|不会|不懂/i.test(text)) setWeakPointTags(selectedLibrary.value?.tags.slice(0, 3) ?? [])
 }
 
 function submitPrompt() {
@@ -454,7 +470,18 @@ watch(
             </label>
             <label class="detail-field--wide">
               <span>薄弱知识点</span>
-              <input v-model="weakPointText" placeholder="例如：继承 / 多态 / 接口" />
+              <div class="tag-input">
+                <button v-for="tag in weakPointTags" :key="tag" type="button" @click="removeWeakPoint(tag)">
+                  {{ tag }}
+                  <AppIcon name="close" :size="12" />
+                </button>
+                <input
+                  v-model="weakPointDraft"
+                  placeholder="输入后回车生成标签"
+                  @blur="addWeakPoint()"
+                  @keydown.enter.prevent="addWeakPoint()"
+                />
+              </div>
             </label>
           </div>
         </section>
@@ -1142,6 +1169,41 @@ button {
 .detail-grid input {
   height: 40px;
   padding: 0 12px;
+}
+
+.tag-input {
+  min-height: 40px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+}
+
+.tag-input button {
+  height: 28px;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #2563eb;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.tag-input input {
+  flex: 1 1 140px;
+  min-width: 120px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  padding: 0;
 }
 
 .detail-field--wide {

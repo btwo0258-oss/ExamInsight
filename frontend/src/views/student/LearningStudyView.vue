@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
 import StudentShell from '@/components/student/StudentShell.vue'
@@ -9,14 +9,23 @@ const route = useRoute()
 const router = useRouter()
 const learningStore = useLearningStore()
 const plan = computed(() => learningStore.getPlan(Number(route.params.id)) ?? learningStore.plans[0]!)
-const today = computed(() => plan.value.days.find((day) => day.tasks.some((task) => !task.done)) ?? plan.value.days[0])
+const activeDay = computed(() => {
+  const dayId = Number(route.query.day)
+  if (dayId) return plan.value.days.find((day) => day.id === dayId) ?? plan.value.days[0]
+  return plan.value.days.find((day) => day.tasks.some((task) => !task.done)) ?? plan.value.days[0]
+})
 const exercise = computed(() => plan.value.exercises[0])
+const activeTaskId = ref<number | null>(null)
+const activeTask = computed(() => {
+  const tasks = activeDay.value?.tasks ?? []
+  return tasks.find((task) => task.id === activeTaskId.value) ?? tasks.find((task) => !task.done) ?? tasks[0]
+})
 const selectedAnswer = ref('')
 const quizResult = ref<ReturnType<typeof learningStore.submitExercise>>()
-const todayDone = computed(() => today.value?.tasks.filter((task) => task.done).length ?? 0)
-const todayProgress = computed(() => {
-  const total = today.value?.tasks.length ?? 0
-  return total ? Math.round((todayDone.value / total) * 100) : 0
+const stageDone = computed(() => activeDay.value?.tasks.filter((task) => task.done).length ?? 0)
+const stageProgress = computed(() => {
+  const total = activeDay.value?.tasks.length ?? 0
+  return total ? Math.round((stageDone.value / total) * 100) : 0
 })
 
 function setTaskDone(taskId: number, done: boolean) {
@@ -24,7 +33,7 @@ function setTaskDone(taskId: number, done: boolean) {
 }
 
 function markCurrentDone() {
-  const task = today.value?.tasks.find((item) => !item.done)
+  const task = activeTask.value
   if (task) setTaskDone(task.id, true)
 }
 
@@ -32,6 +41,16 @@ function submitQuiz() {
   if (!exercise.value || !selectedAnswer.value) return
   quizResult.value = learningStore.submitExercise(plan.value.id, exercise.value.id, selectedAnswer.value)
 }
+
+watch(
+  activeDay,
+  (day) => {
+    activeTaskId.value = day?.tasks.find((task) => !task.done)?.id ?? day?.tasks[0]?.id ?? null
+    selectedAnswer.value = ''
+    quizResult.value = undefined
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -42,9 +61,9 @@ function submitQuiz() {
           <AppIcon name="sidebar-left" :size="18" />
           <span>{{ plan.title }}</span>
           <AppIcon name="chevron-right" :size="14" />
-          <span>Day {{ today?.id }}</span>
+          <span>Day {{ activeDay?.id }}</span>
           <AppIcon name="chevron-right" :size="14" />
-          <strong>{{ today?.tasks[0]?.title }}</strong>
+          <strong>{{ activeDay?.title }}</strong>
         </div>
         <div class="top-actions">
           <button class="outline-btn" type="button" @click="router.push(`/learning/${plan.id}`)">返回工作台</button>
@@ -54,12 +73,13 @@ function submitQuiz() {
 
       <main class="study-layout">
         <aside class="task-panel panel">
-          <h2>今日任务</h2>
+          <h2>本阶段任务</h2>
           <label
-            v-for="(task, index) in today?.tasks"
+            v-for="task in activeDay?.tasks"
             :key="task.id"
             class="task-row"
-            :class="{ active: index === 0 }"
+            :class="{ active: task.id === activeTask?.id }"
+            @click="activeTaskId = task.id"
           >
             <input
               :checked="task.done"
@@ -69,27 +89,81 @@ function submitQuiz() {
             <span>{{ task.title }}</span>
           </label>
           <div class="today-progress">
-            <strong>{{ todayProgress }}%</strong>
-            <span>{{ todayDone }} / {{ today?.tasks.length ?? 0 }} 完成</span>
+            <strong>{{ stageProgress }}%</strong>
+            <span>{{ stageDone }} / {{ activeDay?.tasks.length ?? 0 }} 完成</span>
             <small>学习时长 18 分钟</small>
             <small>预计完成 32 分钟</small>
           </div>
         </aside>
 
         <section class="content-panel panel">
-          <h1>{{ exercise?.knowledge ?? today?.title }}：核心概念讲解</h1>
+          <h1>{{ activeTask?.title ?? activeDay?.title ?? '当前学习任务' }}</h1>
           <nav class="tabs">
-            <button class="active" type="button">讲解</button>
-            <button type="button">例题</button>
-            <button type="button">练习</button>
+            <button class="active" type="button">{{ activeTask?.type ?? '任务' }}</button>
+            <button type="button" @click="router.push(`/learning/${plan.id}/resources`)">资料</button>
+            <button type="button" @click="router.push(`/learning/${plan.id}/practice`)">练习</button>
             <button type="button">问答</button>
           </nav>
 
-          <section class="lesson-card">
+          <section v-if="activeTask?.type === '练习' || activeTask?.type === '测验'" class="quiz-card quiz-card--main">
+            <header>
+              <h2>{{ activeTask.type === '测验' ? '阶段测验' : '专项练习' }}</h2>
+              <button class="primary-btn" type="button" :disabled="!selectedAnswer" @click="submitQuiz">提交答案</button>
+            </header>
+            <p>{{ exercise?.title }}</p>
+            <label v-for="option in exercise?.options" :key="option">
+              <input v-model="selectedAnswer" :value="option" name="quiz" type="radio" />
+              <span>{{ option }}</span>
+            </label>
+            <p v-if="quizResult" class="quiz-feedback" :class="{ correct: quizResult.correct }">
+              {{ quizResult.correct ? '回答正确。' : `回答错误，正确答案是 ${quizResult.correctAnswer}。` }}
+              {{ quizResult.explanation }}
+            </p>
+          </section>
+
+          <section v-else-if="activeTask?.type === '资料'" class="lesson-card lesson-card--single">
+            <div class="lesson-copy">
+              <h2>阅读个性化学习手册</h2>
+              <p>{{ activeDay?.desc }}</p>
+              <ul>
+                <li>先阅读系统按薄弱点整理的核心讲解。</li>
+                <li>把不懂的概念标记出来，后续进入练习和复盘。</li>
+              </ul>
+              <button class="primary-btn inline-action" type="button" @click="router.push(`/learning/${plan.id}/resources`)">打开资源包</button>
+            </div>
+          </section>
+
+          <section v-else-if="activeTask?.type === '案例'" class="lesson-card">
+            <div class="lesson-copy">
+              <h2>代码案例拆解</h2>
+              <p>通过可运行的代码示例观察概念在实际程序里的表现，重点看输入、调用链和输出结果。</p>
+              <ul>
+                <li>先读父类和子类的职责边界。</li>
+                <li>再预测输出，最后对照解析。</li>
+              </ul>
+            </div>
+            <pre><code>Animal animal = new Dog();
+animal.sound();
+
+// 运行时对象是 Dog，所以调用 Dog.sound()</code></pre>
+          </section>
+
+          <section v-else-if="activeTask?.type === '复盘'" class="lesson-card lesson-card--single">
+            <div class="lesson-copy">
+              <h2>错题复盘</h2>
+              <p>把本阶段错题按知识点归因，确认哪些概念需要回到资料里重新看。</p>
+              <div class="review-tags">
+                <span v-for="wrong in plan.wrongQuestions" :key="wrong.id">{{ wrong.knowledge[0] }}</span>
+              </div>
+              <button class="primary-btn inline-action" type="button" @click="router.push(`/learning/${plan.id}/mistakes`)">打开错题整理</button>
+            </div>
+          </section>
+
+          <section v-else class="lesson-card">
             <div class="lesson-copy">
               <h2>1. 概念讲解</h2>
               <p>
-                {{ exercise?.explanation ?? today?.desc }}
+                {{ exercise?.explanation ?? activeDay?.desc }}
               </p>
               <ul>
                 <li>先结合资料明确核心概念和适用场景。</li>
@@ -117,7 +191,7 @@ class Dog extends Animal {
 }</code></pre>
           </section>
 
-          <section class="quiz-card">
+          <section v-if="activeTask?.type !== '练习' && activeTask?.type !== '测验'" class="quiz-card">
             <header>
               <h2>随堂小测 1/3</h2>
               <button class="primary-btn" type="button" :disabled="!selectedAnswer" @click="submitQuiz">提交答案</button>
@@ -334,6 +408,10 @@ textarea {
   gap: 18px;
 }
 
+.lesson-card--single {
+  grid-template-columns: 1fr;
+}
+
 .lesson-copy,
 .quiz-card,
 pre,
@@ -398,6 +476,10 @@ pre {
   margin-top: 18px;
 }
 
+.quiz-card--main {
+  min-height: 430px;
+}
+
 .quiz-card header {
   display: flex;
   justify-content: space-between;
@@ -413,6 +495,25 @@ pre {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.inline-action {
+  margin-top: 18px;
+}
+
+.review-tags {
+  margin-top: 18px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.review-tags span {
+  border-radius: 6px;
+  background: #fff7ed;
+  color: #f97316;
+  padding: 5px 9px;
+  font-weight: 800;
 }
 
 .tutor-panel header {

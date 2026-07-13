@@ -10,11 +10,37 @@ const router = useRouter()
 const learningStore = useLearningStore()
 const plan = computed(() => learningStore.getPlan(Number(route.params.id)) ?? learningStore.plans[0]!)
 const activeWrongId = ref(plan.value.wrongQuestions.find((item) => !item.synced)?.id ?? plan.value.wrongQuestions[0]?.id)
+const selectedWrongIds = ref<number[]>([])
+const knowledgeFilter = ref('全部')
+const syncFilter = ref<'全部' | '未加入' | '已加入'>('全部')
 const wrong = computed(() => plan.value.wrongQuestions.find((item) => item.id === activeWrongId.value) ?? plan.value.wrongQuestions[0])
 const exercise = computed(() => plan.value.exercises.find((item) => item.id === wrong.value?.id) ?? plan.value.exercises[0])
+const knowledgeOptions = computed(() => [
+  '全部',
+  ...Array.from(new Set(plan.value.wrongQuestions.flatMap((item) => item.knowledge))),
+])
+const filteredWrongs = computed(() => plan.value.wrongQuestions.filter((item) => {
+  const matchKnowledge = knowledgeFilter.value === '全部' || item.knowledge.includes(knowledgeFilter.value)
+  const matchSync =
+    syncFilter.value === '全部'
+    || (syncFilter.value === '已加入' && item.synced)
+    || (syncFilter.value === '未加入' && !item.synced)
+  return matchKnowledge && matchSync
+}))
 
 function addToReview() {
   if (wrong.value) learningStore.addWrongToReview(plan.value.id, wrong.value.id)
+}
+
+function toggleSelected(wrongId: number, checked: boolean) {
+  selectedWrongIds.value = checked
+    ? Array.from(new Set([...selectedWrongIds.value, wrongId]))
+    : selectedWrongIds.value.filter((id) => id !== wrongId)
+}
+
+function batchAddToReview() {
+  selectedWrongIds.value.forEach((id) => learningStore.addWrongToReview(plan.value.id, id))
+  selectedWrongIds.value = []
 }
 </script>
 
@@ -26,16 +52,75 @@ function addToReview() {
           <AppIcon name="chevron-left" :size="18" />
         </button>
         <div>
-          <h1>错题详情</h1>
-          <p>AI 会归因错题、关联知识点，并把复习任务同步回学习计划。</p>
+          <h1>错题整理</h1>
+          <p>按知识点和复习状态筛选错题，并把复习任务同步回学习计划。</p>
         </div>
       </header>
 
       <main class="mistake-layout">
+        <section class="list-panel panel">
+          <header class="list-head">
+            <div>
+              <h2>错题列表</h2>
+              <span>{{ filteredWrongs.length }} / {{ plan.wrongQuestions.length }} 道</span>
+            </div>
+            <button class="primary-btn" type="button" :disabled="!selectedWrongIds.length" @click="batchAddToReview">
+              批量加入复习
+            </button>
+          </header>
+
+          <div class="filter-row">
+            <label>
+              <span>知识点</span>
+              <select v-model="knowledgeFilter">
+                <option v-for="item in knowledgeOptions" :key="item">{{ item }}</option>
+              </select>
+            </label>
+            <label>
+              <span>状态</span>
+              <select v-model="syncFilter">
+                <option>全部</option>
+                <option>未加入</option>
+                <option>已加入</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="wrong-table">
+            <button
+              v-for="item in filteredWrongs"
+              :key="item.id"
+              class="wrong-row"
+              :class="{ active: item.id === wrong?.id }"
+              type="button"
+              @click="activeWrongId = item.id"
+            >
+              <input
+                :checked="selectedWrongIds.includes(item.id)"
+                type="checkbox"
+                @click.stop
+                @change="toggleSelected(item.id, ($event.target as HTMLInputElement).checked)"
+              />
+              <span>{{ item.title }}</span>
+              <small>{{ item.knowledge.join(' / ') }}</small>
+              <strong :class="{ synced: item.synced }">{{ item.synced ? '已加入' : '未加入' }}</strong>
+            </button>
+          </div>
+
+          <section class="weak-card">
+            <h3>薄弱知识点</h3>
+            <label v-for="item in plan.dashboard" :key="item.label">
+              <span>{{ item.label }}</span>
+              <i><b :style="{ width: `${item.value}%` }" /></i>
+              <strong>{{ item.value }}%</strong>
+            </label>
+          </section>
+        </section>
+
         <section class="detail-panel panel">
           <header>
             <div>
-              <h2>题目 5（单选题）</h2>
+              <h2>错题详情</h2>
               <span>中等</span>
             </div>
           </header>
@@ -69,7 +154,7 @@ function addToReview() {
               {{ wrong?.synced ? '已加入复习计划' : '加入复习计划' }}
             </button>
             <button class="outline-btn" type="button">生成 5 道同类题</button>
-            <button class="outline-btn" type="button" @click="router.push(`/learning/${plan.id}`)">返回错题本</button>
+            <button class="outline-btn" type="button" @click="router.push(`/learning/${plan.id}`)">返回工作台</button>
           </footer>
 
           <div v-if="wrong?.synced" class="sync-tip">
@@ -79,29 +164,6 @@ function addToReview() {
           </div>
         </section>
 
-        <aside class="list-panel panel">
-          <h2>错题整理</h2>
-          <button
-            v-for="item in plan.wrongQuestions"
-            :key="item.id"
-            class="wrong-row"
-            :class="{ active: item.id === wrong?.id }"
-            type="button"
-            @click="activeWrongId = item.id"
-          >
-            <span>{{ item.title }}</span>
-            <small>{{ item.knowledge.join(' / ') }}</small>
-          </button>
-
-          <section class="weak-card">
-            <h3>薄弱知识点</h3>
-            <label v-for="item in plan.dashboard" :key="item.label">
-              <span>{{ item.label }}</span>
-              <i><b :style="{ width: `${item.value}%` }" /></i>
-              <strong>{{ item.value }}%</strong>
-            </label>
-          </section>
-        </aside>
       </main>
     </div>
   </StudentShell>
@@ -132,7 +194,7 @@ button {
 
 .page-head,
 .mistake-layout {
-  max-width: 1260px;
+  max-width: 1500px;
   margin: 0 auto;
 }
 
@@ -166,7 +228,7 @@ h1 {
 .mistake-layout {
   margin-top: 24px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-columns: minmax(0, 1fr) 520px;
   gap: 18px;
 }
 
@@ -187,6 +249,46 @@ h1 {
 .list-panel h2 {
   color: var(--color-text);
   font-size: 22px;
+}
+
+.list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.list-head span {
+  display: block;
+  margin-top: 5px;
+  color: var(--color-text-muted);
+}
+
+.filter-row {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.filter-row label {
+  display: grid;
+  gap: 8px;
+}
+
+.filter-row span {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.filter-row select {
+  height: 38px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  padding: 0 10px;
 }
 
 .detail-panel header span {
@@ -337,10 +439,15 @@ pre {
   gap: 4px;
 }
 
+.wrong-table {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+
 .wrong-row {
   width: 100%;
-  min-height: 62px;
-  margin-top: 12px;
+  min-height: 58px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: var(--color-surface);
@@ -348,7 +455,9 @@ pre {
   padding: 10px 12px;
   text-align: left;
   display: grid;
-  gap: 5px;
+  grid-template-columns: 18px minmax(0, 1.2fr) minmax(120px, 0.8fr) 68px;
+  align-items: center;
+  gap: 10px;
   cursor: pointer;
 }
 
@@ -360,6 +469,29 @@ pre {
 
 .wrong-row small {
   color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wrong-row > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wrong-row strong {
+  justify-self: end;
+  border-radius: 6px;
+  background: #fff7ed;
+  color: #f97316;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.wrong-row strong.synced {
+  background: #ecfdf3;
+  color: #16a34a;
 }
 
 .weak-card {
@@ -403,6 +535,11 @@ pre {
 
 @media (max-width: 980px) {
   .mistake-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .filter-row,
+  .wrong-row {
     grid-template-columns: 1fr;
   }
 }

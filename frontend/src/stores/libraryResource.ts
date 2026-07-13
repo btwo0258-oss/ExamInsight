@@ -39,8 +39,8 @@ function generatedType(group: LearningResource['group']) {
   if (group === 'PPT') return 'PPT'
   if (group === '思维导图') return '思维导图'
   if (group === '代码案例') return 'ZIP'
-  if (group === '练习题' || group === '讲义') return 'Word'
-  if (group === '导出文件') return 'Markdown'
+  if (group === '练习题') return 'Word'
+  if (group === '个性化学习手册') return 'Markdown'
   return 'PDF'
 }
 
@@ -148,5 +148,41 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
     return item
   }
 
-  return { resources, addFile, addFiles, addGeneratedResource, addChatGenerated }
+  function addPlanExportMarkdown(
+    name: string,
+    planId: number,
+    projectId: number | null,
+    libraryId: number,
+  ) {
+    const externalKey = `learning:${planId}:export-markdown`
+    const existing = resources.value.find((item) => item.externalKey === externalKey)
+    if (existing) {
+      existing.name = name
+      existing.updatedAt = '刚刚'
+      existing.status = '解析完成'
+      existing.projectId = projectId
+      existing.libraryId = libraryId
+      persist()
+      return existing
+    }
+
+    const item: LibraryResource = {
+      id: `generated-${planId}-export-markdown`,
+      name,
+      type: 'Markdown',
+      size: 'AI 生成',
+      status: '解析完成',
+      updatedAt: '刚刚',
+      category: 'file',
+      source: '智能学习生成',
+      projectId,
+      libraryId,
+      externalKey,
+    }
+    resources.value.unshift(item)
+    persist()
+    return item
+  }
+
+  return { resources, addFile, addFiles, addGeneratedResource, addChatGenerated, addPlanExportMarkdown }
 })

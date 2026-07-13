@@ -117,7 +117,7 @@ const fileCount = computed(() => library.value.fileCount + libraryResourceStore.
             <AppIcon name="book" :size="22" />
             <h2>资料库摘要</h2>
           </div>
-          <p>该资料库适合用于画像分析、知识库问答、个性化讲义生成、思维导图和代码案例生成。</p>
+          <p>该资料库适合用于画像分析、知识库问答、个性化学习手册生成、思维导图和代码案例生成。</p>
           <div class="summary-list">
             <article>
               <span>主要知识点</span>
