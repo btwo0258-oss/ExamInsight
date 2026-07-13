@@ -28,7 +28,6 @@ const resourceTypes = ref([
   { key: 'mindmap', label: '思维导图', checked: true },
   { key: 'quiz', label: '练习题', checked: true },
   { key: 'case', label: '代码案例', checked: true },
-  { key: 'reading', label: '推荐阅读', checked: true },
   { key: 'slides', label: 'PPT 大纲', checked: false },
 ])
 
@@ -82,7 +81,6 @@ const generatedResources = computed(() =>
     { key: 'mindmap', icon: 'mind-topic', title: '知识点思维导图', desc: '把 OOP 核心概念整理为可视化结构' },
     { key: 'quiz', icon: 'bar-chart', title: '分层练习题', desc: '包含选择题、判断题、代码阅读题' },
     { key: 'case', icon: 'tool', title: '代码实操案例', desc: '学生成绩管理案例，覆盖继承与接口' },
-    { key: 'reading', icon: 'book', title: '推荐阅读材料', desc: '推荐设计原则、Java 官方文档片段' },
     { key: 'slides', icon: 'monitor', title: 'PPT 大纲', desc: '可用于课堂展示或演示视频素材' },
   ].filter((item) => resourceTypes.value.find((type) => type.key === item.key)?.checked),
 )

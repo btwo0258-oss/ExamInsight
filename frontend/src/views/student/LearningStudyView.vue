@@ -1,135 +1,317 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
-import StudentShell from '@/components/student/StudentShell.vue'
-import { useLearningStore } from '@/stores/learning'
+import LearningDetailShell from '@/components/student/LearningDetailShell.vue'
+import LearningQuestionCard from '@/components/student/LearningQuestionCard.vue'
+import type { CodeLanguageKey } from '@/mock'
+import { evaluateExerciseAnswer, useLearningStore } from '@/stores/learning'
 
 const route = useRoute()
 const router = useRouter()
 const learningStore = useLearningStore()
 const plan = computed(() => learningStore.getPlan(Number(route.params.id)) ?? learningStore.plans[0]!)
-const activeDay = computed(() => {
-  const dayId = Number(route.query.day)
-  if (dayId) return plan.value.days.find((day) => day.id === dayId) ?? plan.value.days[0]
-  return plan.value.days.find((day) => day.tasks.some((task) => !task.done)) ?? plan.value.days[0]
+const activeStage = computed(() => {
+  const stageId = Number(route.query.stage)
+  if (stageId) return plan.value.stages.find((stage) => stage.id === stageId) ?? plan.value.stages[0]
+  return plan.value.stages.find((stage) => stage.tasks.some((task) => !task.done)) ?? plan.value.stages[0]
 })
-const exercise = computed(() => plan.value.exercises[0])
 const activeTaskId = ref<number | null>(null)
 const activeTask = computed(() => {
-  const tasks = activeDay.value?.tasks ?? []
+  const tasks = activeStage.value?.tasks ?? []
   return tasks.find((task) => task.id === activeTaskId.value) ?? tasks.find((task) => !task.done) ?? tasks[0]
 })
+const orderedTasks = computed(() =>
+  plan.value.stages.flatMap((stage) => stage.tasks.map((task) => ({ stage, task }))),
+)
+const currentTaskIndex = computed(() => orderedTasks.value.findIndex((item) => item.task.id === activeTask.value?.id))
+const previousTask = computed(() => orderedTasks.value[currentTaskIndex.value - 1])
+const nextTask = computed(() => orderedTasks.value[currentTaskIndex.value + 1])
+const relatedResource = computed(() => {
+  const linkedResource = plan.value.resources.find((resource) => resource.id === activeTask.value?.resourceId)
+  if (linkedResource) return linkedResource
+  const preferredGroups: Record<string, string[]> = {
+    讲解: ['个性化学习手册', '思维导图', 'PPT'],
+    资料: ['个性化学习手册'],
+    案例: ['代码案例'],
+    复盘: ['思维导图', '个性化学习手册'],
+  }
+  const groups = preferredGroups[activeTask.value?.type ?? ''] ?? []
+  return plan.value.resources.find((resource) => groups.includes(resource.group))
+})
+const taskExercises = computed(() => (activeTask.value?.exerciseIds ?? [])
+  .map((id) => plan.value.exercises.find((item) => item.id === id))
+  .filter((item): item is NonNullable<typeof item> => Boolean(item)))
+const currentExerciseId = ref<number | undefined>()
+const exercise = computed(() => taskExercises.value.find((item) => item.id === currentExerciseId.value) ?? taskExercises.value[0])
+const exerciseIndex = computed(() => taskExercises.value.findIndex((item) => item.id === exercise.value?.id))
+const isExerciseTask = computed(() => activeTask.value?.type === '练习' || activeTask.value?.type === '测验')
+const hasCheckpoint = computed(() => activeTask.value?.type === '讲解' && taskExercises.value.length > 0)
 const selectedAnswer = ref('')
-const quizResult = ref<ReturnType<typeof learningStore.submitExercise>>()
-const stageDone = computed(() => activeDay.value?.tasks.filter((task) => task.done).length ?? 0)
+const groupResult = ref<ReturnType<typeof learningStore.submitExerciseGroup>>()
+const followupMode = ref<'repeat' | 'reinforce' | null>(null)
+const followupCount = ref(10)
+const followupDifficulty = ref<'保持难度' | '逐步提升'>('保持难度')
+const groupSubmitted = computed(() => taskExercises.value.length > 0 && taskExercises.value.every((item) => item.submitted))
+const visibleGroupResult = computed(() => {
+  if (groupResult.value) return groupResult.value
+  if (!groupSubmitted.value) return undefined
+  const correctCount = taskExercises.value.filter((item) => item.gradingCorrect).length
+  return {
+    total: taskExercises.value.length,
+    correctCount,
+    wrongCount: taskExercises.value.length - correctCount,
+    correctRate: Math.round((correctCount / taskExercises.value.length) * 100),
+    wrongExerciseIds: taskExercises.value.filter((item) => !item.gradingCorrect).map((item) => item.id),
+  }
+})
+const quizResult = computed(() => exercise.value?.submitted
+  ? evaluateExerciseAnswer(exercise.value, exercise.value.userAnswer ?? '')
+  : undefined)
+const wrongExercises = computed(() => taskExercises.value.filter((item) => item.submitted && !item.gradingCorrect))
+const availableReserveCount = computed(() => {
+  const knowledge = new Set(taskExercises.value.map((item) => item.knowledge))
+  return plan.value.exercises.filter((item) => item.purpose === '备用题' && !item.submitted && knowledge.has(item.knowledge)).length
+})
+const masteryRecommendation = computed(() => {
+  const rate = visibleGroupResult.value?.correctRate ?? 0
+  if (rate < 80) return '当前掌握还不稳定，建议先做同难度错题巩固。'
+  if (rate < 90) return '当前已基本达标，建议再练一组并逐步提升难度。'
+  return '当前表现已达标，建议进入下一任务；也可继续生成挑战题。'
+})
+const contentPanel = ref<HTMLElement | null>(null)
+const stageDone = computed(() => activeStage.value?.tasks.filter((task) => task.done).length ?? 0)
 const stageProgress = computed(() => {
-  const total = activeDay.value?.tasks.length ?? 0
+  const total = activeStage.value?.tasks.length ?? 0
   return total ? Math.round((stageDone.value / total) * 100) : 0
 })
-
-function setTaskDone(taskId: number, done: boolean) {
-  learningStore.markTaskDone(plan.value.id, taskId, done)
-}
+let readingTimer: number | undefined
 
 function markCurrentDone() {
   const task = activeTask.value
-  if (task) setTaskDone(task.id, true)
+  if (task) learningStore.markTaskDone(plan.value.id, task.id, true)
 }
 
-function submitQuiz() {
-  if (!exercise.value || !selectedAnswer.value) return
-  quizResult.value = learningStore.submitExercise(plan.value.id, exercise.value.id, selectedAnswer.value)
+function openTask(stageId: number, taskId: number) {
+  activeTaskId.value = taskId
+  router.replace({ query: { stage: stageId, task: taskId } })
+}
+
+function moveTask(offset: -1 | 1) {
+  const target = offset === -1 ? previousTask.value : nextTask.value
+  if (target) openTask(target.stage.id, target.task.id)
+}
+
+function completeAndContinue() {
+  markCurrentDone()
+  moveTask(1)
+}
+
+function selectAnswer(answer: string) {
+  if (!exercise.value || groupSubmitted.value) return
+  selectedAnswer.value = answer
+  learningStore.saveExerciseDraft(plan.value.id, exercise.value.id, answer)
+}
+
+function selectLanguage(language: CodeLanguageKey) {
+  if (!exercise.value) return
+  selectedAnswer.value = learningStore.selectExerciseLanguage(plan.value.id, exercise.value.id, language) ?? ''
+}
+
+function submitQuizGroup() {
+  groupResult.value = learningStore.submitExerciseGroup(plan.value.id, taskExercises.value.map((item) => item.id))
+}
+
+function openFollowup(mode: 'repeat' | 'reinforce') {
+  followupMode.value = mode
+  followupCount.value = mode === 'reinforce' ? Math.min(15, Math.max(3, wrongExercises.value.length * 2)) : 10
+  followupDifficulty.value = (visibleGroupResult.value?.correctRate ?? 0) >= 80 ? '逐步提升' : '保持难度'
+}
+
+function createFollowupTask() {
+  if (!activeTask.value || !followupMode.value) return
+  const result = learningStore.createAdaptivePracticeTask(plan.value.id, activeTask.value.id, {
+    mode: followupMode.value,
+    count: followupCount.value,
+    difficultyMode: followupDifficulty.value,
+  })
+  if (!result) return
+  followupMode.value = null
+  openTask(result.stage.id, result.task.id)
+}
+
+function moveExercise(offset: -1 | 1) {
+  const target = taskExercises.value[exerciseIndex.value + offset]
+  if (!target) return
+  currentExerciseId.value = target.id
+  selectedAnswer.value = target.draftAnswer ?? target.userAnswer ?? ''
+}
+
+function readingProgress() {
+  const element = contentPanel.value
+  if (!element || element.scrollHeight <= element.clientHeight + 4) return 100
+  return Math.min(100, (element.scrollTop / (element.scrollHeight - element.clientHeight)) * 100)
+}
+
+function recordReading(secondsDelta = 0) {
+  const task = activeTask.value
+  if (!task || !['content', 'resource'].includes(task.completionMode ?? '')) return
+  learningStore.recordTaskReading(plan.value.id, task.id, readingProgress(), secondsDelta)
+}
+
+function runCase() {
+  if (activeTask.value) learningStore.completeTaskAction(plan.value.id, activeTask.value.id, 'run-case')
 }
 
 watch(
-  activeDay,
-  (day) => {
-    activeTaskId.value = day?.tasks.find((task) => !task.done)?.id ?? day?.tasks[0]?.id ?? null
-    selectedAnswer.value = ''
-    quizResult.value = undefined
+  activeStage,
+  (stage) => {
+    const queryTaskId = Number(route.query.task)
+    activeTaskId.value = stage?.tasks.find((task) => task.id === queryTaskId)?.id
+      ?? stage?.tasks.find((task) => !task.done)?.id
+      ?? stage?.tasks[0]?.id
+      ?? null
   },
   { immediate: true },
 )
+
+watch(activeTask, (task) => {
+  if (task) learningStore.startTask(plan.value.id, task.id)
+  currentExerciseId.value = taskExercises.value.find((item) => !item.submitted)?.id ?? taskExercises.value[0]?.id
+  selectedAnswer.value = exercise.value?.draftAnswer ?? exercise.value?.userAnswer ?? ''
+  groupResult.value = undefined
+  followupMode.value = null
+  contentPanel.value?.scrollTo({ top: 0 })
+}, { immediate: true })
+
+watch(exercise, (item) => {
+  selectedAnswer.value = item?.draftAnswer ?? item?.userAnswer ?? ''
+})
+
+onMounted(() => {
+  readingTimer = window.setInterval(() => {
+    if (document.visibilityState === 'visible') recordReading(1)
+  }, 1000)
+})
+
+onBeforeUnmount(() => {
+  if (readingTimer) window.clearInterval(readingTimer)
+})
 </script>
 
 <template>
-  <StudentShell>
-    <div class="study-page">
-      <header class="topbar">
-        <div class="breadcrumb">
-          <AppIcon name="sidebar-left" :size="18" />
-          <span>{{ plan.title }}</span>
-          <AppIcon name="chevron-right" :size="14" />
-          <span>Day {{ activeDay?.id }}</span>
-          <AppIcon name="chevron-right" :size="14" />
-          <strong>{{ activeDay?.title }}</strong>
-        </div>
-        <div class="top-actions">
-          <button class="outline-btn" type="button" @click="router.push(`/learning/${plan.id}`)">返回工作台</button>
-          <button class="primary-btn" type="button" @click="markCurrentDone">标记完成</button>
-        </div>
-      </header>
+  <LearningDetailShell
+    eyebrow="学习路径"
+    :title="activeTask?.title ?? activeStage?.title ?? '当前学习任务'"
+    :subtitle="`阶段 ${activeStage?.id} · ${activeStage?.title} · ${activeTask?.duration ?? ''}`"
+    :progress="plan.progress"
+    :show-footer="!isExerciseTask"
+    @back="router.push(`/learning/${plan.id}`)"
+  >
+    <template #actions>
+      <button v-if="!isExerciseTask" class="primary-btn" type="button" @click="markCurrentDone">手动完成</button>
+    </template>
 
-      <main class="study-layout">
-        <aside class="task-panel panel">
-          <h2>本阶段任务</h2>
-          <label
-            v-for="task in activeDay?.tasks"
+    <template #navigation>
+      <aside class="task-panel panel">
+        <header class="task-nav-head">
+          <h2>学习路径</h2>
+          <span>{{ plan.taskDone }}/{{ plan.totalTasks }}</span>
+        </header>
+        <section v-for="stage in plan.stages" :key="stage.id" class="day-section" :class="{ active: stage.id === activeStage?.id }">
+          <button class="day-title" type="button" @click="router.replace({ query: { stage: stage.id } })">
+            <span>阶段 {{ stage.id }}</span>
+            <strong>{{ stage.title }}</strong>
+            <small>{{ stage.scheduleLabel }}</small>
+          </button>
+          <button
+            v-for="task in stage.tasks"
+            v-show="stage.id === activeStage?.id"
             :key="task.id"
             class="task-row"
             :class="{ active: task.id === activeTask?.id }"
-            @click="activeTaskId = task.id"
+            type="button"
+            @click="openTask(stage.id, task.id)"
           >
-            <input
-              :checked="task.done"
-              type="checkbox"
-              @change="setTaskDone(task.id, ($event.target as HTMLInputElement).checked)"
-            />
-            <span>{{ task.title }}</span>
-          </label>
-          <div class="today-progress">
-            <strong>{{ stageProgress }}%</strong>
-            <span>{{ stageDone }} / {{ activeDay?.tasks.length ?? 0 }} 完成</span>
-            <small>学习时长 18 分钟</small>
-            <small>预计完成 32 分钟</small>
-          </div>
-        </aside>
+            <i :class="{ done: task.done, running: task.status === '进行中' }" />
+            <span><small>{{ task.type }}</small>{{ task.title }}</span>
+            <em>{{ task.done ? '已完成' : task.status ?? '未开始' }}</em>
+          </button>
+        </section>
+        <div class="today-progress">
+          <strong>{{ stageProgress }}%</strong>
+          <span>本阶段 {{ stageDone }} / {{ activeStage?.tasks.length ?? 0 }} 完成</span>
+        </div>
+      </aside>
+    </template>
 
-        <section class="content-panel panel">
-          <h1>{{ activeTask?.title ?? activeDay?.title ?? '当前学习任务' }}</h1>
-          <nav class="tabs">
-            <button class="active" type="button">{{ activeTask?.type ?? '任务' }}</button>
-            <button type="button" @click="router.push(`/learning/${plan.id}/resources`)">资料</button>
-            <button type="button" @click="router.push(`/learning/${plan.id}/practice`)">练习</button>
-            <button type="button">问答</button>
-          </nav>
+    <section ref="contentPanel" class="content-panel panel" @scroll.passive="recordReading()">
+      <div class="content-context">
+        <span>{{ activeTask?.type ?? '任务' }}</span>
+        <p>{{ activeTask?.completionSource ?? (activeTask?.status === '进行中' ? '正在记录有效学习行为' : '切换任务不会修改完成状态') }}</p>
+      </div>
 
-          <section v-if="activeTask?.type === '练习' || activeTask?.type === '测验'" class="quiz-card quiz-card--main">
+          <template v-if="isExerciseTask">
+          <LearningQuestionCard
+            v-if="exercise"
+            :model-value="selectedAnswer"
+            class="quiz-card--main"
+            :exercise="exercise"
+            :index="exerciseIndex"
+            :total="taskExercises.length"
+            :scene="activeTask?.type === '测验' ? 'assessment' : 'practice'"
+            :result="quizResult"
+            :answered-count="taskExercises.filter((item) => item.draftAnswer || item.userAnswer).length"
+            :submitted="groupSubmitted"
+              @update:model-value="selectAnswer"
+              @update-language="selectLanguage"
+            @submit-group="submitQuizGroup"
+            @previous="moveExercise(-1)"
+            @next="moveExercise(1)"
+          />
+          <section v-if="visibleGroupResult" class="inline-result-summary">
             <header>
-              <h2>{{ activeTask.type === '测验' ? '阶段测验' : '专项练习' }}</h2>
-              <button class="primary-btn" type="button" :disabled="!selectedAnswer" @click="submitQuiz">提交答案</button>
+              <div><strong>{{ visibleGroupResult.correctRate }}%</strong><span>本组正确率</span></div>
+              <p>完成 {{ visibleGroupResult.total }} 题，答对 {{ visibleGroupResult.correctCount }} 题，答错 {{ visibleGroupResult.wrongCount }} 题。</p>
             </header>
-            <p>{{ exercise?.title }}</p>
-            <label v-for="option in exercise?.options" :key="option">
-              <input v-model="selectedAnswer" :value="option" name="quiz" type="radio" />
-              <span>{{ option }}</span>
-            </label>
-            <p v-if="quizResult" class="quiz-feedback" :class="{ correct: quizResult.correct }">
-              {{ quizResult.correct ? '回答正确。' : `回答错误，正确答案是 ${quizResult.correctAnswer}。` }}
-              {{ quizResult.explanation }}
-            </p>
+            <p class="mastery-recommendation">{{ masteryRecommendation }}</p>
+            <div v-if="wrongExercises.length" class="inline-wrong-review">
+              <article v-for="(item, index) in wrongExercises" :key="item.id">
+                <span>错题 {{ index + 1 }} · {{ item.knowledge }}</span>
+                <strong>{{ item.title }}</strong>
+                <p>你的答案：{{ item.userAnswer }}；正确答案：{{ item.answer }}</p>
+              </article>
+            </div>
+            <div class="result-actions">
+              <button class="primary-btn" type="button" :disabled="!nextTask" @click="moveTask(1)">进入下一任务</button>
+              <button class="outline-btn" type="button" @click="openFollowup('repeat')">再练一组</button>
+              <button class="outline-btn" type="button" :disabled="!wrongExercises.length" @click="openFollowup('reinforce')">错题巩固</button>
+              <button class="text-action" type="button" @click="router.push(`/learning/${plan.id}/mistakes`)">查看错题本</button>
+            </div>
+            <section v-if="followupMode" class="followup-config">
+              <div>
+                <strong>{{ followupMode === 'reinforce' ? '生成错题巩固任务' : '再练一组' }}</strong>
+                <small v-if="followupMode === 'repeat'">当前阶段还有 {{ availableReserveCount }} 道匹配备用题，不足部分由 AI 补充。</small>
+                <small v-else>默认每道错题生成 2 道变式题，单次最多 15 题。</small>
+              </div>
+              <label><span>题量</span><input v-model.number="followupCount" type="number" min="3" :max="followupMode === 'reinforce' ? 15 : 40" /></label>
+              <label><span>难度</span><select v-model="followupDifficulty"><option>保持难度</option><option>逐步提升</option></select></label>
+              <button class="primary-btn" type="button" @click="createFollowupTask">创建并开始</button>
+              <button class="text-action" type="button" @click="followupMode = null">取消</button>
+            </section>
           </section>
 
-          <section v-else-if="activeTask?.type === '资料'" class="lesson-card lesson-card--single">
+          <section v-if="!exercise" class="lesson-card lesson-card--single"><div class="lesson-copy"><h2>题组准备中</h2><p>当前任务还没有可用题目，不会自动判定完成。</p></div></section>
+          </template>
+
+          <section v-else-if="activeTask?.type === '资料'" class="lesson-card lesson-card--single resource-in-task">
             <div class="lesson-copy">
-              <h2>阅读个性化学习手册</h2>
-              <p>{{ activeDay?.desc }}</p>
-              <ul>
-                <li>先阅读系统按薄弱点整理的核心讲解。</li>
-                <li>把不懂的概念标记出来，后续进入练习和复盘。</li>
-              </ul>
-              <button class="primary-btn inline-action" type="button" @click="router.push(`/learning/${plan.id}/resources`)">打开资源包</button>
+              <span class="inline-resource-label">关联资料 · {{ relatedResource?.group ?? '学习内容' }}</span>
+              <h2>{{ relatedResource?.title ?? '阅读个性化学习手册' }}</h2>
+              <p>{{ activeStage?.desc }}</p>
+              <div class="reading-outline"><strong>阅读重点</strong><span>核心概念与定义</span><span>高频误区与辨析</span><span>典型例子与应用场景</span></div>
+              <blockquote>{{ relatedResource?.desc ?? '先阅读系统按薄弱点整理的核心讲解，把不懂的概念标记出来。' }}</blockquote>
+              <button v-if="relatedResource" class="outline-btn inline-action" type="button" @click="router.push({ path: `/learning/${plan.id}/resources`, query: { type: relatedResource.group, task: activeTask?.id } })">查看完整资源</button>
             </div>
           </section>
 
@@ -141,6 +323,7 @@ watch(
                 <li>先读父类和子类的职责边界。</li>
                 <li>再预测输出，最后对照解析。</li>
               </ul>
+              <button class="primary-btn inline-action" type="button" @click="runCase">运行案例并查看结果</button>
             </div>
             <pre><code>Animal animal = new Dog();
 animal.sound();
@@ -148,22 +331,12 @@ animal.sound();
 // 运行时对象是 Dog，所以调用 Dog.sound()</code></pre>
           </section>
 
-          <section v-else-if="activeTask?.type === '复盘'" class="lesson-card lesson-card--single">
+          <section v-else-if="activeTask?.type === '讲解'" class="lesson-card">
             <div class="lesson-copy">
-              <h2>错题复盘</h2>
-              <p>把本阶段错题按知识点归因，确认哪些概念需要回到资料里重新看。</p>
-              <div class="review-tags">
-                <span v-for="wrong in plan.wrongQuestions" :key="wrong.id">{{ wrong.knowledge[0] }}</span>
-              </div>
-              <button class="primary-btn inline-action" type="button" @click="router.push(`/learning/${plan.id}/mistakes`)">打开错题整理</button>
-            </div>
-          </section>
-
-          <section v-else class="lesson-card">
-            <div class="lesson-copy">
+              <span class="inline-resource-label">概念讲解 · {{ relatedResource?.title ?? '智能生成内容' }}</span>
               <h2>1. 概念讲解</h2>
               <p>
-                {{ exercise?.explanation ?? activeDay?.desc }}
+                {{ activeStage?.desc }}
               </p>
               <ul>
                 <li>先结合资料明确核心概念和适用场景。</li>
@@ -191,24 +364,26 @@ class Dog extends Animal {
 }</code></pre>
           </section>
 
-          <section v-if="activeTask?.type !== '练习' && activeTask?.type !== '测验'" class="quiz-card">
-            <header>
-              <h2>随堂小测 1/3</h2>
-              <button class="primary-btn" type="button" :disabled="!selectedAnswer" @click="submitQuiz">提交答案</button>
-            </header>
-            <p>{{ exercise?.title }}</p>
-            <label v-for="option in exercise?.options" :key="option">
-              <input v-model="selectedAnswer" :value="option" name="quiz" type="radio" />
-              <span>{{ option }}</span>
-            </label>
-            <p v-if="quizResult" class="quiz-feedback" :class="{ correct: quizResult.correct }">
-              {{ quizResult.correct ? '回答正确。' : `回答错误，正确答案是 ${quizResult.correctAnswer}。` }}
-              {{ quizResult.explanation }}
-            </p>
-          </section>
-        </section>
+          <LearningQuestionCard
+            v-if="hasCheckpoint && exercise"
+            :model-value="selectedAnswer"
+            :exercise="exercise"
+            :index="exerciseIndex"
+            :total="taskExercises.length"
+            scene="checkpoint"
+            :result="quizResult"
+            :answered-count="taskExercises.filter((item) => item.draftAnswer || item.userAnswer).length"
+            :submitted="groupSubmitted"
+              @update:model-value="selectAnswer"
+              @update-language="selectLanguage"
+            @submit-group="submitQuizGroup"
+            @previous="moveExercise(-1)"
+            @next="moveExercise(1)"
+          />
+    </section>
 
-        <aside class="tutor-panel panel">
+    <template #aside>
+      <aside class="tutor-panel panel">
           <header>
             <span><AppIcon name="brain" :size="20" /></span>
             <h2>AI 助教</h2>
@@ -230,10 +405,15 @@ class Dog extends Animal {
             <button type="button">生成图解</button>
             <button type="button">出 3 道题</button>
           </div>
-        </aside>
-      </main>
-    </div>
-  </StudentShell>
+      </aside>
+    </template>
+
+    <template #footer>
+      <span class="footer-hint">{{ activeTask?.done ? activeTask.completionSource ?? '当前任务已完成' : '系统将根据阅读、作答或操作行为自动完成任务' }}</span>
+      <button class="outline-btn" type="button" :disabled="!previousTask" @click="moveTask(-1)">上一个任务</button>
+      <button class="primary-btn" type="button" :disabled="!nextTask" @click="activeTask?.done ? moveTask(1) : completeAndContinue()">{{ activeTask?.done ? '下一个任务' : '手动完成并继续' }}</button>
+    </template>
+  </LearningDetailShell>
 </template>
 
 <style scoped>
@@ -258,6 +438,134 @@ ul {
 button,
 textarea {
   font: inherit;
+}
+
+.task-nav-head,
+.content-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.task-nav-head > span {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.day-section {
+  margin-top: 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.day-section.active {
+  border-color: #bfdbfe;
+}
+
+.day-title {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border: 0;
+  background: #f8fafc;
+  color: #334155;
+  text-align: left;
+  cursor: pointer;
+}
+
+.day-title > small {
+  grid-column: 2;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.day-title span {
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.day-title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.task-row > span {
+  display: grid;
+  gap: 2px;
+}
+
+.task-row small {
+  color: #2563eb;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.content-context {
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.content-context span,
+.inline-resource-label {
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #2563eb;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.content-context p {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.reading-outline {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.reading-outline strong {
+  grid-column: 1 / -1;
+}
+
+.reading-outline span {
+  min-height: 68px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #f8fbff;
+  color: #334155;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.resource-in-task blockquote {
+  margin: 20px 0 0;
+  padding: 15px 18px;
+  border-left: 3px solid #2563eb;
+  background: #eff6ff;
+  color: #334155;
+  line-height: 1.7;
+}
+
+.footer-hint {
+  margin-right: auto;
+  color: #64748b;
+  font-size: 13px;
 }
 
 .topbar,
@@ -335,6 +643,7 @@ textarea {
 }
 
 .task-row {
+  width: 100%;
   min-height: 48px;
   margin-top: 12px;
   border: 1px solid var(--color-border);
@@ -344,6 +653,39 @@ textarea {
   align-items: center;
   gap: 10px;
   color: var(--color-text);
+  background: var(--color-surface);
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-row > i {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #cbd5e1;
+}
+
+.task-row > i.running {
+  background: #f59e0b;
+  box-shadow: 0 0 0 3px #fef3c7;
+}
+
+.task-row > i.done {
+  background: #22c55e;
+  box-shadow: 0 0 0 3px #dcfce7;
+}
+
+.task-row > span {
+  min-width: 0;
+  flex: 1;
+}
+
+.task-row > em {
+  color: #64748b;
+  font-size: 11px;
+  font-style: normal;
+  white-space: nowrap;
 }
 
 .task-row.active {
@@ -379,6 +721,11 @@ textarea {
   font-weight: 800;
 }
 
+.content-panel {
+  max-height: calc(100vh - 190px);
+  overflow-y: auto;
+}
+
 .tabs {
   margin-top: 18px;
   display: flex;
@@ -404,7 +751,7 @@ textarea {
 .lesson-card {
   margin-top: 18px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
 }
 
@@ -478,6 +825,153 @@ pre {
 
 .quiz-card--main {
   min-height: 430px;
+  margin-top: 18px;
+}
+
+.content-panel > .question-card {
+  margin-top: 18px;
+}
+
+.inline-result-summary {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 20px;
+  border: 1px solid #bbf7d0;
+  border-radius: 10px;
+  background: #f0fdf4;
+}
+
+.inline-result-summary header {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.inline-result-summary header > div {
+  display: grid;
+}
+
+.inline-result-summary strong {
+  color: #15803d;
+  font-size: 21px;
+}
+
+.inline-result-summary span {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.inline-result-summary header p,
+.inline-wrong-review p {
+  margin: 0;
+  color: #475569;
+}
+
+.mastery-recommendation {
+  margin: 0;
+  color: #166534;
+  font-size: 13px;
+}
+
+.inline-wrong-review {
+  display: grid;
+  gap: 8px;
+}
+
+.inline-wrong-review article {
+  display: grid;
+  gap: 5px;
+  padding: 11px 0;
+  border-top: 1px solid #d1fae5;
+}
+
+.result-actions,
+.followup-config {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.text-action {
+  border: 0;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+}
+
+.followup-config {
+  padding-top: 14px;
+  border-top: 1px solid #bbf7d0;
+}
+
+.followup-config > div {
+  display: grid;
+  min-width: 260px;
+  margin-right: auto;
+}
+
+.followup-config small {
+  color: #64748b;
+}
+
+.followup-config label {
+  display: grid;
+  gap: 4px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.followup-config input,
+.followup-config select {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.quiz-card header > div {
+  display: grid;
+  gap: 5px;
+}
+
+.quiz-card header small {
+  color: var(--color-text-muted);
+}
+
+.quiz-navigation {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+.quiz-navigation span {
+  color: var(--color-text-muted);
+  text-align: center;
+  font-size: 12px;
+}
+
+.checkpoint-card {
+  border-color: #bfdbfe;
+  background: #f8fbff;
+}
+
+.checkpoint-label {
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.primary-btn:disabled,
+.outline-btn:disabled {
+  opacity: .45;
+  cursor: not-allowed;
 }
 
 .quiz-card header {

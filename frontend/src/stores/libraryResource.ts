@@ -39,7 +39,6 @@ function generatedType(group: LearningResource['group']) {
   if (group === 'PPT') return 'PPT'
   if (group === '思维导图') return '思维导图'
   if (group === '代码案例') return 'ZIP'
-  if (group === '练习题') return 'Word'
   if (group === '个性化学习手册') return 'Markdown'
   return 'PDF'
 }

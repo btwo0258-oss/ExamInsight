@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
-import StudentShell from '@/components/student/StudentShell.vue'
+import LearningDetailShell from '@/components/student/LearningDetailShell.vue'
 import type { LearningResource } from '@/mock'
 import { useLearningStore } from '@/stores/learning'
 
@@ -10,11 +10,14 @@ const route = useRoute()
 const router = useRouter()
 const learningStore = useLearningStore()
 const plan = computed(() => learningStore.getPlan(Number(route.params.id)) ?? learningStore.plans[0]!)
-const firstResourceId = computed(() => plan.value.resources.find((item) => item.group !== '练习题')?.id ?? plan.value.resources[0]?.id)
+const firstResourceId = computed(() => plan.value.resources[0]?.id)
 const activeResourceId = ref(firstResourceId.value)
 const activeResource = computed(() =>
   plan.value.resources.find((item) => item.id === activeResourceId.value) ?? plan.value.resources[0],
 )
+const sourceTaskId = computed(() => Number(route.query.task) || undefined)
+const sourceStageId = computed(() => plan.value.stages.find((stage) => stage.tasks.some((task) => task.id === sourceTaskId.value))?.id)
+let readingTimer: number | undefined
 
 type ResourceMeta = {
   purpose: string
@@ -26,8 +29,8 @@ type ResourceMeta = {
 
 const metaMap: Record<LearningResource['group'], ResourceMeta> = {
   个性化学习手册: {
-    purpose: '按你的薄弱点重新组织资料库内容，适合在每个 Day 开始前快速建立知识框架。',
-    usage: '先读核心概念和常见误区，再进入阶段任务里的练习和复盘。',
+    purpose: '按你的薄弱点重新组织资料库内容，适合在每个学习阶段开始前快速建立知识框架。',
+    usage: '先读核心概念和常见误区，再进入阶段任务里的练习和测验。',
     primaryAction: '打开手册',
     actions: ['编辑手册', '导出 Markdown', '导出 PDF'],
     questions: ['帮我总结这份手册', '把重点整理成复习清单', '解释我最容易混淆的部分'],
@@ -39,18 +42,11 @@ const metaMap: Record<LearningResource['group'], ResourceMeta> = {
     actions: ['下载 PPT', '重生成大纲', '导出演讲稿'],
     questions: ['帮我检查 PPT 结构', '把这份 PPT 压缩成 5 页', '生成一段汇报讲稿'],
   },
-  练习题: {
-    purpose: '负责训练和反馈，应该进入习题训练页完成作答、提交、解析和同类题生成。',
-    usage: '做题结果会更新正确率、错题本和学习面板。',
-    primaryAction: '进入习题训练',
-    actions: ['生成同类题', '导出题单', '查看错题'],
-    questions: ['根据这套题找薄弱点', '再出 3 道同类题', '解释我错的题'],
-  },
   思维导图: {
     purpose: '用于理解知识结构和概念关系，适合查看全局脉络，不适合塞进文档预览。',
     usage: '打开导图后重点看概念之间的依赖、对比和分支关系。',
     primaryAction: '打开导图',
-    actions: ['导出 PNG', '导出 XMind', '加入阶段复盘'],
+    actions: ['导出 PNG', '导出 XMind', '加入讲解参考'],
     questions: ['帮我解释这张导图', '把导图转成背诵提纲', '指出哪些分支最重要'],
   },
   代码案例: {
@@ -60,79 +56,81 @@ const metaMap: Record<LearningResource['group'], ResourceMeta> = {
     actions: ['下载 ZIP', '生成变体案例', '加入练习'],
     questions: ['逐行解释这个案例', '改成另一个例子', '根据案例出一道代码题'],
   },
-  推荐阅读: {
-    purpose: '从资料库或补充材料里挑选相关内容，用来扩展主线学习手册之外的理解。',
-    usage: '只在主线任务完成后阅读，避免一开始被扩展材料打断。',
-    primaryAction: '查看推荐',
-    actions: ['生成摘要', '加入学习路径', '标记已读'],
-    questions: ['这几篇先看哪一篇', '帮我摘要推荐阅读', '哪些内容和考试最相关'],
-  },
 }
 
 const activeMeta = computed(() => activeResource.value ? metaMap[activeResource.value.group] : undefined)
-const relatedDays = computed(() => {
+const relatedStages = computed(() => {
   const group = activeResource.value?.group
   if (!group) return []
   const taskTypeMap: Partial<Record<LearningResource['group'], string[]>> = {
     个性化学习手册: ['资料', '讲解'],
     PPT: ['讲解'],
-    练习题: ['练习', '测验'],
-    思维导图: ['讲解', '复盘'],
+    思维导图: ['讲解'],
     代码案例: ['案例'],
-    推荐阅读: ['资料', '复盘'],
   }
   const types = taskTypeMap[group] ?? []
-  return plan.value.days.filter((day) => day.tasks.some((task) => types.includes(task.type))).slice(0, 3)
+  return plan.value.stages.filter((stage) => stage.tasks.some((task) => types.includes(task.type))).slice(0, 3)
 })
 
 function iconName(group: string) {
   if (group === 'PPT') return 'presentation'
-  if (group === '练习题') return 'edit'
   if (group === '思维导图') return 'mind-topic'
   if (group === '代码案例') return 'code'
-  if (group === '推荐阅读') return 'book'
   return 'file'
 }
 
 function selectResource(resource: LearningResource) {
-  if (resource.group === '练习题') {
-    router.push(`/learning/${plan.value.id}/practice`)
-    return
-  }
   activeResourceId.value = resource.id
 }
 
 function runPrimaryAction() {
-  if (!activeResource.value) return
-  if (activeResource.value.group === '练习题') {
-    router.push(`/learning/${plan.value.id}/practice`)
-  }
+  if (activeResource.value?.status === '未选择') generateActiveResource()
 }
 
 function generateActiveResource() {
   if (activeResource.value) learningStore.generateResource(plan.value.id, activeResource.value.id)
 }
+
+watch(
+  () => route.query.type,
+  (type) => {
+    const matched = plan.value.resources.find((item) => item.group === type)
+    if (matched) activeResourceId.value = matched.id
+  },
+  { immediate: true },
+)
+
+onMounted(() => {
+  readingTimer = window.setInterval(() => {
+    if (sourceTaskId.value && document.visibilityState === 'visible') {
+      learningStore.recordTaskReading(plan.value.id, sourceTaskId.value, 100, 1)
+    }
+  }, 1000)
+})
+
+onBeforeUnmount(() => {
+  if (readingTimer) window.clearInterval(readingTimer)
+})
 </script>
 
 <template>
-  <StudentShell>
-    <div class="resources-page">
-      <header class="page-head">
-        <button type="button" @click="router.push(`/learning/${plan.id}`)">
-          <AppIcon name="chevron-left" :size="18" />
-        </button>
-        <div>
-          <h1>资源工作台</h1>
-          <p>{{ plan.title }} 的学习资源入口和 AI 辅助，不在这里统一预览所有内容。</p>
-        </div>
-      </header>
+  <LearningDetailShell
+    eyebrow="学习资源"
+    title="资源包"
+    :subtitle="`${plan.title} · 独立查看、复用和导出学习资产`"
+    :progress="plan.progress"
+    @back="router.push(`/learning/${plan.id}`)"
+  >
+    <template #actions>
+      <button class="outline-btn" type="button" @click="router.push({ path: `/learning/${plan.id}/study`, query: sourceTaskId ? { stage: sourceStageId, task: sourceTaskId } : {} })">{{ sourceTaskId ? '返回当前任务' : '继续学习' }}</button>
+    </template>
 
-      <main class="resource-layout">
-        <aside class="resource-list panel">
+    <template #navigation>
+      <aside class="resource-list panel">
           <header class="panel-title">
             <div>
               <AppIcon name="folder" :size="20" />
-              <h2>资源包</h2>
+              <h2>资源目录</h2>
             </div>
             <span>{{ plan.resources.length }} 项</span>
           </header>
@@ -151,9 +149,11 @@ function generateActiveResource() {
             </span>
             <em :class="{ muted: resource.status === '未选择' }">{{ resource.status }}</em>
           </button>
+          <p v-if="!plan.resources.length" class="empty-copy">当前项目还没有生成资源。</p>
         </aside>
+    </template>
 
-        <section class="resource-workspace panel">
+    <section class="resource-workspace panel">
           <header class="resource-head">
             <div>
               <span class="resource-icon">
@@ -182,10 +182,52 @@ function generateActiveResource() {
             </article>
           </div>
 
-          <section class="intent-card">
-            <h3>这个资源用来做什么</h3>
-            <p>{{ activeMeta?.purpose }}</p>
-            <h3>建议使用方式</h3>
+          <section v-if="activeResource?.group === '个性化学习手册'" class="resource-preview handbook-preview">
+            <aside>
+              <strong>本页目录</strong>
+              <span>01 核心概念</span>
+              <span>02 常见误区</span>
+              <span>03 典型示例</span>
+              <span>04 复习清单</span>
+            </aside>
+            <article>
+              <span class="preview-label">个性化章节</span>
+              <h3>{{ activeResource.title }}</h3>
+              <p>{{ activeResource.desc }}</p>
+              <h4>核心概念</h4>
+              <p>{{ activeMeta?.purpose }}</p>
+              <blockquote>先理解概念之间的关系，再用案例和练习验证自己的理解。</blockquote>
+            </article>
+          </section>
+
+          <section v-else-if="activeResource?.group === 'PPT'" class="resource-preview ppt-preview">
+            <aside>
+              <button v-for="index in 4" :key="index" type="button"><span>{{ index }}</span><i>章节 {{ index }}</i></button>
+            </aside>
+            <article>
+              <span class="preview-label">幻灯片 1 / 12</span>
+              <h3>{{ activeResource.title }}</h3>
+              <p>围绕学习目标建立章节结构，用于快速串讲和复述。</p>
+              <div class="slide-points"><span>概念框架</span><span>关键区别</span><span>典型案例</span></div>
+            </article>
+          </section>
+
+          <section v-else-if="activeResource?.group === '思维导图'" class="resource-preview mindmap-preview">
+            <div class="mind-node mind-node--root">{{ plan.title }}</div>
+            <div class="mind-branches">
+              <span v-for="item in plan.dashboard" :key="item.label">{{ item.label }}</span>
+            </div>
+            <p>点击节点可继续展开概念关系和复习要点。</p>
+          </section>
+
+          <section v-else-if="activeResource?.group === '代码案例'" class="resource-preview code-preview">
+            <header><span>Example.java</span><button type="button">运行案例</button></header>
+            <pre><code>class Example {
+  public static void main(String[] args) {
+    // 先预测输出，再对照右侧解析
+    System.out.println("Learning by doing");
+  }
+}</code></pre>
             <p>{{ activeMeta?.usage }}</p>
           </section>
 
@@ -214,20 +256,21 @@ function generateActiveResource() {
           <section class="related-panel">
             <h3>关联学习阶段</h3>
             <button
-              v-for="day in relatedDays"
-              :key="day.id"
+              v-for="stage in relatedStages"
+              :key="stage.id"
               type="button"
-              @click="router.push(`/learning/${plan.id}/study?day=${day.id}`)"
+              @click="router.push(`/learning/${plan.id}/study?stage=${stage.id}`)"
             >
-              <span>Day {{ day.id }}</span>
-              <strong>{{ day.title }}</strong>
+              <span>阶段 {{ stage.id }}</span>
+              <strong>{{ stage.title }}</strong>
               <AppIcon name="chevron-right" :size="15" />
             </button>
-            <p v-if="!relatedDays.length">当前资源暂未关联到具体阶段。</p>
+            <p v-if="!relatedStages.length">当前资源暂未关联到具体阶段。</p>
           </section>
-        </section>
+    </section>
 
-        <aside class="agent-panel panel">
+    <template #aside>
+      <aside class="agent-panel panel">
           <header>
             <span class="agent-avatar"><AppIcon name="brain" :size="20" /></span>
             <div>
@@ -254,10 +297,9 @@ function generateActiveResource() {
               <AppIcon name="send" :size="17" />
             </button>
           </label>
-        </aside>
-      </main>
-    </div>
-  </StudentShell>
+      </aside>
+    </template>
+  </LearningDetailShell>
 </template>
 
 <style scoped>
@@ -282,6 +324,178 @@ p {
 button,
 textarea {
   font: inherit;
+}
+
+.empty-copy {
+  color: #6b7280;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.resource-preview {
+  min-height: 320px;
+  margin-top: 16px;
+  border: 1px solid #e1e5ec;
+  border-radius: 10px;
+  background: #f8fafc;
+  overflow: hidden;
+}
+
+.preview-label {
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.handbook-preview,
+.ppt-preview {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+}
+
+.handbook-preview > aside,
+.ppt-preview > aside {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+  border-right: 1px solid #e1e5ec;
+  background: #f1f5f9;
+}
+
+.handbook-preview > aside span {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.handbook-preview > article,
+.ppt-preview > article {
+  padding: 28px;
+}
+
+.handbook-preview h3,
+.ppt-preview h3 {
+  margin-top: 8px;
+  font-size: 23px;
+}
+
+.handbook-preview h4 {
+  margin: 24px 0 8px;
+}
+
+.handbook-preview p,
+.ppt-preview p,
+.code-preview p {
+  margin-top: 10px;
+  color: #475569;
+  line-height: 1.75;
+}
+
+.handbook-preview blockquote {
+  margin: 22px 0 0;
+  padding: 14px 16px;
+  border-left: 3px solid #2563eb;
+  background: #eff6ff;
+  color: #334155;
+}
+
+.ppt-preview > aside button {
+  min-height: 70px;
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 6px;
+  align-items: center;
+  border: 1px solid #dbe3ec;
+  border-radius: 7px;
+  background: #fff;
+  color: #334155;
+  cursor: pointer;
+}
+
+.slide-points {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-top: 42px;
+}
+
+.slide-points span {
+  min-height: 84px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-weight: 800;
+}
+
+.mindmap-preview {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 24px;
+  padding: 32px;
+  background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+.mind-node,
+.mind-branches span {
+  border: 2px solid #60a5fa;
+  border-radius: 10px;
+  background: #fff;
+  color: #1e3a8a;
+  padding: 12px 18px;
+  font-weight: 800;
+}
+
+.mind-node--root {
+  background: #2563eb;
+  color: #fff;
+}
+
+.mind-branches {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 22px;
+}
+
+.mindmap-preview p {
+  color: #64748b;
+}
+
+.code-preview header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  background: #1e293b;
+  color: #e2e8f0;
+}
+
+.code-preview header button {
+  border: 0;
+  border-radius: 6px;
+  background: #22c55e;
+  color: #052e16;
+  padding: 7px 12px;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.code-preview pre {
+  min-height: 210px;
+  margin: 0;
+  padding: 24px;
+  background: #0f172a;
+  color: #dbeafe;
+  line-height: 1.7;
+  overflow: auto;
+}
+
+.code-preview p {
+  padding: 0 20px 18px;
 }
 
 .page-head,

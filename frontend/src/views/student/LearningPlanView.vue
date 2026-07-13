@@ -28,10 +28,8 @@ const preferenceOptions = ['图文讲解', '代码示例', '先练后讲', '先�
 
 function resourceIcon(group: string) {
   if (group === '思维导图') return 'mind-topic'
-  if (group === '练习题') return 'edit'
   if (group === '代码案例') return 'code'
   if (group === 'PPT') return 'presentation'
-  if (group === '推荐阅读') return 'book'
   return 'file'
 }
 
@@ -39,24 +37,20 @@ function profileValue(labels: string[]) {
   return plan.value.profile.find((item) => labels.includes(item.label))?.value ?? ''
 }
 
-function openDay(dayId: number) {
-  router.push(`/learning/${plan.value.id}/study?day=${dayId}`)
+function openStage(stageId: number) {
+  router.push(`/learning/${plan.value.id}/study?stage=${stageId}`)
 }
 
 function openResource(group: string) {
-  if (group === '练习题') {
-    router.push(`/learning/${plan.value.id}/practice`)
-    return
-  }
-  router.push(`/learning/${plan.value.id}/resources`)
+  router.push({ path: `/learning/${plan.value.id}/resources`, query: { type: group } })
 }
 
 function markdownContent() {
   const currentPlan = plan.value
   const profile = currentPlan.profile.map((item) => `- ${item.label}：${item.value}`).join('\n')
-  const days = currentPlan.days.map((day) => {
-    const tasks = day.tasks.map((task) => `  - [${task.done ? 'x' : ' '}] ${task.title}（${task.duration}）`).join('\n')
-    return `## Day ${day.id} ${day.title}\n\n${day.desc}\n\n${tasks}`
+  const stages = currentPlan.stages.map((stage) => {
+    const tasks = stage.tasks.map((task) => `  - [${task.done ? 'x' : ' '}] ${task.title}（${task.duration}）`).join('\n')
+    return `## 阶段 ${stage.id} ${stage.title}\n\n${stage.desc}\n\n排期：${stage.scheduleLabel ?? '待安排'}\n\n${tasks}`
   }).join('\n\n')
   const resources = currentPlan.resources.map((resource) =>
     `- ${resource.group}：${resource.title}（${resource.status}）`,
@@ -82,7 +76,7 @@ ${profile || '- 暂无画像'}
 
 ## 学习路径
 
-${days || '- 暂无学习路径'}
+${stages || '- 暂无学习路径'}
 
 ## 资源包
 
@@ -179,26 +173,23 @@ function applyAdjustPlan() {
           </div>
 
           <div class="day-list">
-            <article v-for="day in plan.days" :key="day.id" class="day-card">
+            <article v-for="stage in plan.stages" :key="stage.id" class="day-card">
               <header>
-                <span>Day {{ day.id }}</span>
+                <span>阶段 {{ stage.id }}</span>
                 <div>
-                  <h3>{{ day.title }}</h3>
-                  <p>{{ day.desc }}</p>
+                  <h3>{{ stage.title }}</h3>
+                  <p>{{ stage.desc }}</p>
+                  <small>{{ stage.scheduleLabel }}</small>
                 </div>
               </header>
-              <label v-for="task in day.tasks" :key="task.id" class="task-row">
-                <input
-                  :checked="task.done"
-                  type="checkbox"
-                  @change="learningStore.markTaskDone(plan.id, task.id, ($event.target as HTMLInputElement).checked)"
-                />
+              <button v-for="task in stage.tasks" :key="task.id" class="task-row" type="button" @click="router.push(`/learning/${plan.id}/study?stage=${stage.id}&task=${task.id}`)">
+                <i :class="{ done: task.done, active: task.status === '进行中' }" />
                 <span>{{ task.title }}</span>
-                <small>{{ task.duration }}</small>
-              </label>
-              <button class="day-study-btn" type="button" @click="openDay(day.id)">
+                <small>{{ task.done ? '已完成' : task.status ?? '未开始' }}</small>
+              </button>
+              <button class="day-study-btn" type="button" @click="openStage(stage.id)">
                 <AppIcon name="play" :size="16" />
-                {{ day.tasks.every((task) => task.done) ? '查看任务' : day.tasks.some((task) => task.done) ? '继续学习' : '开始学习' }}
+                {{ stage.tasks.every((task) => task.done) ? '查看阶段' : stage.tasks.some((task) => task.done || task.status === '进行中') ? '继续学习' : '开始阶段' }}
               </button>
             </article>
           </div>
@@ -221,33 +212,14 @@ function applyAdjustPlan() {
               </button>
             </div>
             <p class="resource-note">
-              学习材料可在资源包查看；练习题进入习题训练完成作答和解析。
+              资源包只保存学习材料。{{ plan.questionBank?.generatedCount ?? plan.exercises.length }} 道练习题已按阶段分配到学习路径。
             </p>
-          </section>
-
-          <section class="panel mini-card practice-card">
-            <header>
-              <AppIcon name="edit" :size="22" />
-              <h2>习题训练</h2>
-            </header>
-            <p>专项练习与巩固提升</p>
-            <div class="numbers">
-              <strong>{{ plan.totalExercises }}</strong>
-              <strong>{{ plan.exerciseDone }}</strong>
-              <strong>{{ plan.correctRate }}%</strong>
-            </div>
-            <div class="labels">
-              <span>总题数</span>
-              <span>已完成</span>
-              <span>正确率</span>
-            </div>
-            <button type="button" @click="router.push(`/learning/${plan.id}/practice`)">进入练习</button>
           </section>
 
           <section class="panel mini-card wrong-card">
             <header>
               <AppIcon name="alert-circle" :size="22" />
-              <h2>错题整理</h2>
+              <h2>错题本</h2>
             </header>
             <p>共 {{ plan.wrongQuestions.length }} 道错题</p>
             <div class="tag-list">
@@ -501,6 +473,20 @@ h1 {
   margin-bottom: 14px;
 }
 
+.path-panel .panel-head {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.path-panel .panel-head h2 {
+  white-space: nowrap;
+}
+
+.path-panel .path-head-actions {
+  width: 100%;
+  justify-content: space-between;
+}
+
 h2 {
   color: var(--color-text);
   font-size: 20px;
@@ -617,13 +603,37 @@ h2 {
 }
 
 .task-row {
+  width: 100%;
   min-height: 26px;
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) 62px;
+  grid-template-columns: 10px minmax(0, 1fr) 62px;
   gap: 8px;
   align-items: center;
+  border: 0;
+  background: transparent;
   color: var(--color-text);
   font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-row:hover {
+  background: var(--color-hover);
+}
+
+.task-row > i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #cbd5e1;
+}
+
+.task-row > i.active {
+  background: #f59e0b;
+}
+
+.task-row > i.done {
+  background: #22c55e;
 }
 
 .task-row span {

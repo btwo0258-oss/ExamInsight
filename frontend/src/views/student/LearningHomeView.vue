@@ -32,6 +32,8 @@ const weakPointDraft = ref('')
 const weakPointTags = ref<string[]>([])
 const dailyTime = ref('每天 60-90 分钟')
 const studyDepth = ref('快速复习')
+const questionCountPreset = ref<'30' | '60' | '100' | 'custom'>('60')
+const customQuestionCount = ref(60)
 const supplementOpen = ref(false)
 const supplementDraft = ref('')
 const extraRequirement = ref('')
@@ -53,21 +55,16 @@ const foundationOptions = ['零基础', '基础薄弱', '基础一般', '有一�
 const depthOptions = ['快速复习', '系统学习', '刷题强化', '项目实操']
 const resourceGroupMap: Record<string, LearningResource['group'] | undefined> = {
   handbook: '个性化学习手册',
-  exercise: '练习题',
   mindmap: '思维导图',
   ppt: 'PPT',
   code: '代码案例',
-  reading: '推荐阅读',
 }
 
 const resourceOptions = ref([
-  { key: 'path', label: '学习路径', checked: true },
   { key: 'handbook', label: '个性化学习手册', checked: true },
-  { key: 'exercise', label: '练习题', checked: true },
   { key: 'mindmap', label: '思维导图', checked: true },
   { key: 'ppt', label: 'PPT', checked: false },
   { key: 'code', label: '代码案例', checked: false },
-  { key: 'reading', label: '推荐阅读', checked: false },
 ])
 
 const selectedResourceLabels = computed(() =>
@@ -79,6 +76,20 @@ const materialSourceText = computed(() => {
   if (files.value.length) sources.push(`${files.value.length} 个上传文件`)
   if (selectedProject.value) sources.push(selectedProject.value.title)
   return sources.filter(Boolean).join('、')
+})
+const plannedQuestionCount = computed(() => questionCountPreset.value === 'custom'
+  ? Math.max(10, Math.min(200, Math.round(customQuestionCount.value || 60)))
+  : Number(questionCountPreset.value))
+const difficultyStrategy = computed(() => {
+  if (foundationLevel.value.includes('零基础') || foundationLevel.value.includes('薄弱')) return '基础为主'
+  if (foundationLevel.value.includes('有一定') || studyDepth.value.includes('刷题') || studyDepth.value.includes('实操')) return '强化提高'
+  return '均衡'
+})
+const difficultyPreview = computed(() => {
+  const ratios = difficultyStrategy.value === '基础为主' ? [0.5, 0.4] : difficultyStrategy.value === '强化提高' ? [0.2, 0.5] : [0.3, 0.5]
+  const basic = Math.round(plannedQuestionCount.value * ratios[0]!)
+  const advanced = Math.round(plannedQuestionCount.value * ratios[1]!)
+  return { basic, advanced, challenge: plannedQuestionCount.value - basic - advanced }
 })
 
 const quickActions = [
@@ -214,8 +225,6 @@ function inferProfileFromPrompt(text: string) {
   else if (/ppt|演示|汇报/i.test(text)) setResourceChecked('ppt')
   if (/导图|思维导图|结构图/i.test(text)) setResourceChecked('mindmap')
   if (/代码|案例|编程/i.test(text)) setResourceChecked('code')
-  if (/推荐|拓展|阅读|资料/i.test(text)) setResourceChecked('reading')
-  if (/题|练习|刷题|测验/i.test(text)) setResourceChecked('exercise')
 
   if (/刷题|题海|错题/i.test(text)) studyDepth.value = '刷题强化'
   else if (/项目|实战|开发/i.test(text)) studyDepth.value = '项目实操'
@@ -262,6 +271,7 @@ function createProject() {
     weakPoints: profileFocusText.value,
     dailyTime: dailyTime.value,
     studyDepth: studyDepth.value,
+    questionCount: plannedQuestionCount.value,
     supplementalRequirement: extraRequirement.value,
   })
   router.push(`/learning/${plan.id}`)
@@ -439,6 +449,7 @@ watch(
                 <span>{{ item.label }}</span>
               </label>
             </div>
+            <p class="training-note">资源包只保存学习材料；练习题将按学习约束生成并直接分配到学习路径。</p>
           </article>
         </div>
 
@@ -467,6 +478,19 @@ watch(
               <select v-model="studyDepth">
                 <option v-for="option in depthOptions" :key="option">{{ option }}</option>
               </select>
+            </label>
+            <label>
+              <span>计划练习总量</span>
+              <select v-model="questionCountPreset">
+                <option value="30">30 题 · 轻量复习</option>
+                <option value="60">60 题 · 标准学习</option>
+                <option value="100">100 题 · 系统训练</option>
+                <option value="custom">自定义题量</option>
+              </select>
+            </label>
+            <label v-if="questionCountPreset === 'custom'">
+              <span>自定义题量（10～200）</span>
+              <input v-model.number="customQuestionCount" type="number" min="10" max="200" />
             </label>
             <label class="detail-field--wide">
               <span>薄弱知识点</span>
@@ -506,7 +530,11 @@ watch(
             <span>输出深度</span>
             <strong>{{ studyDepth }}</strong>
             <span>生成资源</span>
-            <strong>{{ selectedResourceLabels.join('、') || '仅生成学习路径' }}</strong>
+            <strong>{{ selectedResourceLabels.join('、') || '暂不生成独立资源' }}</strong>
+            <span>计划练习</span>
+            <strong>{{ plannedQuestionCount }} 题 · {{ difficultyStrategy }}</strong>
+            <span>预计难度分布</span>
+            <strong>基础 {{ difficultyPreview.basic }} 题、进阶 {{ difficultyPreview.advanced }} 题、挑战 {{ difficultyPreview.challenge }} 题</strong>
             <span v-if="extraRequirement">补充要求</span>
             <strong v-if="extraRequirement">{{ extraRequirement }}</strong>
           </div>
@@ -572,6 +600,16 @@ p {
 
 button {
   font: inherit;
+}
+
+.training-note {
+  margin-top: 12px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .home-center {
