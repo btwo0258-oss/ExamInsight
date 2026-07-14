@@ -116,8 +116,10 @@ export const useConversationStore = defineStore("conversation", () => {
       removeLocal(temp.id);
       upsertLocal(real);
       await router.push(`/chat/${real.id}`);
+      return real.id;
     } catch {
       await router.push(`/chat/${temp.id}`);
+      return temp.id;
     }
   }
 

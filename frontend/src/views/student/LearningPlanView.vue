@@ -24,14 +24,7 @@ const adjustForm = ref({
   keepProgress: true,
 })
 const targetOptions = ['考试复习', '课程作业', '面试准备', '项目实战', '补弱']
-const preferenceOptions = ['图文讲解', '代码示例', '先练后讲', '先讲后练']
-
-function resourceIcon(group: string) {
-  if (group === '思维导图') return 'mind-topic'
-  if (group === '代码案例') return 'code'
-  if (group === 'PPT') return 'presentation'
-  return 'file'
-}
+const constraintOptions = ['考试复习', '先补基础', '练习驱动', '刷题强化', '结构化梳理', '代码题强化']
 
 function profileValue(labels: string[]) {
   return plan.value.profile.find((item) => labels.includes(item.label))?.value ?? ''
@@ -44,6 +37,8 @@ function openStage(stageId: number) {
 function openResource(group: string) {
   router.push({ path: `/learning/${plan.value.id}/resources`, query: { type: group } })
 }
+
+const mindMapResource = computed(() => plan.value.resources.find((resource) => resource.group === '思维导图'))
 
 function markdownContent() {
   const currentPlan = plan.value
@@ -116,14 +111,14 @@ function openAdjustModal() {
     period: plan.value.period,
     dailyTime: profileValue(['节奏']),
     weakPoints: profileValue(['重点知识', '薄弱点']),
-    preferences: profileValue(['学习偏好']).split(/\s*\+\s*|\s*\/\s*|、/).filter(Boolean),
+    preferences: profileValue(['学习约束', '学习偏好']).split(/\s*\+\s*|\s*\/\s*|、/).filter(Boolean),
     keepExercises: true,
     keepProgress: true,
   }
   adjustOpen.value = true
 }
 
-function toggleAdjustPreference(value: string) {
+function toggleAdjustConstraint(value: string) {
   adjustForm.value.preferences = adjustForm.value.preferences.includes(value)
     ? adjustForm.value.preferences.filter((item) => item !== value)
     : [...adjustForm.value.preferences, value]
@@ -199,20 +194,20 @@ function applyAdjustPlan() {
           <section class="panel resource-panel">
             <header class="panel-head">
               <div>
-                <AppIcon name="folder" :size="22" />
-                <h2>资源包</h2>
+                <AppIcon name="mind-topic" :size="22" />
+                <h2>思维导图</h2>
               </div>
-              <button type="button" @click="router.push(`/learning/${plan.id}/resources`)">查看全部</button>
+              <button type="button" @click="openResource('思维导图')">打开</button>
             </header>
-            <div class="resource-grid">
-              <button v-for="resource in plan.resources" :key="resource.id" class="resource-tile" type="button" @click="openResource(resource.group)">
-                <AppIcon :name="resourceIcon(resource.group)" :size="24" />
-                <strong>{{ resource.group }}</strong>
-                <span :class="{ muted: resource.status === '未选择' }">{{ resource.status }}</span>
-              </button>
-            </div>
+            <button class="mindmap-entry" type="button" @click="openResource('思维导图')">
+              <AppIcon name="mind-topic" :size="26" />
+              <span>
+                <strong>{{ mindMapResource?.title ?? '学习路径思维导图' }}</strong>
+                <small>{{ mindMapResource?.status ?? '生成中' }}</small>
+              </span>
+            </button>
             <p class="resource-note">
-              资源包只保存学习材料。{{ plan.questionBank?.generatedCount ?? plan.exercises.length }} 道练习题已按阶段分配到学习路径。
+              根据确认稿自动生成，用来查看知识结构、阶段关系和复盘优先级。
             </p>
           </section>
 
@@ -311,14 +306,14 @@ function applyAdjustPlan() {
           </div>
 
           <section class="adjust-section">
-            <h3>学习偏好</h3>
+            <h3>学习约束</h3>
             <div class="adjust-chips">
               <button
-                v-for="option in preferenceOptions"
+                v-for="option in constraintOptions"
                 :key="option"
                 :class="{ selected: adjustForm.preferences.includes(option) }"
                 type="button"
-                @click="toggleAdjustPreference(option)"
+                @click="toggleAdjustConstraint(option)"
               >
                 {{ option }}
               </button>
@@ -668,43 +663,54 @@ h2 {
   display: none;
 }
 
-.resource-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.resource-tile {
+.mindmap-entry {
+  width: 100%;
   min-height: 78px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: var(--color-surface);
-  display: grid;
-  place-items: center;
-  gap: 4px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
   color: #2563eb;
-  text-align: center;
-  padding: 8px;
+  text-align: left;
+  padding: 12px;
   cursor: pointer;
 }
 
-.resource-tile strong {
-  color: var(--color-text);
-  font-size: 13px;
+.mindmap-entry:hover {
+  border-color: #93c5fd;
+  background: #eff6ff;
 }
 
-.resource-tile span {
+.mindmap-entry span {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.mindmap-entry strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mindmap-entry small {
+  width: fit-content;
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: center;
   border-radius: 6px;
   padding: 3px 8px;
   background: #ecfdf3;
   color: #16a34a;
   font-size: 12px;
   font-weight: 800;
-}
-
-.resource-tile span.muted {
-  background: #f3f4f6;
-  color: var(--color-text-muted);
 }
 
 .profile-list {
@@ -982,10 +988,6 @@ h2 {
   .path-head-actions {
     width: 100%;
     justify-content: space-between;
-  }
-
-  .resource-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .adjust-grid {

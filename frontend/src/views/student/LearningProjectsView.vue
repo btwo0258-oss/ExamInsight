@@ -15,7 +15,7 @@ const keyword = ref('')
 const status = ref('全部状态')
 const statusMenuOpen = ref(false)
 const viewMode = ref<ViewMode>('grid')
-const statusOptions = ['全部状态', '进行中', '已生成', '已完成', '待完善']
+const statusOptions = ['全部状态', '待开启', '进行中', '已生成', '已完成', '待完善']
 
 const filteredPlans = computed(() =>
   learningPlans.value.filter((plan) => {
@@ -37,6 +37,7 @@ function selectStatus(value: string) {
 function statusIcon(value: string) {
   const iconMap: Record<string, string> = {
     全部状态: 'list-filter',
+    待开启: 'edit',
     进行中: 'play',
     已生成: 'file',
     已完成: 'check',
@@ -58,6 +59,11 @@ function metaText(plan: { period: string; libraryId: number; targetType: string;
 
 function resourceText(plan: { resources: Array<{ group: string }> }) {
   return plan.resources.map((resource) => resource.group).join('、') || '暂无资源'
+}
+
+function primaryAction(plan: { id: number; status: string }) {
+  if (plan.status === '待开启') router.push(`/learning/new?projectId=${plan.id}`)
+  else router.push(`/learning/${plan.id}/study`)
 }
 </script>
 
@@ -161,8 +167,8 @@ function resourceText(plan: { resources: Array<{ group: string }> }) {
             </div>
 
             <footer>
-              <button class="primary-btn" type="button" @click="router.push(`/learning/${plan.id}/study`)">
-                {{ plan.status === '已生成' ? '开始学习' : plan.status === '待完善' ? '继续配置' : plan.status === '已完成' ? '查看报告' : '继续学习' }}
+              <button class="primary-btn" type="button" @click="primaryAction(plan)">
+                {{ plan.status === '待开启' ? '开启对话' : plan.status === '已生成' ? '开始学习' : plan.status === '待完善' ? '继续配置' : plan.status === '已完成' ? '查看报告' : '继续学习' }}
               </button>
               <button class="outline-btn" type="button" @click="router.push(`/learning/${plan.id}`)">
                 {{ plan.status === '已生成' ? '查看详情' : '查看工作台' }}
@@ -461,6 +467,7 @@ h1 {
   font-weight: 800;
 }
 
+.status--待开启 { background: #f5f3ff; color: #7c3aed; }
 .status--进行中 { background: #eff6ff; color: #2563eb; }
 .status--已生成,
 .status--已完成 { background: #ecfdf3; color: #16a34a; }

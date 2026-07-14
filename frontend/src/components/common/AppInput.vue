@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { nextTick, ref, onMounted } from 'vue'
 import ModelSwitch from './ModelSwitch.vue'
 import AttachmentCard from '@/components/main-area/mode3-chat/input/AttachmentCard.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
@@ -72,6 +72,16 @@ function triggerUpload() {
   fileEl.value?.click()
 }
 
+function setText(nextText: string) {
+  text.value = nextText
+  nextTick(() => {
+    autosize()
+    areaEl.value?.focus()
+  })
+}
+
+defineExpose({ triggerUpload, setText })
+
 function removeFile(index: number) {
   files.value.splice(index, 1)
 }
@@ -133,6 +143,14 @@ onMounted(() => {
           </div>
 
           <div class="toolbar-right">
+            <button class="icon-action-btn" type="button" title="语音输入">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                <path d="M19 10v1a7 7 0 0 1-14 0v-1" />
+                <path d="M12 18v4" />
+                <path d="M8 22h8" />
+              </svg>
+            </button>
             <button class="circle-send-btn" :disabled="(!text.trim() && files.length === 0) || isStreaming" @click="send">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
                 <line x1="12" y1="19" x2="12" y2="5"></line>

@@ -234,7 +234,7 @@ onBeforeUnmount(() => {
             @click="openTask(stage.id, task.id)"
           >
             <i :class="{ done: task.done, running: task.status === '进行中' }" />
-            <span><small>{{ task.type }}</small>{{ task.title }}</span>
+            <span :title="task.title"><small>{{ task.type }}</small><b>{{ task.title }}</b></span>
             <em>{{ task.done ? '已完成' : task.status ?? '未开始' }}</em>
           </button>
         </section>
@@ -500,12 +500,24 @@ textarea {
 .task-row > span {
   display: grid;
   gap: 2px;
+  min-width: 0;
 }
 
 .task-row small {
   color: #2563eb;
   font-size: 10px;
   font-weight: 800;
+}
+
+.task-row b {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .content-context {
@@ -682,6 +694,7 @@ textarea {
 }
 
 .task-row > em {
+  flex: 0 0 auto;
   color: #64748b;
   font-size: 11px;
   font-style: normal;

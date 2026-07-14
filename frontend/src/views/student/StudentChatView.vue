@@ -8,12 +8,10 @@ import StudentShell from '@/components/student/StudentShell.vue'
 import MindMapPanel from '@/components/main-area/mode3-chat/MindMapPanel.vue'
 import SegmentPanel from '@/components/main-area/mode3-chat/SegmentPanel.vue'
 import MessageList from '@/components/main-area/mode3-chat/message/MessageList.vue'
-import { useAuthStore } from '@/stores/auth'
 import { useConversationStore } from '@/stores/conversation'
 import { useMessageStore } from '@/stores/message'
 import { useLibraryResourceStore } from '@/stores/libraryResource'
 
-const authStore = useAuthStore()
 const conversationStore = useConversationStore()
 const messageStore = useMessageStore()
 const libraryResourceStore = useLibraryResourceStore()
@@ -95,15 +93,19 @@ const mindMapContent = ref('')
 const mindMapTitle = ref('')
 const mindMapSidebarCollapsed = ref(false)
 const messageListRef = ref<InstanceType<typeof MessageList> | null>(null)
+const homeInputRef = ref<InstanceType<typeof AppInput> | null>(null)
 
 const messageListContainer = computed(() => messageListRef.value?.scrollContainer ?? null)
 
-async function onSend(text: string, files?: File[]) {
-  if (!authStore.isAuthed) {
-    authStore.openAuthModal()
-    return
-  }
+const homePromptActions = [
+  { icon: 'image', label: '生成图片', prompt: '帮我生成一张适合学习资料使用的图片，主题是：' },
+  { icon: 'edit', label: '撰写或编辑', prompt: '帮我撰写或润色这段内容：' },
+  { icon: 'search', label: '查找资料', prompt: '帮我查找并整理关于这个主题的资料：' },
+  { icon: 'sparkle', label: '生成 PPT', prompt: '帮我生成一份 PPT 大纲，主题是：' },
+  { icon: 'mindmap', label: '生成思维导图', prompt: '帮我生成一个思维导图，主题是：' },
+]
 
+async function onSend(text: string, files?: File[]) {
   if (files?.length) {
     libraryResourceStore.addFiles(
       files,
@@ -114,23 +116,16 @@ async function onSend(text: string, files?: File[]) {
   }
 
   if (!activeChatId.value) {
-    const result = await messageStore.createConversation({ firstMessage: text, files })
-    const newChatId = result.id
-
-    sessionStorage.setItem(
-      `chat_auto_msg_${newChatId}`,
-      JSON.stringify({
-        message: text,
-        files: files?.map((file) => ({ name: file.name, type: file.type, size: file.size })),
-      }),
-    )
-
-    await conversationStore.fetchList()
-    conversationStore.open(newChatId)
+    const newChatId = await conversationStore.create()
+    await messageStore.sendMessage(newChatId, text, undefined, undefined, undefined, files)
     return
   }
 
   await messageStore.sendMessage(activeChatId.value, text, undefined, undefined, undefined, files)
+}
+
+function fillHomePrompt(prompt: string) {
+  homeInputRef.value?.setText(prompt)
 }
 
 function handleKeyDown(e: KeyboardEvent) {
@@ -187,14 +182,46 @@ onUnmounted(() => {
 <template>
   <StudentShell>
     <section class="student-chat">
-      <header class="student-chat__header">
+      <header v-if="!showWelcome" class="student-chat__header">
         <h1>{{ pageTitle }}</h1>
       </header>
 
       <div class="student-chat__body">
+        <div v-if="showWelcome" class="chat-home">
+          <div class="chat-home__main">
+            <h1>我们先从哪里开始呢？</h1>
+
+            <div class="home-action-chips">
+              <button
+                v-for="action in homePromptActions"
+                :key="action.label"
+                class="home-action-chip"
+                type="button"
+                @click="fillHomePrompt(action.prompt)"
+              >
+                <AppIcon :name="action.icon" :size="18" />
+                <span>{{ action.label }}</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="chat-home__input">
+            <AppInput
+              ref="homeInputRef"
+              :is-streaming="messageStore.isStreaming"
+              placeholder="随心输入"
+              @send="onSend"
+            />
+          </div>
+
+          <p v-if="messageStore.errorMessage" class="chat-error chat-error--home">
+            {{ messageStore.errorMessage }}
+          </p>
+        </div>
+
+        <template v-else>
         <div class="message-container">
           <MessageList
-            v-if="!showWelcome"
             ref="messageListRef"
             :conversation-id="activeChatId"
             :messages="messages"
@@ -213,10 +240,10 @@ onUnmounted(() => {
         </p>
 
         <SegmentPanel
-          v-if="!showWelcome"
           :conversation-id="activeChatId"
           :container-ref="messageListContainer"
         />
+        </template>
 
         <MindMapPanel
           :visible="showMindMapPanel"
@@ -276,6 +303,86 @@ onUnmounted(() => {
   position: relative;
 }
 
+.chat-home {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+.chat-home__main {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 8vh 24px 4vh;
+}
+
+.chat-home__main h1 {
+  margin: 0 0 28px;
+  color: var(--color-text);
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.25;
+  letter-spacing: 0;
+  text-align: center;
+}
+
+.chat-home__input {
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.chat-home__input :deep(.footer-hint) {
+  display: none;
+}
+
+.home-action-chips {
+  width: min(760px, 100%);
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.home-action-chip {
+  min-height: 64px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  line-height: 18px;
+  box-shadow: var(--shadow-sm);
+  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
+}
+
+.home-action-chip:hover {
+  background: var(--color-hover);
+  border-color: var(--color-hover-strong);
+  color: var(--color-text);
+}
+
+.home-action-chip span {
+  color: inherit;
+  font-weight: 600;
+}
+
 .message-container {
   flex: 1;
   min-height: 0;
@@ -288,6 +395,46 @@ onUnmounted(() => {
   margin: -28px auto 16px;
   color: var(--color-danger);
   font-size: 12px;
+}
+
+.chat-error--home {
+  width: min(760px, 100%);
+  margin: 12px 0 0;
+}
+
+.chat-home .home-action-chip:nth-child(1) {
+  color: #8b5cf6;
+}
+
+.chat-home .home-action-chip:nth-child(2) {
+  color: #64748b;
+}
+
+.chat-home .home-action-chip:nth-child(3) {
+  color: #16a34a;
+}
+
+.chat-home .home-action-chip:nth-child(4) {
+  color: #f97316;
+}
+
+.chat-home .home-action-chip:nth-child(5) {
+  color: #7c3aed;
+}
+
+@media (max-width: 760px) {
+  .chat-home__main {
+    padding: 7vh 16px 3vh;
+  }
+
+  .chat-home__main h1 {
+    font-size: 22px;
+    margin-bottom: 22px;
+  }
+
+  .home-action-chips {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .mindmap-fab {

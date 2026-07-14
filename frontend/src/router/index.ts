@@ -6,10 +6,10 @@ import { useAuthStore as useAdminAuthStore } from '@/stores/adminAuth'
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
-    { path: '/', redirect: '/learning' },
+    { path: '/', redirect: '/learning/projects' },
     { path: '/chat', name: 'chat', component: () => import('@/views/student/StudentChatView.vue') },
     { path: '/chat/:id', name: 'chat-detail', component: () => import('@/views/student/StudentChatView.vue'), props: true },
-    { path: '/learning', name: 'learning-home', component: () => import('@/views/student/LearningHomeView.vue') },
+    { path: '/learning', redirect: '/learning/projects' },
     { path: '/learning/new', name: 'learning-new', component: () => import('@/views/student/LearningHomeView.vue') },
     { path: '/learning/projects', name: 'learning-projects', component: () => import('@/views/student/LearningProjectsView.vue') },
     { path: '/learning/:id', name: 'learning-plan', component: () => import('@/views/student/LearningPlanView.vue'), props: true },

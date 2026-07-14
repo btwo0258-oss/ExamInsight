@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { getLearningPlans, saveLearningPlans } from '@/api/learning'
+import { generateMindMapFromAi } from '@/api/mindmap'
 import { courseLibraries, createCodeLanguageOptions, learningPlans as mockPlans } from '@/mock'
 import type { CodeLanguageKey, Exercise, LearningPlan, LearningResource, TrainingSet, WrongQuestion } from '@/mock'
 import { useLibraryResourceStore } from '@/stores/libraryResource'
@@ -19,6 +20,11 @@ export type CreateLearningPlanInput = {
   studyDepth: string
   questionCount: number
   supplementalRequirement: string
+}
+
+export type CreateLearningDraftInput = {
+  title: string
+  libraryId: number | null
 }
 
 export type UpdateLearningPlanInput = {
@@ -190,6 +196,30 @@ function assignQuestionBankToTasks(plan: LearningPlan) {
   assign(tasks.filter((task) => task.type === '测验'), groups.assessment)
 }
 
+function buildMindMapSourceContent(plan: LearningPlan, resource: LearningResource) {
+  const profile = plan.profile.map((item) => `${item.label}: ${item.value}`).join('\n')
+  const stages = plan.stages
+    .map((stage) => {
+      const tasks = stage.tasks.map((task) => `- ${task.type}: ${task.title}`).join('\n')
+      return `## ${stage.title}\n${stage.desc}\n${tasks}`
+    })
+    .join('\n\n')
+  const knowledge = plan.dashboard.map((item) => item.label).join('、')
+
+  return [
+    `学习项目: ${plan.title}`,
+    `目标: ${plan.goal}`,
+    `资源: ${resource.title}`,
+    `重点知识: ${knowledge || '未设置'}`,
+    '',
+    '学习画像:',
+    profile,
+    '',
+    '阶段安排:',
+    stages,
+  ].join('\n')
+}
+
 export const useLearningStore = defineStore('learning', () => {
   const plans = ref<LearningPlan[]>(getLearningPlans())
   const generatingResourceIds = ref<number[]>([])
@@ -232,7 +262,7 @@ export const useLearningStore = defineStore('learning', () => {
       { label: '资料来源', value: library.name },
       { label: '当前基础', value: input.foundation },
       { label: '重点知识', value: input.weakPoints || focus },
-      { label: '学习偏好', value: input.preferences.join(' + ') || '图文讲解' },
+      { label: '学习约束', value: input.preferences.join(' + ') || '考试复习' },
       { label: '目标', value: input.targetType },
       { label: '节奏', value: input.dailyTime },
       { label: '输出深度', value: input.studyDepth },
@@ -329,6 +359,49 @@ export const useLearningStore = defineStore('learning', () => {
     return template
   }
 
+  function createDraftPlan(input: CreateLearningDraftInput) {
+    const template = structuredClone(mockPlans[0]!)
+    const id = Math.max(0, ...plans.value.map((plan) => plan.id)) + 1
+    const library = courseLibraries.find((item) => item.id === input.libraryId)
+    const title = input.title.trim() || '未命名智能学习'
+
+    template.id = id
+    template.relatedProjectId = null
+    template.title = title
+    template.goal = '待通过对话确认学习目标、学习约束和学习路径。'
+    template.updatedAt = '刚刚'
+    template.libraryId = library?.id ?? 0
+    template.status = '待开启'
+    template.period = '待确认'
+    template.targetType = '待确认'
+    template.progress = 0
+    template.taskDone = 0
+    template.exerciseDone = 0
+    template.correctRate = 0
+    template.weeklyHours = '0h'
+    template.profile = [
+      { label: '资料来源', value: library?.name ?? '无' },
+      { label: '学习约束', value: '待确认' },
+      { label: '重点知识', value: '待确认' },
+      { label: '节奏', value: '待确认' },
+    ]
+    template.stages = []
+    template.resources = []
+    template.exercises = []
+    template.questionBank = undefined
+    template.trainingSets = []
+    template.wrongQuestions = []
+    template.wrongReviewSets = []
+    template.dashboard = []
+    template.totalTasks = 0
+    template.totalExercises = 0
+    template.agents = template.agents.map((agent) => ({ ...agent, status: 'pending' }))
+
+    plans.value.unshift(template)
+    persist()
+    return template
+  }
+
   function setProfileValue(plan: LearningPlan, label: string, value: string) {
     const item = plan.profile.find((profile) => profile.label === label)
     if (item) item.value = value
@@ -363,7 +436,7 @@ export const useLearningStore = defineStore('learning', () => {
     setProfileValue(plan, '节奏', input.dailyTime)
     setProfileValue(plan, '重点知识', input.weakPoints)
     setProfileValue(plan, '薄弱点', input.weakPoints)
-    setProfileValue(plan, '学习偏好', input.preferences.join(' + ') || '待确认')
+    setProfileValue(plan, '学习约束', input.preferences.join(' + ') || '待确认')
 
     if (!input.keepProgress) {
       plan.stages.forEach((stage) => {
@@ -956,19 +1029,28 @@ export const useLearningStore = defineStore('learning', () => {
       plan.libraryId,
     )
     persist()
-    await new Promise((resolve) => window.setTimeout(resolve, 900))
-    resource.status = '已生成'
-    resource.action = '查看'
-    libraryResourceStore.addGeneratedResource(
-      resource,
-      '智能学习生成',
-      plan.id,
-      plan.relatedProjectId ?? null,
-      plan.libraryId,
-    )
-    generatingResourceIds.value = generatingResourceIds.value.filter((id) => id !== resourceId)
-    plan.updatedAt = '刚刚'
-    persist()
+    try {
+      if (resource.group === '思维导图') {
+        const result = await generateMindMapFromAi(buildMindMapSourceContent(plan, resource), resource.title)
+        resource.mindMapId = result.id
+        resource.mindMapTreeData = result.treeData
+      } else {
+        await new Promise((resolve) => window.setTimeout(resolve, 900))
+      }
+      resource.status = '已生成'
+      resource.action = '查看'
+      libraryResourceStore.addGeneratedResource(
+        resource,
+        '智能学习生成',
+        plan.id,
+        plan.relatedProjectId ?? null,
+        plan.libraryId,
+      )
+      plan.updatedAt = '刚刚'
+    } finally {
+      generatingResourceIds.value = generatingResourceIds.value.filter((id) => id !== resourceId)
+      persist()
+    }
   }
 
   return {
@@ -976,6 +1058,7 @@ export const useLearningStore = defineStore('learning', () => {
     projectCount,
     getPlan,
     createPlan,
+    createDraftPlan,
     updatePlanConfig,
     markTaskDone,
     startTask,

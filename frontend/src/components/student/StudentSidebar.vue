@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
 import UserProfileModal from '@/components/auth/UserProfileModal.vue'
 import logoUrl from '@/assets/icons/ExamInsight-Logo.png'
-import { learningPlans } from '@/mock'
+import { courseLibraries, learningPlans } from '@/mock'
 import type { Conversation } from '@/api/conversation'
 import { useAuthStore } from '@/stores/auth'
 import { useConversationStore } from '@/stores/conversation'
+import { useLearningStore } from '@/stores/learning'
 import { useThemeStore } from '@/stores/theme'
 
 type MenuAction = {
@@ -43,6 +44,7 @@ const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const conversationStore = useConversationStore()
+const learningStore = useLearningStore()
 const themeStore = useThemeStore()
 const sidebarProjects = ref<SidebarProject[]>(
   readStoredList(
@@ -52,7 +54,6 @@ const sidebarProjects = ref<SidebarProject[]>(
 )
 const sidebarCollapsed = ref(false)
 const learningExpanded = ref(true)
-const projectsExpanded = ref(true)
 const pinnedExpanded = ref(true)
 const recentExpanded = ref(true)
 const menuOpen = ref(false)
@@ -62,11 +63,16 @@ const menuItems = ref<MenuAction[]>([])
 const projectSettingsOpen = ref(false)
 const createProjectOpen = ref(false)
 const iconPaletteOpen = ref(false)
+const libraryMenuOpen = ref(false)
 const editingOpen = ref(false)
 const editingKind = ref<'project' | 'recent'>('project')
 const editingId = ref<number | null>(null)
 const editingTitle = ref('')
 const profileOpen = ref(false)
+const createProjectTitle = ref('')
+const createProjectLibraryId = ref<number | null>(null)
+const createProjectColor = ref('#000')
+const createProjectIcon = ref('folder')
 const paletteColors = ['#000', '#ff4444', '#ed7d31', '#f6c343', '#4caf5d', '#3b82f6', '#8b5cf6', '#df6f68']
 const paletteIcons = [
   'folder',
@@ -119,7 +125,11 @@ const orderedProjects = computed(() => [
   ...sidebarProjects.value.filter((project) => !project.pinned),
 ])
 
-const currentLearningId = computed(() => activeLearningId.value ?? orderedProjects.value[0]?.id ?? 1)
+const createLibraryLabel = computed(() =>
+  createProjectLibraryId.value === null
+    ? '无'
+    : courseLibraries.find((library) => library.id === createProjectLibraryId.value)?.name ?? '无',
+)
 
 const pinnedRecent = computed(() => conversationStore.list.filter((item) => item.isPinned))
 const normalRecent = computed(() => conversationStore.list.filter((item) => !item.isPinned))
@@ -127,7 +137,13 @@ const normalRecent = computed(() => conversationStore.list.filter((item) => !ite
 onMounted(() => {
   conversationStore.init()
   themeStore.init()
+  syncSidebarProjects()
 })
+
+watch(
+  () => learningStore.plans.map((plan) => `${plan.id}:${plan.title}:${plan.status}`).join('|'),
+  () => syncSidebarProjects(),
+)
 
 function go(path: string) {
   router.push(path)
@@ -161,25 +177,27 @@ function openProjectSettings() {
 
 function openCreateProject() {
   createProjectOpen.value = true
+  iconPaletteOpen.value = false
+  libraryMenuOpen.value = false
+  createProjectTitle.value = ''
+  createProjectLibraryId.value = null
 }
 
 function openLearningHome() {
   learningExpanded.value = true
-  go('/learning')
-}
-
-function openLearningProjects() {
-  learningExpanded.value = true
-  projectsExpanded.value = true
   go('/learning/projects')
 }
 
-async function createNewChat() {
-  if (!authStore.isAuthed) {
-    authStore.openAuthModal()
+function openLearningProject(project: SidebarProject) {
+  if (project.status === '待开启') {
+    go(`/learning/new?projectId=${project.id}`)
     return
   }
-  await conversationStore.create()
+  go(`/learning/${project.id}`)
+}
+
+async function createNewChat() {
+  go('/chat')
 }
 
 function toggleSidebar() {
@@ -205,6 +223,46 @@ function userDisplayName() {
 
 function persistProjects() {
   persistList(PROJECTS_STORAGE_KEY, sidebarProjects.value)
+}
+
+function syncSidebarProjects() {
+  const pinnedMap = new Map(sidebarProjects.value.map((project) => [project.id, Boolean(project.pinned)]))
+  sidebarProjects.value = learningStore.plans.map((plan) => ({
+    ...plan,
+    pinned: pinnedMap.get(plan.id) ?? false,
+  }))
+  persistProjects()
+}
+
+function selectCreateLibrary(id: number | null) {
+  createProjectLibraryId.value = id
+  libraryMenuOpen.value = false
+}
+
+function selectCreateColor(color: string) {
+  createProjectColor.value = color
+}
+
+function selectCreateIcon(icon: string) {
+  createProjectIcon.value = icon
+}
+
+function createKnowledgeBaseFromProject() {
+  createProjectOpen.value = false
+  libraryMenuOpen.value = false
+  go('/library')
+}
+
+function submitCreateProject() {
+  const title = createProjectTitle.value.trim()
+  if (!title) return
+  learningStore.createDraftPlan({
+    title,
+    libraryId: createProjectLibraryId.value,
+  })
+  syncSidebarProjects()
+  createProjectOpen.value = false
+  go('/learning/projects')
 }
 
 function openRename(kind: 'project' | 'recent', id: number, title: string) {
@@ -356,6 +414,15 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
           <span>智能学习</span>
         </button>
         <button
+          class="new-learning-btn"
+          type="button"
+          aria-label="新建智能学习"
+          @click.stop="openCreateProject"
+        >
+          <AppIcon name="edit" :size="15" />
+          <span class="nav-tooltip">新建智能学习</span>
+        </button>
+        <button
           class="learning-toggle-btn"
           type="button"
           aria-label="展开智能学习"
@@ -370,70 +437,30 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
       </div>
 
       <div v-if="learningExpanded" class="learning-tree">
-        <div class="tree-row tree-row--section">
+        <div
+          v-for="plan in orderedProjects"
+          :key="plan.id"
+          class="tree-row tree-row--project"
+          @mouseleave="closeMenuSoon"
+        >
           <button
-            class="tree-item tree-item--section"
-            :class="{ 'tree-item--active': route.path.startsWith('/learning/projects') }"
+            class="tree-item"
+            :class="{ 'tree-item--active': activeLearningId === plan.id }"
             type="button"
-            @click="openLearningProjects"
+            :title="plan.title.replace('方案', '')"
+            @click="openLearningProject(plan)"
           >
-            <AppIcon name="briefcase" :size="15" />
-            <span>学习项目</span>
+            <AppIcon name="book" :size="15" />
+            <span :title="plan.title.replace('方案', '')">{{ plan.title.replace('方案', '') }}</span>
+            <small v-if="plan.status === '待开启'">待开启</small>
           </button>
           <button
-            class="tree-section-toggle"
+            class="tree-more"
             type="button"
-            aria-label="展开学习项目"
-            @click.stop="projectsExpanded = !projectsExpanded"
+            @mouseenter="menuHovering = true"
+            @click="openProjectMenu($event, plan)"
           >
-            <AppIcon :name="projectsExpanded ? 'chevron-down' : 'chevron-right'" :size="14" />
-          </button>
-          <button
-            class="new-learning-btn new-learning-btn--tree"
-            type="button"
-            aria-label="新建智能学习"
-            @click.stop="go('/learning/new')"
-          >
-            <AppIcon name="edit" :size="15" />
-            <span class="nav-tooltip">新建智能学习</span>
-          </button>
-        </div>
-        <template v-if="projectsExpanded">
-          <div
-            v-for="plan in orderedProjects"
-            :key="plan.id"
-            class="tree-row tree-row--project"
-            @mouseleave="closeMenuSoon"
-          >
-            <button
-              class="tree-item"
-              :class="{ 'tree-item--active': activeLearningId === plan.id }"
-              type="button"
-              :title="plan.title.replace('方案', '')"
-              @click="go(`/learning/${plan.id}`)"
-            >
-              <AppIcon name="book" :size="15" />
-              <span :title="plan.title.replace('方案', '')">{{ plan.title.replace('方案', '') }}</span>
-            </button>
-            <button
-              class="tree-more"
-              type="button"
-              @mouseenter="menuHovering = true"
-              @click="openProjectMenu($event, plan)"
-            >
-              <AppIcon name="more-horizontal" :size="15" />
-            </button>
-          </div>
-        </template>
-        <div class="tree-row tree-row--section">
-          <button
-            class="tree-item tree-item--section"
-            :class="{ 'tree-item--active': route.path.includes('/mistakes') }"
-            type="button"
-            @click="go(`/learning/${currentLearningId}/mistakes`)"
-          >
-            <AppIcon name="alert-circle" :size="15" />
-            <span>错题本</span>
+            <AppIcon name="more-horizontal" :size="15" />
           </button>
         </div>
       </div>
@@ -661,15 +688,41 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
         <label>
           <span>项目名称</span>
           <div class="project-name-field create-name-field">
-            <button class="project-icon-trigger project-icon-trigger--muted" type="button" @click="iconPaletteOpen = !iconPaletteOpen">
-              <AppIcon name="smile-plus" :size="20" />
+            <button class="project-icon-trigger project-icon-trigger--muted" :style="{ color: createProjectColor }" type="button" @click="iconPaletteOpen = !iconPaletteOpen">
+              <AppIcon :name="createProjectIcon" :size="20" />
             </button>
-            <input placeholder="哥本哈根之旅" />
+            <input v-model="createProjectTitle" placeholder="哥本哈根之旅" maxlength="40" @keydown.enter.prevent="submitCreateProject" />
+          </div>
+        </label>
+        <label class="library-field" @click.stop>
+          <span>关联知识库</span>
+          <button class="library-trigger" type="button" @click="libraryMenuOpen = !libraryMenuOpen">
+            <span>{{ createLibraryLabel }}</span>
+            <AppIcon name="chevron-down" :size="14" />
+          </button>
+          <div v-if="libraryMenuOpen" class="library-menu">
+            <button type="button" @click="selectCreateLibrary(null)">
+              <AppIcon name="close" :size="16" />
+              <span>无</span>
+            </button>
+            <button
+              v-for="library in courseLibraries"
+              :key="library.id"
+              type="button"
+              @click="selectCreateLibrary(library.id)"
+            >
+              <AppIcon name="folder" :size="16" />
+              <span>{{ library.name }}</span>
+            </button>
+            <button class="library-menu-create" type="button" @click="createKnowledgeBaseFromProject">
+              <AppIcon name="plus" :size="16" />
+              <span>新建知识库</span>
+            </button>
           </div>
         </label>
         <p>项目会保存聊天和文件，以便用于持续进行的工作，或者仅用于让内容井井有条。</p>
         <footer>
-          <button class="create-disabled" type="button">创建项目</button>
+          <button class="create-disabled" :class="{ 'create-disabled--ready': createProjectTitle.trim() }" type="button" @click="submitCreateProject">创建项目</button>
         </footer>
 
         <div v-if="iconPaletteOpen" class="icon-palette icon-palette--create">
@@ -678,17 +731,19 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
               v-for="color in paletteColors"
               :key="color"
               class="palette-color"
-              :class="{ 'palette-color--active': color === '#000' }"
+              :class="{ 'palette-color--active': color === createProjectColor }"
               :style="{ background: color }"
               type="button"
+              @click="selectCreateColor(color)"
             />
           </div>
           <div class="palette-icons">
             <button
               v-for="icon in paletteIcons"
               :key="icon"
-              :class="{ 'palette-icon--active': icon === 'folder' }"
+              :class="{ 'palette-icon--active': icon === createProjectIcon }"
               type="button"
+              @click="selectCreateIcon(icon)"
             >
               <AppIcon :name="icon" :size="21" />
             </button>
@@ -918,6 +973,10 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
   color: var(--color-text-muted);
 }
 
+.nav-row > .new-learning-btn {
+  right: 34px;
+}
+
 .learning-toggle-btn {
   position: absolute;
   right: 6px;
@@ -1106,7 +1165,7 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
 }
 
 .tree-row--project .tree-item {
-  grid-template-columns: 18px minmax(0, 1fr);
+  grid-template-columns: 18px minmax(0, 1fr) auto;
   padding-left: 22px;
 }
 
@@ -1586,7 +1645,7 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
 }
 
 .project-icon-trigger--muted {
-  color: #9aa3b2 !important;
+  color: #9aa3b2;
 }
 
 .create-name-field {
@@ -1748,6 +1807,76 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
   line-height: 1.5;
 }
 
+.library-field {
+  position: relative;
+}
+
+.library-trigger {
+  height: 38px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 12px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+}
+
+.library-trigger span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 4;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-lg);
+  display: grid;
+  gap: 3px;
+}
+
+.library-menu button {
+  width: 100%;
+  min-height: 36px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+}
+
+.library-menu button:hover {
+  background: var(--color-hover);
+}
+
+.library-menu-create {
+  border-top: 1px solid var(--color-border) !important;
+  border-radius: 0 0 8px 8px !important;
+  margin-top: 4px;
+  color: var(--color-primary) !important;
+}
+
 .create-project-modal footer {
   display: flex;
   justify-content: flex-end;
@@ -1762,5 +1891,11 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
   padding: 0 14px;
   cursor: not-allowed;
   font-weight: 700;
+}
+
+.create-disabled--ready {
+  background: var(--color-text);
+  color: var(--color-bg);
+  cursor: pointer;
 }
 </style>

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
 import LearningDetailShell from '@/components/student/LearningDetailShell.vue'
+import LearningMindMapPreview from '@/components/student/LearningMindMapPreview.vue'
 import type { LearningResource } from '@/mock'
 import { useLearningStore } from '@/stores/learning'
 
@@ -17,60 +18,10 @@ const activeResource = computed(() =>
 )
 const sourceTaskId = computed(() => Number(route.query.task) || undefined)
 const sourceStageId = computed(() => plan.value.stages.find((stage) => stage.tasks.some((task) => task.id === sourceTaskId.value))?.id)
+const editingResourceId = ref<number | null>(null)
+const draftContent = reactive<Record<number, string>>({})
+const toastMsg = ref('')
 let readingTimer: number | undefined
-
-type ResourceMeta = {
-  purpose: string
-  usage: string
-  primaryAction: string
-  actions: string[]
-  questions: string[]
-}
-
-const metaMap: Record<LearningResource['group'], ResourceMeta> = {
-  个性化学习手册: {
-    purpose: '按你的薄弱点重新组织资料库内容，适合在每个学习阶段开始前快速建立知识框架。',
-    usage: '先读核心概念和常见误区，再进入阶段任务里的练习和测验。',
-    primaryAction: '打开手册',
-    actions: ['编辑手册', '导出 Markdown', '导出 PDF'],
-    questions: ['帮我总结这份手册', '把重点整理成复习清单', '解释我最容易混淆的部分'],
-  },
-  PPT: {
-    purpose: '用于课堂汇报、考前串讲或快速复述知识点，不适合在这里按文档方式阅读。',
-    usage: '先看大纲是否匹配目标，再进入 PPT 预览或下载文件。',
-    primaryAction: '预览 PPT',
-    actions: ['下载 PPT', '重生成大纲', '导出演讲稿'],
-    questions: ['帮我检查 PPT 结构', '把这份 PPT 压缩成 5 页', '生成一段汇报讲稿'],
-  },
-  思维导图: {
-    purpose: '用于理解知识结构和概念关系，适合查看全局脉络，不适合塞进文档预览。',
-    usage: '打开导图后重点看概念之间的依赖、对比和分支关系。',
-    primaryAction: '打开导图',
-    actions: ['导出 PNG', '导出 XMind', '加入讲解参考'],
-    questions: ['帮我解释这张导图', '把导图转成背诵提纲', '指出哪些分支最重要'],
-  },
-  代码案例: {
-    purpose: '用可运行代码理解概念在程序里的表现，适合进入代码视图或下载案例包。',
-    usage: '先预测输出，再运行或阅读解析，对照自己的理解偏差。',
-    primaryAction: '打开代码案例',
-    actions: ['下载 ZIP', '生成变体案例', '加入练习'],
-    questions: ['逐行解释这个案例', '改成另一个例子', '根据案例出一道代码题'],
-  },
-}
-
-const activeMeta = computed(() => activeResource.value ? metaMap[activeResource.value.group] : undefined)
-const relatedStages = computed(() => {
-  const group = activeResource.value?.group
-  if (!group) return []
-  const taskTypeMap: Partial<Record<LearningResource['group'], string[]>> = {
-    个性化学习手册: ['资料', '讲解'],
-    PPT: ['讲解'],
-    思维导图: ['讲解'],
-    代码案例: ['案例'],
-  }
-  const types = taskTypeMap[group] ?? []
-  return plan.value.stages.filter((stage) => stage.tasks.some((task) => types.includes(task.type))).slice(0, 3)
-})
 
 function iconName(group: string) {
   if (group === 'PPT') return 'presentation'
@@ -81,14 +32,132 @@ function iconName(group: string) {
 
 function selectResource(resource: LearningResource) {
   activeResourceId.value = resource.id
+  editingResourceId.value = null
 }
 
-function runPrimaryAction() {
-  if (activeResource.value?.status === '未选择') generateActiveResource()
+function isMindMapResource(resource?: LearningResource) {
+  return resource?.group === '思维导图'
 }
 
-function generateActiveResource() {
-  if (activeResource.value) learningStore.generateResource(plan.value.id, activeResource.value.id)
+function getFallbackTree(resource?: LearningResource) {
+  return {
+    data: { text: resource?.title || plan.value.title },
+    children: plan.value.dashboard.map((item) => ({
+      data: { text: item.label },
+      children: [],
+    })),
+  }
+}
+
+function getResourceContent(resource?: LearningResource): string {
+  if (!resource) return ''
+  const existingDraft = draftContent[resource.id]
+  if (existingDraft !== undefined) return existingDraft
+
+  if (resource.group === '个性化学习手册') {
+    return [
+      `# ${resource.title}`,
+      '',
+      resource.desc,
+      '',
+      '## 核心概念',
+      plan.value.dashboard.map((item) => `- ${item.label}`).join('\n') || '- 待补充',
+      '',
+      '## 复习清单',
+      plan.value.stages.map((stage) => `- ${stage.title}: ${stage.desc}`).join('\n'),
+    ].join('\n')
+  }
+
+  if (resource.group === 'PPT') {
+    return [
+      `${resource.title}`,
+      '',
+      '1. 学习目标与知识框架',
+      '2. 关键概念对比',
+      '3. 典型例题或案例',
+      '4. 阶段复盘与练习建议',
+    ].join('\n')
+  }
+
+  if (resource.group === '代码案例') {
+    return [
+      'class Example {',
+      '  public static void main(String[] args) {',
+      '    System.out.println("Learning by doing");',
+      '  }',
+      '}',
+    ].join('\n')
+  }
+
+  return JSON.stringify(resource.mindMapTreeData || getFallbackTree(resource), null, 2) || ''
+}
+
+function setToast(message: string) {
+  toastMsg.value = message
+  window.setTimeout(() => {
+    if (toastMsg.value === message) toastMsg.value = ''
+  }, 1800)
+}
+
+async function generateActiveResource() {
+  if (!activeResource.value) return
+  await learningStore.generateResource(plan.value.id, activeResource.value.id)
+  setToast(activeResource.value.group === '思维导图' ? '思维导图已生成' : '资源已重新生成')
+}
+
+async function viewActiveResource() {
+  const resource = activeResource.value
+  if (!resource) return
+
+  if (resource.status === '未选择') {
+    await generateActiveResource()
+    return
+  }
+
+  if (isMindMapResource(resource) && resource.mindMapId) {
+    router.push(`/mindmap/${resource.mindMapId}`)
+    return
+  }
+
+  editingResourceId.value = null
+  setToast('已在当前预览区打开')
+}
+
+async function editActiveResource() {
+  const resource = activeResource.value
+  if (!resource) return
+
+  if (resource.status === '未选择') {
+    await generateActiveResource()
+  }
+
+  if (isMindMapResource(resource)) {
+    if (resource.mindMapId) router.push(`/mindmap/${resource.mindMapId}`)
+    return
+  }
+
+  draftContent[resource.id] = getResourceContent(resource)
+  editingResourceId.value = editingResourceId.value === resource.id ? null : resource.id
+}
+
+function exportActiveResource() {
+  const resource = activeResource.value
+  if (!resource) return
+
+  const extensionMap: Record<LearningResource['group'], string> = {
+    个性化学习手册: 'md',
+    PPT: 'md',
+    思维导图: 'json',
+    代码案例: 'java',
+  }
+  const blob = new Blob([getResourceContent(resource)], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `${resource.fileName || resource.title}.${extensionMap[resource.group]}`
+  link.click()
+  URL.revokeObjectURL(url)
+  setToast('已导出当前资源')
 }
 
 watch(
@@ -117,206 +186,171 @@ onBeforeUnmount(() => {
   <LearningDetailShell
     eyebrow="学习资源"
     title="资源包"
-    :subtitle="`${plan.title} · 独立查看、复用和导出学习资产`"
+    :subtitle="`${plan.title} · 查看详情、重新生成、导出和编辑`"
     :progress="plan.progress"
     @back="router.push(`/learning/${plan.id}`)"
   >
     <template #actions>
-      <button class="outline-btn" type="button" @click="router.push({ path: `/learning/${plan.id}/study`, query: sourceTaskId ? { stage: sourceStageId, task: sourceTaskId } : {} })">{{ sourceTaskId ? '返回当前任务' : '继续学习' }}</button>
+      <button
+        class="outline-btn"
+        type="button"
+        @click="router.push({ path: `/learning/${plan.id}/study`, query: sourceTaskId ? { stage: sourceStageId, task: sourceTaskId } : {} })"
+      >
+        {{ sourceTaskId ? '返回当前任务' : '继续学习' }}
+      </button>
     </template>
 
     <template #navigation>
       <aside class="resource-list panel">
-          <header class="panel-title">
-            <div>
-              <AppIcon name="folder" :size="20" />
-              <h2>资源目录</h2>
-            </div>
-            <span>{{ plan.resources.length }} 项</span>
-          </header>
-          <button
-            v-for="resource in plan.resources"
-            :key="resource.id"
-            class="resource-row"
-            :class="{ active: resource.id === activeResource?.id }"
-            type="button"
-            @click="selectResource(resource)"
-          >
-            <AppIcon :name="iconName(resource.group)" :size="20" />
-            <span>
-              <strong>{{ resource.group }}</strong>
-              <small>{{ resource.title }}</small>
-            </span>
-            <em :class="{ muted: resource.status === '未选择' }">{{ resource.status }}</em>
-          </button>
-          <p v-if="!plan.resources.length" class="empty-copy">当前项目还没有生成资源。</p>
-        </aside>
+        <header class="panel-title">
+          <div>
+            <AppIcon name="folder" :size="20" />
+            <h2>资源目录</h2>
+          </div>
+          <span>{{ plan.resources.length }} 项</span>
+        </header>
+        <button
+          v-for="resource in plan.resources"
+          :key="resource.id"
+          class="resource-row"
+          :class="{ active: resource.id === activeResource?.id }"
+          type="button"
+          @click="selectResource(resource)"
+        >
+          <AppIcon :name="iconName(resource.group)" :size="20" />
+          <span>
+            <strong>{{ resource.group }}</strong>
+            <small>{{ resource.title }}</small>
+          </span>
+          <em :class="{ muted: resource.status === '未选择' }">{{ resource.status }}</em>
+        </button>
+        <p v-if="!plan.resources.length" class="empty-copy">当前项目还没有生成资源。</p>
+      </aside>
     </template>
 
     <section class="resource-workspace panel">
-          <header class="resource-head">
-            <div>
-              <span class="resource-icon">
-                <AppIcon :name="iconName(activeResource?.group ?? '')" :size="24" />
-              </span>
-              <span>
-                <h2>{{ activeResource?.title ?? '未选择资源' }}</h2>
-                <p>{{ activeResource?.desc }}</p>
-              </span>
-            </div>
-            <em :class="{ muted: activeResource?.status === '未选择' }">{{ activeResource?.status ?? '未选择' }}</em>
-          </header>
+      <header class="resource-head">
+        <div>
+          <span class="resource-icon">
+            <AppIcon :name="iconName(activeResource?.group ?? '')" :size="24" />
+          </span>
+          <span>
+            <h2>{{ activeResource?.title ?? '未选择资源' }}</h2>
+            <p>{{ activeResource?.desc }}</p>
+          </span>
+        </div>
+        <em :class="{ muted: activeResource?.status === '未选择' }">{{ activeResource?.status ?? '未选择' }}</em>
+      </header>
 
-          <div class="summary-strip">
-            <article>
-              <span>资源类型</span>
-              <strong>{{ activeResource?.group ?? '-' }}</strong>
-            </article>
-            <article>
-              <span>文件名</span>
-              <strong>{{ activeResource?.fileName ?? '等待生成' }}</strong>
-            </article>
-            <article>
-              <span>建议入口</span>
-              <strong>{{ activeMeta?.primaryAction ?? '打开资源' }}</strong>
-            </article>
+      <div class="summary-strip">
+        <article>
+          <span>资源类型</span>
+          <strong>{{ activeResource?.group ?? '-' }}</strong>
+        </article>
+        <article>
+          <span>文件名</span>
+          <strong>{{ activeResource?.fileName ?? '等待生成' }}</strong>
+        </article>
+        <article>
+          <span>关联项目</span>
+          <strong>{{ plan.title }}</strong>
+        </article>
+      </div>
+
+      <div class="resource-toolbar">
+        <button class="primary-btn" type="button" @click="viewActiveResource">
+          <AppIcon name="eye" :size="16" />
+          查看详情
+        </button>
+        <button
+          class="outline-btn"
+          type="button"
+          :disabled="activeResource?.status === '生成中'"
+          @click="generateActiveResource"
+        >
+          <AppIcon name="refresh" :size="16" />
+          {{ activeResource?.status === '生成中' ? '生成中...' : activeResource?.status === '未选择' ? '生成资源' : '重新生成' }}
+        </button>
+        <button class="outline-btn" type="button" @click="exportActiveResource">
+          <AppIcon name="download" :size="16" />
+          导出
+        </button>
+        <button class="outline-btn" type="button" @click="editActiveResource">
+          <AppIcon name="edit" :size="16" />
+          {{ editingResourceId === activeResource?.id ? '完成编辑' : '编辑' }}
+        </button>
+      </div>
+
+      <section v-if="activeResource?.group === '个性化学习手册'" class="resource-preview handbook-preview">
+        <textarea
+          v-if="editingResourceId === activeResource.id"
+          v-model="draftContent[activeResource.id]"
+          class="resource-editor"
+        />
+        <article v-else>
+          <span class="preview-label">学习手册</span>
+          <h3>{{ activeResource.title }}</h3>
+          <p>{{ activeResource.desc }}</p>
+          <h4>核心概念</h4>
+          <ul>
+            <li v-for="item in plan.dashboard" :key="item.label">{{ item.label }}</li>
+          </ul>
+          <h4>复习清单</h4>
+          <p>{{ plan.stages.map((stage) => stage.title).join('、') }}</p>
+        </article>
+      </section>
+
+      <section v-else-if="activeResource?.group === 'PPT'" class="resource-preview ppt-preview">
+        <textarea
+          v-if="editingResourceId === activeResource.id"
+          v-model="draftContent[activeResource.id]"
+          class="resource-editor"
+        />
+        <article v-else>
+          <span class="preview-label">幻灯片大纲</span>
+          <h3>{{ activeResource.title }}</h3>
+          <div class="slide-points">
+            <span>学习目标</span>
+            <span>概念框架</span>
+            <span>典型案例</span>
+            <span>复盘练习</span>
           </div>
+        </article>
+      </section>
 
-          <section v-if="activeResource?.group === '个性化学习手册'" class="resource-preview handbook-preview">
-            <aside>
-              <strong>本页目录</strong>
-              <span>01 核心概念</span>
-              <span>02 常见误区</span>
-              <span>03 典型示例</span>
-              <span>04 复习清单</span>
-            </aside>
-            <article>
-              <span class="preview-label">个性化章节</span>
-              <h3>{{ activeResource.title }}</h3>
-              <p>{{ activeResource.desc }}</p>
-              <h4>核心概念</h4>
-              <p>{{ activeMeta?.purpose }}</p>
-              <blockquote>先理解概念之间的关系，再用案例和练习验证自己的理解。</blockquote>
-            </article>
-          </section>
+      <section v-else-if="activeResource?.group === '思维导图'" class="resource-preview mindmap-preview">
+        <LearningMindMapPreview
+          :title="activeResource.title"
+          :tree-data="activeResource.mindMapTreeData || getFallbackTree(activeResource)"
+        />
+      </section>
 
-          <section v-else-if="activeResource?.group === 'PPT'" class="resource-preview ppt-preview">
-            <aside>
-              <button v-for="index in 4" :key="index" type="button"><span>{{ index }}</span><i>章节 {{ index }}</i></button>
-            </aside>
-            <article>
-              <span class="preview-label">幻灯片 1 / 12</span>
-              <h3>{{ activeResource.title }}</h3>
-              <p>围绕学习目标建立章节结构，用于快速串讲和复述。</p>
-              <div class="slide-points"><span>概念框架</span><span>关键区别</span><span>典型案例</span></div>
-            </article>
-          </section>
+      <section v-else-if="activeResource?.group === '代码案例'" class="resource-preview code-preview">
+        <textarea
+          v-if="editingResourceId === activeResource.id"
+          v-model="draftContent[activeResource.id]"
+          class="resource-editor code-editor"
+        />
+        <template v-else>
+          <header><span>Example.java</span></header>
+          <pre><code>{{ getResourceContent(activeResource) }}</code></pre>
+        </template>
+      </section>
 
-          <section v-else-if="activeResource?.group === '思维导图'" class="resource-preview mindmap-preview">
-            <div class="mind-node mind-node--root">{{ plan.title }}</div>
-            <div class="mind-branches">
-              <span v-for="item in plan.dashboard" :key="item.label">{{ item.label }}</span>
-            </div>
-            <p>点击节点可继续展开概念关系和复习要点。</p>
-          </section>
-
-          <section v-else-if="activeResource?.group === '代码案例'" class="resource-preview code-preview">
-            <header><span>Example.java</span><button type="button">运行案例</button></header>
-            <pre><code>class Example {
-  public static void main(String[] args) {
-    // 先预测输出，再对照右侧解析
-    System.out.println("Learning by doing");
-  }
-}</code></pre>
-            <p>{{ activeMeta?.usage }}</p>
-          </section>
-
-          <section class="action-panel">
-            <h3>可执行操作</h3>
-            <div class="primary-row">
-              <button class="primary-btn" type="button" @click="runPrimaryAction">
-                <AppIcon name="play" :size="16" />
-                {{ activeMeta?.primaryAction ?? '打开资源' }}
-              </button>
-              <button
-                class="outline-btn"
-                type="button"
-                :disabled="activeResource?.status === '生成中'"
-                @click="generateActiveResource"
-              >
-                <AppIcon name="refresh" :size="16" />
-                {{ activeResource?.status === '生成中' ? '生成中...' : activeResource?.status === '未选择' ? '生成资源' : '重新生成' }}
-              </button>
-            </div>
-            <div class="secondary-actions">
-              <button v-for="action in activeMeta?.actions" :key="action" type="button">{{ action }}</button>
-            </div>
-          </section>
-
-          <section class="related-panel">
-            <h3>关联学习阶段</h3>
-            <button
-              v-for="stage in relatedStages"
-              :key="stage.id"
-              type="button"
-              @click="router.push(`/learning/${plan.id}/study?stage=${stage.id}`)"
-            >
-              <span>阶段 {{ stage.id }}</span>
-              <strong>{{ stage.title }}</strong>
-              <AppIcon name="chevron-right" :size="15" />
-            </button>
-            <p v-if="!relatedStages.length">当前资源暂未关联到具体阶段。</p>
-          </section>
+      <p v-if="toastMsg" class="toast">{{ toastMsg }}</p>
     </section>
-
-    <template #aside>
-      <aside class="agent-panel panel">
-          <header>
-            <span class="agent-avatar"><AppIcon name="brain" :size="20" /></span>
-            <div>
-              <h2>AI 资源助教</h2>
-              <p>围绕当前选中的 {{ activeResource?.group ?? '资源' }} 解答问题。</p>
-            </div>
-          </header>
-
-          <div class="agent-context">
-            <strong>当前上下文</strong>
-            <span>{{ activeResource?.title }}</span>
-            <small>{{ activeResource?.fileName ?? '尚未生成文件名' }}</small>
-          </div>
-
-          <div class="quick-questions">
-            <button v-for="question in activeMeta?.questions" :key="question" type="button">
-              {{ question }}
-            </button>
-          </div>
-
-          <label class="ask-box">
-            <textarea placeholder="问问当前资源，比如：这份材料应该先看哪部分？" />
-            <button type="button">
-              <AppIcon name="send" :size="17" />
-            </button>
-          </label>
-      </aside>
-    </template>
   </LearningDetailShell>
 </template>
 
 <style scoped>
-.resources-page {
-  min-height: 100%;
-  padding: 28px 34px 42px;
-  background: #f6f7f9;
-}
-
-.resources-page,
-.resources-page * {
+.resource-workspace,
+.resource-workspace * {
   box-sizing: border-box;
 }
 
-h1,
 h2,
 h3,
+h4,
 p {
   margin: 0;
 }
@@ -324,227 +358,6 @@ p {
 button,
 textarea {
   font: inherit;
-}
-
-.empty-copy {
-  color: #6b7280;
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.resource-preview {
-  min-height: 320px;
-  margin-top: 16px;
-  border: 1px solid #e1e5ec;
-  border-radius: 10px;
-  background: #f8fafc;
-  overflow: hidden;
-}
-
-.preview-label {
-  color: #2563eb;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.handbook-preview,
-.ppt-preview {
-  display: grid;
-  grid-template-columns: 150px minmax(0, 1fr);
-}
-
-.handbook-preview > aside,
-.ppt-preview > aside {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 18px;
-  border-right: 1px solid #e1e5ec;
-  background: #f1f5f9;
-}
-
-.handbook-preview > aside span {
-  color: #64748b;
-  font-size: 13px;
-}
-
-.handbook-preview > article,
-.ppt-preview > article {
-  padding: 28px;
-}
-
-.handbook-preview h3,
-.ppt-preview h3 {
-  margin-top: 8px;
-  font-size: 23px;
-}
-
-.handbook-preview h4 {
-  margin: 24px 0 8px;
-}
-
-.handbook-preview p,
-.ppt-preview p,
-.code-preview p {
-  margin-top: 10px;
-  color: #475569;
-  line-height: 1.75;
-}
-
-.handbook-preview blockquote {
-  margin: 22px 0 0;
-  padding: 14px 16px;
-  border-left: 3px solid #2563eb;
-  background: #eff6ff;
-  color: #334155;
-}
-
-.ppt-preview > aside button {
-  min-height: 70px;
-  display: grid;
-  grid-template-columns: 18px 1fr;
-  gap: 6px;
-  align-items: center;
-  border: 1px solid #dbe3ec;
-  border-radius: 7px;
-  background: #fff;
-  color: #334155;
-  cursor: pointer;
-}
-
-.slide-points {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-  margin-top: 42px;
-}
-
-.slide-points span {
-  min-height: 84px;
-  display: grid;
-  place-items: center;
-  border-radius: 10px;
-  background: #dbeafe;
-  color: #1d4ed8;
-  font-weight: 800;
-}
-
-.mindmap-preview {
-  display: grid;
-  place-items: center;
-  align-content: center;
-  gap: 24px;
-  padding: 32px;
-  background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
-  background-size: 18px 18px;
-}
-
-.mind-node,
-.mind-branches span {
-  border: 2px solid #60a5fa;
-  border-radius: 10px;
-  background: #fff;
-  color: #1e3a8a;
-  padding: 12px 18px;
-  font-weight: 800;
-}
-
-.mind-node--root {
-  background: #2563eb;
-  color: #fff;
-}
-
-.mind-branches {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 22px;
-}
-
-.mindmap-preview p {
-  color: #64748b;
-}
-
-.code-preview header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 14px;
-  background: #1e293b;
-  color: #e2e8f0;
-}
-
-.code-preview header button {
-  border: 0;
-  border-radius: 6px;
-  background: #22c55e;
-  color: #052e16;
-  padding: 7px 12px;
-  cursor: pointer;
-  font-weight: 800;
-}
-
-.code-preview pre {
-  min-height: 210px;
-  margin: 0;
-  padding: 24px;
-  background: #0f172a;
-  color: #dbeafe;
-  line-height: 1.7;
-  overflow: auto;
-}
-
-.code-preview p {
-  padding: 0 20px 18px;
-}
-
-.page-head,
-.resource-layout {
-  max-width: 1380px;
-  margin-left: auto;
-  margin-right: auto;
-}
-
-.page-head {
-  display: grid;
-  grid-template-columns: 42px 1fr;
-  align-items: center;
-  gap: 16px;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  background: #ffffff;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
-  padding: 16px;
-}
-
-.page-head > button {
-  width: 42px;
-  height: 42px;
-  border: 1px solid #d8dde5;
-  border-radius: 8px;
-  background: #ffffff;
-  color: #111827;
-  cursor: pointer;
-}
-
-h1 {
-  color: #111827;
-  font-size: 28px;
-  font-weight: 800;
-  letter-spacing: 0;
-}
-
-.page-head p {
-  margin-top: 7px;
-  color: #6b7280;
-}
-
-.resource-layout {
-  margin-top: 18px;
-  display: grid;
-  grid-template-columns: 300px minmax(0, 1fr) 340px;
-  gap: 16px;
-  align-items: start;
 }
 
 .panel {
@@ -555,6 +368,12 @@ h1 {
   padding: 18px;
 }
 
+.empty-copy {
+  color: #6b7280;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 h2 {
   color: #111827;
   font-size: 18px;
@@ -563,8 +382,14 @@ h2 {
 
 h3 {
   color: #111827;
-  font-size: 15px;
+  font-size: 22px;
   font-weight: 800;
+}
+
+h4 {
+  margin-top: 22px;
+  color: #111827;
+  font-size: 15px;
 }
 
 .panel-title {
@@ -629,6 +454,10 @@ h3 {
 
 .resource-row em,
 .resource-head em {
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 6px;
   background: #dcfce7;
   color: #15803d;
@@ -646,6 +475,7 @@ h3 {
 
 .resource-head {
   display: flex;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
   border-bottom: 1px solid #edf0f4;
@@ -671,6 +501,11 @@ h3 {
 
 .resource-head span {
   min-width: 0;
+}
+
+.resource-head em {
+  width: fit-content;
+  flex: 0 0 auto;
 }
 
 .resource-head p {
@@ -711,45 +546,15 @@ h3 {
   white-space: nowrap;
 }
 
-.intent-card,
-.action-panel,
-.related-panel,
-.agent-context {
+.resource-toolbar {
   margin-top: 16px;
-  border: 1px solid #e1e5ec;
-  border-radius: 8px;
-  background: #f8fafc;
-  padding: 16px;
-}
-
-.intent-card p {
-  margin: 8px 0 14px;
-  color: #374151;
-  line-height: 1.7;
-}
-
-.intent-card p:last-child {
-  margin-bottom: 0;
-}
-
-.primary-row,
-.secondary-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
 }
 
-.primary-row {
-  margin-top: 12px;
-}
-
-.secondary-actions {
-  margin-top: 10px;
-}
-
 .primary-btn,
-.outline-btn,
-.secondary-actions button {
+.outline-btn {
   height: 38px;
   border-radius: 8px;
   padding: 0 13px;
@@ -766,17 +571,13 @@ h3 {
   color: #fff;
 }
 
-.outline-btn,
-.secondary-actions button {
+.outline-btn {
   border: 1px solid #d8dde5;
   background: #ffffff;
   color: #111827;
 }
 
-.outline-btn:hover,
-.secondary-actions button:hover,
-.related-panel button:hover,
-.quick-questions button:hover {
+.outline-btn:hover {
   border-color: #93c5fd;
   background: #eff6ff;
 }
@@ -786,151 +587,117 @@ button:disabled {
   opacity: 0.65;
 }
 
-.related-panel {
-  display: grid;
-  gap: 8px;
-}
-
-.related-panel button {
-  min-height: 42px;
+.resource-preview {
+  min-height: 360px;
+  margin-top: 16px;
   border: 1px solid #e1e5ec;
   border-radius: 8px;
-  background: #ffffff;
-  color: #111827;
-  display: grid;
-  grid-template-columns: 58px minmax(0, 1fr) 18px;
-  align-items: center;
-  gap: 8px;
-  padding: 0 10px;
-  cursor: pointer;
-  text-align: left;
+  background: #f8fafc;
+  overflow: hidden;
 }
 
-.related-panel button span {
+.preview-label {
   color: #2563eb;
+  font-size: 12px;
   font-weight: 800;
 }
 
-.related-panel button strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.handbook-preview article,
+.ppt-preview article {
+  padding: 28px;
 }
 
-.related-panel p {
-  color: #6b7280;
+.handbook-preview p,
+.ppt-preview p {
+  margin-top: 10px;
+  color: #475569;
+  line-height: 1.75;
 }
 
-.agent-panel header {
-  display: flex;
-  align-items: center;
+.handbook-preview ul {
+  margin: 10px 0 0;
+  padding-left: 20px;
+  color: #475569;
+  line-height: 1.8;
+}
+
+.slide-points {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
+  margin-top: 26px;
 }
 
-.agent-avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 999px;
-  background: #eff6ff;
-  color: #2563eb;
+.slide-points span {
+  min-height: 92px;
   display: grid;
   place-items: center;
-}
-
-.agent-panel header p {
-  margin-top: 4px;
-  color: #6b7280;
-  line-height: 1.4;
-}
-
-.agent-context {
-  display: grid;
-  gap: 6px;
-}
-
-.agent-context strong {
-  color: #2563eb;
-}
-
-.agent-context span {
-  color: #111827;
+  border-radius: 8px;
+  background: #dbeafe;
+  color: #1d4ed8;
   font-weight: 800;
+  text-align: center;
 }
 
-.agent-context small {
-  color: #6b7280;
+.mindmap-preview {
+  height: 430px;
+  background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
+  background-size: 18px 18px;
 }
 
-.quick-questions {
-  margin-top: 14px;
-  display: grid;
-  gap: 8px;
+.code-preview header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  background: #1e293b;
+  color: #e2e8f0;
 }
 
-.quick-questions button {
-  min-height: 38px;
-  border: 1px solid #e1e5ec;
-  border-radius: 8px;
-  background: #ffffff;
-  color: #111827;
-  text-align: left;
-  padding: 8px 10px;
-  cursor: pointer;
+.code-preview pre {
+  min-height: 310px;
+  margin: 0;
+  padding: 24px;
+  background: #0f172a;
+  color: #dbeafe;
+  line-height: 1.7;
+  overflow: auto;
 }
 
-.ask-box {
-  min-height: 112px;
-  margin-top: 14px;
-  border: 1px solid #d8dde5;
-  border-radius: 8px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px;
-  align-items: end;
-  gap: 8px;
-  padding: 10px;
-}
-
-.ask-box textarea {
-  min-width: 0;
-  min-height: 88px;
+.resource-editor {
+  width: 100%;
+  min-height: 360px;
   border: 0;
   outline: 0;
-  resize: none;
-  background: transparent;
+  resize: vertical;
+  padding: 22px;
+  background: #ffffff;
   color: #111827;
+  line-height: 1.7;
 }
 
-.ask-box button {
-  width: 32px;
-  height: 32px;
-  border: 0;
-  border-radius: 8px;
-  background: #2563eb;
-  color: #fff;
-  cursor: pointer;
+.code-editor {
+  background: #0f172a;
+  color: #dbeafe;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
 }
 
-@media (max-width: 1260px) {
-  .resource-layout {
-    grid-template-columns: 290px minmax(0, 1fr);
-  }
-
-  .agent-panel {
-    grid-column: 1 / -1;
-  }
+.toast {
+  position: fixed;
+  right: 30px;
+  bottom: 84px;
+  z-index: 20;
+  border-radius: 999px;
+  background: #111827;
+  color: #ffffff;
+  padding: 10px 16px;
+  font-size: 13px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
 }
 
 @media (max-width: 900px) {
-  .page-head,
-  .resource-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .agent-panel {
-    grid-column: auto;
-  }
-
-  .summary-strip {
+  .summary-strip,
+  .slide-points {
     grid-template-columns: 1fr;
   }
 }
