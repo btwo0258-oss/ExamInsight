@@ -118,10 +118,16 @@ function handleDeleteConversation(conv: any) {
           >
             <AppIcon name="more-horizontal" :size="16" />
           </button>
-          <div v-if="showActionsPanel" class="actions-panel">
-            <button class="action-item" @click="handleEdit">编辑</button>
-            <div class="action-divider"></div>
-            <button class="action-item action-item--danger" @click="handleDelete">删除</button>
+          <div v-if="showActionsPanel" class="actions-panel ui-menu-panel">
+            <button class="action-item ui-menu-item" @click="handleEdit">
+              <span class="ui-menu-icon"><AppIcon name="edit" :size="16" /></span>
+              <span>编辑</span>
+            </button>
+            <div class="action-divider ui-menu-divider"></div>
+            <button class="action-item ui-menu-item ui-menu-item--danger" @click="handleDelete">
+              <span class="ui-menu-icon"><AppIcon name="trash" :size="16" /></span>
+              <span>删除</span>
+            </button>
           </div>
         </div>
       </div>
@@ -146,14 +152,19 @@ function handleDeleteConversation(conv: any) {
           >
             <AppIcon name="more-horizontal" :size="16" />
           </button>
-          <div v-if="conv.showActionsPanel" class="actions-panel">
-            <button class="action-item" @click="handleRenameConversation(conv)">重命名</button>
-            <button class="action-item" @click="handleRemoveFromKnowledgeBase(conv)">
+          <div v-if="conv.showActionsPanel" class="actions-panel ui-menu-panel">
+            <button class="action-item ui-menu-item" @click="handleRenameConversation(conv)">
+              <span class="ui-menu-icon"><AppIcon name="edit" :size="16" /></span>
+              <span>重命名</span>
+            </button>
+            <button class="action-item ui-menu-item" @click="handleRemoveFromKnowledgeBase(conv)">
+              <span class="ui-menu-icon"><AppIcon name="folder" :size="16" /></span>
               从{{ knowledgeBase.name }}知识库移除
             </button>
-            <div class="action-divider"></div>
-            <button class="action-item action-item--danger" @click="handleDeleteConversation(conv)">
-              删除
+            <div class="action-divider ui-menu-divider"></div>
+            <button class="action-item ui-menu-item ui-menu-item--danger" @click="handleDeleteConversation(conv)">
+              <span class="ui-menu-icon"><AppIcon name="trash" :size="16" /></span>
+              <span>删除</span>
             </button>
           </div>
         </div>
@@ -185,7 +196,7 @@ function handleDeleteConversation(conv: any) {
 }
 
 .is-active .project-item-header {
-  background-color: #E6F7FF;
+  background-color: color-mix(in srgb, var(--color-info) 15%, transparent);
   border-radius: 8px;
   position: relative;
 }
@@ -200,10 +211,6 @@ function handleDeleteConversation(conv: any) {
   height: 16px;
   background-color: var(--color-primary, #1677ff);
   border-radius: 0 4px 4px 0;
-}
-
-:root[data-theme='dark'] .is-active .project-item-header {
-  background-color: rgba(22, 119, 255, 0.15);
 }
 
 .project-item-header {
@@ -225,11 +232,7 @@ function handleDeleteConversation(conv: any) {
 }
 
 .project-item:hover {
-  background: rgba(0, 0, 0, 0.04);
-}
-
-:root[data-theme='dark'] .project-item:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--color-hover);
 }
 
 .is-active .project-item:hover {
@@ -253,11 +256,7 @@ function handleDeleteConversation(conv: any) {
 }
 
 .expand-btn:hover {
-  background: rgba(0, 0, 0, 0.04);
-}
-
-:root[data-theme="dark"] .expand-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--color-hover);
 }
 
 .project-item__icon {
@@ -306,13 +305,9 @@ function handleDeleteConversation(conv: any) {
 }
 
 .actions-btn:hover {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--color-hover);
   color: var(--color-text);
   opacity: 1;
-}
-
-:root[data-theme="dark"] .actions-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
 }
 
 .actions-btn--active {
@@ -322,63 +317,10 @@ function handleDeleteConversation(conv: any) {
 
 .actions-panel {
   position: fixed;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-  min-width: 130px;
+  min-width: 188px;
   z-index: 99999;
   margin-left: 35px;
   margin-top: -20px;
-}
-
-.action-item {
-  display: block;
-  width: 100%;
-  padding: 8px 16px;
-  text-align: left;
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 14px;
-  color: var(--color-text);
-  transition: background-color 0.2s ease;
-  opacity: 1;
-  visibility: visible;
-}
-
-.action-item:hover {
-  background: rgba(0, 0, 0, 0.04);
-}
-
-:root[data-theme="dark"] .action-item:hover {
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.action-item--danger {
-  color: #ff4d4f;
-}
-
-.action-item--danger:hover {
-  background: rgba(255, 77, 79, 0.1);
-}
-
-.action-divider {
-  height: 0.5px;
-  background: rgba(0, 0, 0, 0.1);
-  margin: 4px 8px;
-}
-
-:root[data-theme="dark"] .action-divider {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.action-item:first-child {
-  border-radius: 8px 8px 0 0;
-}
-
-.action-item:last-child {
-  border-radius: 0 0 8px 8px;
 }
 
 .conversation-list {
@@ -405,11 +347,7 @@ function handleDeleteConversation(conv: any) {
 }
 
 .conversation-item:hover {
-  background: rgba(0, 0, 0, 0.04);
-}
-
-:root[data-theme="dark"] .conversation-item:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--color-hover);
 }
 
 .conversation-item__actions {
@@ -423,11 +361,7 @@ function handleDeleteConversation(conv: any) {
 }
 
 .conversation-item:hover {
-  background: rgba(0, 0, 0, 0.04);
-}
-
-:root[data-theme="dark"] .conversation-item:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--color-hover);
 }
 
 .conversation-name {

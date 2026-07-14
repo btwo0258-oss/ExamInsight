@@ -65,15 +65,11 @@ function handleLogout() {
   flex: 1;
   min-width: 0;
   padding: 6px;
-  border-radius: 10px;
+  border-radius: var(--ui-hover-radius);
 }
 
 .user:hover {
-  background: rgba(0, 0, 0, 0.04);
-}
-
-:root[data-theme='dark'] .user:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--ui-hover-bg);
 }
 
 .user__avatar {
@@ -111,11 +107,11 @@ function handleLogout() {
   font-size: 13px;
   cursor: pointer;
   padding: 6px 10px;
-  border-radius: 6px;
+  border-radius: var(--ui-hover-radius);
 }
 
 .btn:hover {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--ui-hover-bg);
   color: var(--color-text);
 }
 </style>

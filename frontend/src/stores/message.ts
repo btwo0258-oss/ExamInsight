@@ -10,6 +10,21 @@ import { USER_KEY, getStoredToken } from "@/api/request";
 
 export type ChatRole = "user" | "assistant" | "system";
 
+export type TutorSource = {
+  projectId: number;
+  projectTitle: string;
+  page: "study" | "detail" | "chat";
+  stageId?: number | string;
+  stageTitle?: string;
+  taskId?: number | string;
+  taskTitle?: string;
+  taskType?: string;
+  exerciseId?: number | string;
+  exerciseTitle?: string;
+  submitted?: boolean;
+  label: string;
+};
+
 export type ChatMessage = {
   id: string;
   parentId?: number;
@@ -25,6 +40,10 @@ export type ChatMessage = {
   aVersion?: number; // 回答版本 (0-based, 针对特定的 qVersion)
   // 附件
   files?: { name: string; type: string; size: number }[];
+  kind?: "learning-profile" | "learning-document";
+  learningData?: any;
+  tutorContext?: string;
+  tutorSource?: TutorSource;
 };
 
 function uid() {
@@ -48,7 +67,8 @@ function keyForConversation(conversationId: number) {
 }
 
 function loadLocal(conversationId: number): ChatMessage[] {
-  const raw = sessionStorage.getItem(keyForConversation(conversationId));
+  const key = keyForConversation(conversationId);
+  const raw = localStorage.getItem(key) ?? sessionStorage.getItem(key);
   if (!raw) return [];
   try {
     return JSON.parse(raw) as ChatMessage[];
@@ -58,7 +78,10 @@ function loadLocal(conversationId: number): ChatMessage[] {
 }
 
 function saveLocal(conversationId: number, items: ChatMessage[]) {
-  sessionStorage.setItem(keyForConversation(conversationId), JSON.stringify(items));
+  const key = keyForConversation(conversationId);
+  const value = JSON.stringify(items);
+  sessionStorage.setItem(key, value);
+  localStorage.setItem(key, value);
 }
 
 function keyForActiveQVersions(conversationId: number) {
@@ -72,7 +95,8 @@ function keyForActiveAVersions(conversationId: number) {
 }
 
 function loadLocalActiveQVersions(conversationId: number): Record<string, number> {
-  const raw = sessionStorage.getItem(keyForActiveQVersions(conversationId));
+  const key = keyForActiveQVersions(conversationId);
+  const raw = localStorage.getItem(key) ?? sessionStorage.getItem(key);
   if (!raw) return {};
   try {
     return JSON.parse(raw) as Record<string, number>;
@@ -82,7 +106,8 @@ function loadLocalActiveQVersions(conversationId: number): Record<string, number
 }
 
 function loadLocalActiveAVersions(conversationId: number): Record<string, Record<number, number>> {
-  const raw = sessionStorage.getItem(keyForActiveAVersions(conversationId));
+  const key = keyForActiveAVersions(conversationId);
+  const raw = localStorage.getItem(key) ?? sessionStorage.getItem(key);
   if (!raw) return {};
   try {
     return JSON.parse(raw) as Record<string, Record<number, number>>;
@@ -93,6 +118,7 @@ function loadLocalActiveAVersions(conversationId: number): Record<string, Record
 
 function saveLocalActiveQVersions(conversationId: number, versions: Record<string, number>) {
   sessionStorage.setItem(keyForActiveQVersions(conversationId), JSON.stringify(versions));
+  localStorage.setItem(keyForActiveQVersions(conversationId), JSON.stringify(versions));
 }
 
 function saveLocalActiveAVersions(
@@ -100,6 +126,7 @@ function saveLocalActiveAVersions(
   versions: Record<string, Record<number, number>>,
 ) {
   sessionStorage.setItem(keyForActiveAVersions(conversationId), JSON.stringify(versions));
+  localStorage.setItem(keyForActiveAVersions(conversationId), JSON.stringify(versions));
 }
 
 function parseCreateTime(createTime: any): number {
@@ -131,6 +158,31 @@ export const useMessageStore = defineStore("message", () => {
   function getMessages(conversationId: number) {
     const key = String(conversationId);
     return byConversation.value[key] ?? [];
+  }
+
+  function appendLocalMessage(
+    conversationId: number,
+    message: Omit<ChatMessage, "id" | "createTime"> & Partial<Pick<ChatMessage, "id" | "createTime">>,
+  ) {
+    initLocalIfNeeded(conversationId);
+    const list = byConversation.value[String(conversationId)]!;
+    const next: ChatMessage = {
+      ...message,
+      id: message.id || uid(),
+      createTime: message.createTime || Date.now(),
+    } as ChatMessage;
+    list.push(next);
+    saveLocal(conversationId, list);
+    return next;
+  }
+
+  function updateLocalMessage(conversationId: number, messageId: string, patch: Partial<ChatMessage>) {
+    initLocalIfNeeded(conversationId);
+    const list = byConversation.value[String(conversationId)]!;
+    const index = list.findIndex((message) => message.id === messageId);
+    if (index === -1) return;
+    list[index] = { ...list[index], ...patch };
+    saveLocal(conversationId, list);
   }
 
   function initLocalIfNeeded(conversationId: number) {
@@ -213,6 +265,17 @@ export const useMessageStore = defineStore("message", () => {
             turnId: m.turnId || localMatch?.turnId || undefined,
             qVersion: m.qVersion ?? localMatch?.qVersion ?? undefined,
             aVersion: m.aVersion ?? localMatch?.aVersion ?? undefined,
+            tutorContext: m.tutorContext || localMatch?.tutorContext,
+            tutorSource:
+              (typeof m.learningSource === "string"
+                ? (() => {
+                    try {
+                      return JSON.parse(m.learningSource);
+                    } catch {
+                      return undefined;
+                    }
+                  })()
+                : m.learningSource) || localMatch?.tutorSource,
             //files: parsedFiles || localMatch?.files,
             files:
               parsedFiles ||
@@ -418,7 +481,7 @@ export const useMessageStore = defineStore("message", () => {
     aVersion?: number,
     files?: File[],
     skipUserMsg: boolean = false,
-    extraOptions?: { isRegenerate?: boolean; editMsgId?: number; parentId?: number },
+    extraOptions?: { isRegenerate?: boolean; editMsgId?: number; parentId?: number; tutorContext?: string; tutorSource?: TutorSource },
   ) {
     let text = content.trim();
     const hasFiles = files && files.length > 0;
@@ -513,6 +576,8 @@ export const useMessageStore = defineStore("message", () => {
         createTime: Date.now(),
         turnId: currentTurnId,
         qVersion: currentQVersion,
+        tutorContext: extraOptions?.tutorContext,
+        tutorSource: extraOptions?.tutorSource,
         files: files?.map((f) => ({ name: f.name, type: f.type, size: f.size })),
       };
 
@@ -576,6 +641,10 @@ export const useMessageStore = defineStore("message", () => {
       const finalQuestion = fileContext
         ? `[附加文件内容]\n${fileContext}\n\n[用户输入]\n${text}`
         : text;
+
+      if (extraOptions?.tutorContext) {
+        historyContext.unshift({ role: "system", content: extraOptions.tutorContext });
+      }
 
       // 修复后端 bug：如果传递了 history，后端不会把当前的 question 自动加入大模型上下文中，所以前端必须手动加进去！
       historyContext.push({ role: "user", content: finalQuestion });
@@ -787,6 +856,8 @@ export const useMessageStore = defineStore("message", () => {
     await sendMessage(conversationId, userMsg.content, turnId, activeQ, nextA, undefined, true, {
       isRegenerate: true,
       parentId,
+      tutorContext: userMsg.tutorContext,
+      tutorSource: userMsg.tutorSource,
     });
   }
 
@@ -835,6 +906,8 @@ export const useMessageStore = defineStore("message", () => {
     await sendMessage(conversationId, newContent, turnId, nextQ, 0, undefined, false, {
       editMsgId,
       parentId,
+      tutorContext: originalUserMsg?.tutorContext,
+      tutorSource: originalUserMsg?.tutorSource,
     });
   }
 
@@ -926,6 +999,10 @@ export const useMessageStore = defineStore("message", () => {
     sessionStorage.removeItem(keyForActiveAVersions(conversationId));
   }
 
+  function clearError() {
+    errorMessage.value = null;
+  }
+
   function clearMemoryState() {
     byConversation.value = {};
     fetchedFromServer.value = {};
@@ -941,6 +1018,8 @@ export const useMessageStore = defineStore("message", () => {
 
   return {
     getMessages,
+    appendLocalMessage,
+    updateLocalMessage,
     isStreaming,
     errorMessage,
     byConversation,
@@ -951,6 +1030,7 @@ export const useMessageStore = defineStore("message", () => {
     stopStreaming,
     createConversation,
     clearConversation,
+    clearError,
     clearMemoryState,
     regenerate,
     editAndRegenerate,

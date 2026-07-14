@@ -80,21 +80,21 @@ const initMindMap = (data: any) => {
     mousewheelAction: 'zoom',
     initRootNodePosition: ['center', 'center'],
     themeConfig: {
-      backgroundColor: '#f8fafc',
-      lineColor: '#64748b', // 节点连线颜色：深灰色
+      backgroundColor: 'var(--color-surface)',
+      lineColor: 'var(--color-text-muted)', // 节点连线颜色
       lineWidth: 2,
       // 关联线（联系线）样式
-      associativeLineColor: '#64748b',
+      associativeLineColor: 'var(--color-text-muted)',
       associativeLineWidth: 2,
       // 默认节点边框颜色
-      borderColor: '#94a3b8', 
+      borderColor: 'var(--color-border)',
       borderWidth: 1,
       // 中心主题样式强制透明
       rootFillColor: 'transparent',
       rootBorderWidth: 0,
       rootFontSize: 32,
       rootFontWeight: 'bold',
-      rootColor: '#1e293b'
+      rootColor: 'var(--color-text)'
     }
   } as any)
 
@@ -190,9 +190,9 @@ const applyCustomNodeStyles = () => {
   
   // 1. 设置全局配置（仅在必要时）
   const config = {
-    lineColor: '#64748b',
-    borderColor: '#94a3b8',
-    associativeLineColor: '#64748b',
+    lineColor: 'var(--color-text-muted)',
+    borderColor: 'var(--color-border)',
+    associativeLineColor: 'var(--color-text-muted)',
     rootFillColor: 'transparent',
     rootBorderWidth: 0
   }
@@ -218,7 +218,7 @@ const applyCustomNodeStyles = () => {
       safeSetStyle(node, 'borderWidth', 0)
       safeSetStyle(node, 'fontSize', 32)
       safeSetStyle(node, 'fontWeight', 'bold')
-      safeSetStyle(node, 'color', '#1e293b')
+      safeSetStyle(node, 'color', 'var(--color-text)')
       safeSetStyle(node, 'shape', 'rectangle')
     } else if (layer === 1) { // H2 (Main Topics)
       if (!data.fillColor || data.fillColor === 'transparent') {
@@ -228,7 +228,7 @@ const applyCustomNodeStyles = () => {
         safeSetStyle(node, 'fillColor', stableColor)
         safeSetStyle(node, 'color', '#ffffff')
         safeSetStyle(node, 'borderRadius', 8)
-        safeSetStyle(node, 'borderColor', '#94a3b8')
+        safeSetStyle(node, 'borderColor', 'var(--color-border)')
         safeSetStyle(node, 'borderWidth', 1)
       }
     } else if (layer === 2) { // H3 (Sub Topics)
@@ -237,12 +237,12 @@ const applyCustomNodeStyles = () => {
       safeSetStyle(node, 'fillColor', lightColor)
       safeSetStyle(node, 'color', parentColor)
       safeSetStyle(node, 'borderRadius', 6)
-      safeSetStyle(node, 'borderColor', '#94a3b8')
+      safeSetStyle(node, 'borderColor', 'var(--color-border)')
       safeSetStyle(node, 'borderWidth', 1)
     } else { // Others
       safeSetStyle(node, 'fillColor', 'transparent')
       safeSetStyle(node, 'color', 'var(--color-text)')
-      safeSetStyle(node, 'borderColor', '#94a3b8')
+      safeSetStyle(node, 'borderColor', 'var(--color-border)')
       safeSetStyle(node, 'borderWidth', 1)
     }
 
@@ -458,7 +458,7 @@ function showToast(msg: string) {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background-color: #f8fafc;
+  background-color: var(--color-surface-subtle);
 }
 
 .toolbar {
@@ -467,9 +467,9 @@ function showToast(msg: string) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: white;
-  border-bottom: 1px solid #e2e8f0;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  box-shadow: var(--shadow-sm);
   z-index: 100;
 }
 
@@ -487,7 +487,7 @@ function showToast(msg: string) {
 }
 
 .title-container:hover {
-  background: #f1f5f9;
+  background: var(--color-hover);
 }
 
 .title-input {
@@ -495,7 +495,7 @@ function showToast(msg: string) {
   background: transparent;
   font-size: 16px;
   font-weight: 600;
-  color: #1e293b;
+  color: var(--color-text);
   outline: none;
   width: 180px;
 }
@@ -504,7 +504,7 @@ function showToast(msg: string) {
   display: flex;
   align-items: center;
   gap: 16px;
-  background: #f1f5f9;
+  background: var(--color-surface-subtle);
   padding: 6px 12px;
   border-radius: 12px;
 }
@@ -525,7 +525,7 @@ function showToast(msg: string) {
   background: transparent;
   border-radius: 6px;
   cursor: pointer;
-  color: #64748b;
+  color: var(--color-text-muted);
   transition: all 0.2s;
 }
 
@@ -535,16 +535,16 @@ function showToast(msg: string) {
 }
 
 .tool-btn:hover {
-  background: white;
+  background: var(--color-surface);
   color: var(--color-primary);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  box-shadow: var(--shadow-sm);
 }
 
 .tool-btn.active {
   color: var(--color-primary);
-  background: white;
-  box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
-  border: 1px solid var(--color-primary-light);
+  background: var(--color-surface);
+  box-shadow: inset 0 1px 3px color-mix(in srgb, var(--color-overlay) 30%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 14%, transparent);
 }
 
 .tool-btn.disabled {
@@ -556,7 +556,7 @@ function showToast(msg: string) {
 .divider-v {
   width: 1px;
   height: 24px;
-  background: #e2e8f0;
+  background: var(--color-border);
 }
 
 .toolbar__right {
@@ -572,8 +572,8 @@ function showToast(msg: string) {
 }
 
 .save-btn {
-  background-color: #333333 !important;
-  color: #ffffff !important;
+  background-color: var(--color-primary) !important;
+  color: var(--color-on-primary) !important;
   border-radius: 20px !important;
   border: none !important;
   padding: 6px 16px !important;
@@ -581,12 +581,12 @@ function showToast(msg: string) {
   font-weight: 500;
 }
 .save-btn:hover {
-  background-color: #444444 !important;
+  background-color: color-mix(in srgb, var(--color-primary) 88%, var(--color-bg)) !important;
 }
 
 .mind-map-body {
   flex: 1;
-  background-color: #ffffff;
+  background-color: var(--color-surface);
   position: relative;
   width: 100%;
   height: 100%;
@@ -604,12 +604,12 @@ function showToast(msg: string) {
   left: 50%;
   transform: translateX(-50%);
   z-index: 1000;
-  background: #1e293b;
-  color: white;
+  background: var(--color-text);
+  color: var(--color-bg);
   padding: 10px 24px;
   border-radius: 24px;
   font-size: 14px;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-lg);
   animation: fadeInDown 0.3s ease-out;
 }
 
@@ -624,24 +624,4 @@ function showToast(msg: string) {
   border-radius: 50% !important;
 }
 
-:root[data-theme='dark'] .mindmap-view {
-  background-color: #0f172a;
-}
-
-:root[data-theme='dark'] .toolbar {
-  background-color: #1e293b;
-  border-bottom-color: #334155;
-}
-
-:root[data-theme='dark'] .toolbar__center {
-  background-color: #334155;
-}
-
-:root[data-theme='dark'] .title-input {
-  color: #f1f5f9;
-}
-
-:root[data-theme='dark'] .mind-map-body {
-  background-color: #0f172a;
-}
 </style>

@@ -46,7 +46,7 @@ export const useConversationStore = defineStore("conversation", () => {
 
   function init() {
     if (isInitialized.value) return;
-    const stored = sessionStorage.getItem(getStorageKey());
+    const stored = localStorage.getItem(getStorageKey()) ?? sessionStorage.getItem(getStorageKey());
     if (stored) {
       try {
         list.value = JSON.parse(stored) as conversationApi.Conversation[];
@@ -61,6 +61,7 @@ export const useConversationStore = defineStore("conversation", () => {
 
   function saveToStorage() {
     sessionStorage.setItem(getStorageKey(), JSON.stringify(list.value));
+    localStorage.setItem(getStorageKey(), JSON.stringify(list.value));
   }
 
   function upsertLocal(c: conversationApi.Conversation) {
@@ -99,7 +100,15 @@ export const useConversationStore = defineStore("conversation", () => {
     }
   }
 
-  async function create(payload?: { kbId?: number | null; title?: string }) {
+  async function create(payload?: { kbId?: number | null; title?: string; navigate?: boolean; learningProjectId?: number | null; learningProjectName?: string; conversationType?: conversationApi.Conversation['conversationType']; localOnly?: boolean }) {
+    const shouldNavigate = payload?.navigate !== false;
+    const apiPayload = {
+      kbId: payload?.kbId,
+      title: payload?.title,
+      learningProjectId: payload?.learningProjectId,
+      learningProjectName: payload?.learningProjectName,
+      conversationType: payload?.conversationType ?? 'general',
+    };
     const temp: conversationApi.Conversation = {
       id: Date.now(),
       title: payload?.title || "新对话",
@@ -108,17 +117,30 @@ export const useConversationStore = defineStore("conversation", () => {
       messageCount: 0,
       updateTime: nowMs(),
       createTime: nowMs(),
+      learningProjectId: payload?.learningProjectId ?? null,
+      learningProjectName: payload?.learningProjectName,
+      conversationType: payload?.conversationType ?? 'general',
     };
     upsertLocal(temp);
 
+    if (payload?.localOnly) {
+      if (shouldNavigate) await router.push(`/chat/${temp.id}`);
+      return temp.id;
+    }
+
     try {
-      const real = await conversationApi.createConversation(payload);
+      const real = await conversationApi.createConversation(apiPayload);
       removeLocal(temp.id);
-      upsertLocal(real);
-      await router.push(`/chat/${real.id}`);
+      upsertLocal({
+        ...real,
+        learningProjectId: payload?.learningProjectId ?? real.learningProjectId ?? null,
+        learningProjectName: payload?.learningProjectName ?? real.learningProjectName,
+        conversationType: payload?.conversationType ?? real.conversationType ?? 'general',
+      });
+      if (shouldNavigate) await router.push(`/chat/${real.id}`);
       return real.id;
     } catch {
-      await router.push(`/chat/${temp.id}`);
+      if (shouldNavigate) await router.push(`/chat/${temp.id}`);
       return temp.id;
     }
   }
@@ -142,6 +164,37 @@ export const useConversationStore = defineStore("conversation", () => {
     } catch {
       upsertLocal({ ...existing, knowledgeBaseId, updateTime: nowMs() });
     }
+  }
+
+  function linkLearningProject(id: number, learningProjectId: number, learningProjectName: string, conversationType?: conversationApi.Conversation['conversationType']) {
+    const existing = list.value.find((item) => item.id === id);
+    if (!existing) return;
+    if (existing.learningProjectId === learningProjectId && existing.learningProjectName === learningProjectName && (!conversationType || existing.conversationType === conversationType)) return;
+    const next = { ...existing, learningProjectId, learningProjectName, conversationType: conversationType ?? existing.conversationType };
+    upsertLocal(next);
+  }
+
+  function restoreLearningConversation(
+    id: number,
+    learningProjectId: number,
+    learningProjectName: string,
+    knowledgeBaseId: number | null,
+    title = `${learningProjectName} · AI 助教`,
+  ) {
+    if (!Number.isFinite(id) || id <= 0 || list.value.some((item) => item.id === id)) return;
+    const timestamp = nowMs();
+    upsertLocal({
+      id,
+      title,
+      knowledgeBaseId,
+      isPinned: false,
+      messageCount: 0,
+      updateTime: timestamp,
+      createTime: timestamp,
+      learningProjectId,
+      learningProjectName,
+      conversationType: 'learning-tutor',
+    });
   }
 
   async function remove(id: number) {
@@ -171,6 +224,7 @@ export const useConversationStore = defineStore("conversation", () => {
     errorMessage.value = null;
     isLoading.value = false;
     sessionStorage.removeItem(getStorageKey());
+    localStorage.removeItem(getStorageKey());
   }
 
   async function open(id: number) {
@@ -200,6 +254,8 @@ export const useConversationStore = defineStore("conversation", () => {
     create,
     rename,
     moveToKnowledgeBase,
+    linkLearningProject,
+    restoreLearningConversation,
     remove,
     togglePin,
     open,

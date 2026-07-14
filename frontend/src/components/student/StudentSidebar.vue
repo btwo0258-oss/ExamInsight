@@ -1,14 +1,49 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import {
+  Activity,
+  Bone,
+  BookOpen,
+  BookOpenText,
+  BrainCircuit,
+  BriefcaseBusiness,
+  ChartSpline,
+  CircleDollarSign,
+  Code2,
+  Folder,
+  Gift,
+  Globe2,
+  GraduationCap,
+  Hammer,
+  Heart,
+  HeartPulse,
+  Leaf,
+  Mic2,
+  Microscope,
+  Music2,
+  PenTool,
+  Scale,
+  Send,
+  Settings2,
+  Sparkles,
+  Square,
+  SquarePen,
+  SquareTerminal,
+  SwatchBook,
+  Trash2,
+  UserRound,
+} from 'lucide-vue-next'
 import AppIcon from '@/components/common/AppIcon.vue'
 import UserProfileModal from '@/components/auth/UserProfileModal.vue'
+import LibraryKnowledgeCreateModal from '@/components/student/LibraryKnowledgeCreateModal.vue'
 import logoUrl from '@/assets/icons/ExamInsight-Logo.png'
-import { courseLibraries, learningPlans } from '@/mock'
+import { learningPlans } from '@/mock'
 import type { Conversation } from '@/api/conversation'
 import { useAuthStore } from '@/stores/auth'
 import { useConversationStore } from '@/stores/conversation'
 import { useLearningStore } from '@/stores/learning'
+import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import { useThemeStore } from '@/stores/theme'
 
 type MenuAction = {
@@ -24,6 +59,7 @@ type SidebarProject = (typeof learningPlans)[number] & {
 }
 
 const PROJECTS_STORAGE_KEY = 'examinsight.student.sidebar.projects'
+const PROJECT_LINK_MIGRATION_KEY = 'examinsight.student.conversation-project-links.v1'
 
 function readStoredList<T>(key: string, fallback: T[]): T[] {
   try {
@@ -45,6 +81,7 @@ const router = useRouter()
 const authStore = useAuthStore()
 const conversationStore = useConversationStore()
 const learningStore = useLearningStore()
+const knowledgeBaseStore = useKnowledgeBaseStore()
 const themeStore = useThemeStore()
 const sidebarProjects = ref<SidebarProject[]>(
   readStoredList(
@@ -71,41 +108,53 @@ const editingTitle = ref('')
 const profileOpen = ref(false)
 const createProjectTitle = ref('')
 const createProjectLibraryId = ref<number | null>(null)
+const knowledgeCreateOpen = ref(false)
 const createProjectColor = ref('#000')
 const createProjectIcon = ref('folder')
 const paletteColors = ['#000', '#ff4444', '#ed7d31', '#f6c343', '#4caf5d', '#3b82f6', '#8b5cf6', '#df6f68']
 const paletteIcons = [
-  'folder',
-  'dollar',
-  'book',
-  'graduation',
-  'edit',
-  'pen-tool',
-  'code',
-  'terminal',
-  'music',
-  'trash',
-  'tool',
-  'palette',
-  'stethoscope',
-  'sparkle',
-  'plant',
-  'briefcase',
-  'bar-chart',
-  'user',
-  'activity',
-  'notebook',
-  'scales',
-  'microphone',
-  'airplane',
-  'globe',
-  'wrench',
-  'paw',
-  'flask',
-  'brain',
-  'heart',
-  'gift',
+  { key: 'folder', component: Folder },
+  { key: 'dollar', component: CircleDollarSign },
+  { key: 'book', component: BookOpen },
+  { key: 'graduation', component: GraduationCap },
+  { key: 'edit', component: SquarePen },
+  { key: 'pen-tool', component: PenTool },
+  { key: 'code', component: Code2 },
+  { key: 'terminal', component: SquareTerminal },
+  { key: 'music', component: Music2 },
+  { key: 'trash', component: Trash2 },
+  { key: 'tool', component: Hammer },
+  { key: 'palette', component: SwatchBook },
+  { key: 'stethoscope', component: HeartPulse },
+  { key: 'sparkle', component: Sparkles },
+  { key: 'plant', component: Leaf },
+  { key: 'briefcase', component: BriefcaseBusiness },
+  { key: 'bar-chart', component: ChartSpline },
+  { key: 'user', component: UserRound },
+  { key: 'activity', component: Activity },
+  { key: 'notebook', component: BookOpenText },
+  { key: 'scales', component: Scale },
+  { key: 'microphone', component: Mic2 },
+  { key: 'airplane', component: Send },
+  { key: 'globe', component: Globe2 },
+  { key: 'wrench', component: Settings2 },
+  { key: 'paw', component: Bone },
+  { key: 'flask', component: Microscope },
+  { key: 'brain', component: BrainCircuit },
+  { key: 'heart', component: Heart },
+  { key: 'gift', component: Gift },
 ]
+const createProjectIconComponent = computed(() =>
+  paletteIcons.find((icon) => icon.key === createProjectIcon.value)?.component ?? Folder,
+)
+
+function projectIconComponent(icon?: string) {
+  return paletteIcons.find((item) => item.key === icon)?.component ?? BookOpen
+}
+
+function projectIconColor(color?: string) {
+  return !color || color === '#000' ? 'var(--color-text)' : color
+}
 
 const activeSection = computed(() => {
   if (route.path.startsWith('/library')) return 'library'
@@ -128,7 +177,7 @@ const orderedProjects = computed(() => [
 const createLibraryLabel = computed(() =>
   createProjectLibraryId.value === null
     ? '无'
-    : courseLibraries.find((library) => library.id === createProjectLibraryId.value)?.name ?? '无',
+    : knowledgeBaseStore.list.find((library) => library.id === createProjectLibraryId.value)?.name ?? '无',
 )
 
 const pinnedRecent = computed(() => conversationStore.list.filter((item) => item.isPinned))
@@ -136,8 +185,9 @@ const normalRecent = computed(() => conversationStore.list.filter((item) => !ite
 
 onMounted(() => {
   conversationStore.init()
-  themeStore.init()
+  void knowledgeBaseStore.fetchList()
   syncSidebarProjects()
+  migrateLegacyConversationProjectLinks()
 })
 
 watch(
@@ -183,6 +233,28 @@ function openCreateProject() {
   createProjectLibraryId.value = null
 }
 
+function closeCreateProjectPanels() {
+  iconPaletteOpen.value = false
+  libraryMenuOpen.value = false
+}
+
+function closeCreateProject() {
+  closeCreateProjectPanels()
+  createProjectOpen.value = false
+}
+
+function toggleIconPalette() {
+  const nextOpen = !iconPaletteOpen.value
+  iconPaletteOpen.value = nextOpen
+  if (nextOpen) libraryMenuOpen.value = false
+}
+
+function toggleLibraryMenu() {
+  const nextOpen = !libraryMenuOpen.value
+  libraryMenuOpen.value = nextOpen
+  if (nextOpen) iconPaletteOpen.value = false
+}
+
 function openLearningHome() {
   learningExpanded.value = true
   go('/learning/projects')
@@ -190,7 +262,7 @@ function openLearningHome() {
 
 function openLearningProject(project: SidebarProject) {
   if (project.status === '待开启') {
-    go(`/learning/new?projectId=${project.id}`)
+    go(`/chat?learningProjectId=${project.id}`)
     return
   }
   go(`/learning/${project.id}`)
@@ -234,6 +306,19 @@ function syncSidebarProjects() {
   persistProjects()
 }
 
+function migrateLegacyConversationProjectLinks() {
+  if (sessionStorage.getItem(PROJECT_LINK_MIGRATION_KEY)) return
+  conversationStore.list.forEach((conversation) => {
+    if (conversation.learningProjectId) return
+    const matches = learningStore.plans.filter((plan) => plan.title.trim() === (conversation.title || '').trim())
+    if (matches.length === 1) {
+      const project = matches[0]!
+      conversationStore.linkLearningProject(conversation.id, project.id, project.title)
+    }
+  })
+  sessionStorage.setItem(PROJECT_LINK_MIGRATION_KEY, '1')
+}
+
 function selectCreateLibrary(id: number | null) {
   createProjectLibraryId.value = id
   libraryMenuOpen.value = false
@@ -248,21 +333,28 @@ function selectCreateIcon(icon: string) {
 }
 
 function createKnowledgeBaseFromProject() {
-  createProjectOpen.value = false
   libraryMenuOpen.value = false
-  go('/library')
+  knowledgeCreateOpen.value = true
+}
+
+function handleProjectKnowledgeCreated(id: number) {
+  createProjectLibraryId.value = id
+  knowledgeCreateOpen.value = false
 }
 
 function submitCreateProject() {
   const title = createProjectTitle.value.trim()
   if (!title) return
-  learningStore.createDraftPlan({
+  const project = learningStore.createDraftPlan({
     title,
     libraryId: createProjectLibraryId.value,
+    libraryName: createLibraryLabel.value,
+    icon: createProjectIcon.value,
+    iconColor: createProjectColor.value,
   })
   syncSidebarProjects()
   createProjectOpen.value = false
-  go('/learning/projects')
+  go(`/chat?learningProjectId=${project.id}`)
 }
 
 function openRename(kind: 'project' | 'recent', id: number, title: string) {
@@ -278,6 +370,7 @@ async function submitRename() {
   if (!title || editingId.value === null) return
 
   if (editingKind.value === 'project') {
+    learningStore.renamePlan(editingId.value, title)
     const project = sidebarProjects.value.find((item) => item.id === editingId.value)
     if (project) {
       project.title = title
@@ -321,7 +414,37 @@ async function deleteRecent(item: Conversation) {
 }
 
 function conversationTitle(item: Conversation) {
-  return item.title || '新对话'
+  const title = item.title || '新对话'
+  if (isTutorConversation(item) && !title.includes('AI 助教')) return `${title} · AI 助教`
+  if (isLearningSetupConversation(item) && !title.includes('方案制定')) return `${title} · 方案制定`
+  return title
+}
+
+function conversationProjectName(item: Conversation) {
+  if (!item.learningProjectId) return ''
+  if (isTutorConversation(item)) return 'AI 助教历史'
+  if (isLearningSetupConversation(item)) return '方案制定记录'
+  return learningStore.getPlan(item.learningProjectId)?.title || item.learningProjectName || ''
+}
+
+function isTutorConversation(item: Conversation) {
+  if (item.conversationType === 'learning-tutor') return true
+  if (item.conversationType === 'learning-setup') return false
+  return Boolean(item.title?.includes('AI 助教'))
+}
+
+function isLearningSetupConversation(item: Conversation) {
+  if (item.conversationType === 'learning-setup') return true
+  if (item.conversationType === 'learning-tutor') return false
+  return Boolean(item.learningProjectId && !isTutorConversation(item))
+}
+
+function conversationPath(item: Conversation) {
+  if (!item.learningProjectId) return `/chat/${item.id}`
+  const query = new URLSearchParams({ learningProjectId: String(item.learningProjectId) })
+  if (isTutorConversation(item)) query.set('tutor', '1')
+  else query.set('learning', '1')
+  return `/chat/${item.id}?${query.toString()}`
 }
 
 function openProjectMenu(e: MouseEvent, project: SidebarProject) {
@@ -353,16 +476,16 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
 <template>
   <aside class="student-sidebar" :class="{ 'student-sidebar--collapsed': sidebarCollapsed }">
     <div v-if="sidebarCollapsed" class="collapsed-pill">
-      <button type="button" aria-label="展开侧边栏" @click="toggleSidebar">
+      <button class="ui-icon-action" type="button" aria-label="展开侧边栏" @click="toggleSidebar">
         <AppIcon name="sidebar-left" :size="17" />
       </button>
-      <button type="button" aria-label="新对话" @click="createNewChat">
+      <button class="ui-icon-action" type="button" aria-label="新对话" @click="createNewChat">
         <AppIcon name="edit" :size="17" />
       </button>
-      <button type="button" aria-label="资料库" @click="go('/library')">
+      <button class="ui-icon-action" type="button" aria-label="资料库" @click="go('/library')">
         <AppIcon name="folder" :size="17" />
       </button>
-      <button type="button" aria-label="智能学习" @click="openLearningHome">
+      <button class="ui-icon-action" type="button" aria-label="智能学习" @click="openLearningHome">
         <AppIcon name="graduation" :size="17" />
       </button>
     </div>
@@ -373,13 +496,13 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
         <span class="brand-logo"><img :src="logoUrl" alt="" /></span>
         <span>ExamInsight</span>
       </button>
-      <button class="sidebar-toggle" type="button" aria-label="收起侧边栏" @click="toggleSidebar">
+      <button class="sidebar-toggle ui-icon-action" type="button" aria-label="收起侧边栏" @click="toggleSidebar">
         <AppIcon name="sidebar-left" :size="17" />
       </button>
     </div>
 
     <nav class="nav">
-      <div class="nav-row">
+      <div class="nav-row ui-hover-row">
         <button
           class="nav-item"
           :class="{ 'nav-item--active': activeSection === 'chat' }"
@@ -391,7 +514,7 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
         </button>
       </div>
 
-      <div class="nav-row">
+      <div class="nav-row ui-hover-row">
         <button
           class="nav-item"
           :class="{ 'nav-item--active': activeSection === 'library' }"
@@ -403,7 +526,7 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
         </button>
       </div>
 
-      <div class="nav-row">
+      <div class="nav-row ui-hover-row">
         <button
           class="nav-item"
           :class="{ 'nav-item--active': activeSection === 'learning' }"
@@ -414,7 +537,7 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
           <span>智能学习</span>
         </button>
         <button
-          class="new-learning-btn"
+          class="new-learning-btn ui-icon-action"
           type="button"
           aria-label="新建智能学习"
           @click.stop="openCreateProject"
@@ -423,7 +546,7 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
           <span class="nav-tooltip">新建智能学习</span>
         </button>
         <button
-          class="learning-toggle-btn"
+          class="learning-toggle-btn ui-icon-action"
           type="button"
           aria-label="展开智能学习"
           @click.stop="learningExpanded = !learningExpanded"
@@ -447,15 +570,18 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
             class="tree-item"
             :class="{ 'tree-item--active': activeLearningId === plan.id }"
             type="button"
-            :title="plan.title.replace('方案', '')"
             @click="openLearningProject(plan)"
           >
-            <AppIcon name="book" :size="15" />
-            <span :title="plan.title.replace('方案', '')">{{ plan.title.replace('方案', '') }}</span>
+            <component
+              :is="projectIconComponent(plan.icon)"
+              :size="15"
+              :style="{ color: projectIconColor(plan.iconColor) }"
+            />
+            <span>{{ plan.title.replace('方案', '') }}</span>
             <small v-if="plan.status === '待开启'">待开启</small>
           </button>
           <button
-            class="tree-more"
+            class="tree-more ui-icon-action"
             type="button"
             @mouseenter="menuHovering = true"
             @click="openProjectMenu($event, plan)"
@@ -481,23 +607,25 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
           v-if="pinnedExpanded"
           :key="item.id"
           class="recent-row recent-row--pinned"
-          :data-full-title="conversationTitle(item)"
           @mouseleave="closeMenuSoon"
         >
           <button
             class="recent-item"
             type="button"
             :aria-label="conversationTitle(item)"
-            @click="go(`/chat/${item.id}`)"
+            @click="go(conversationPath(item))"
           >
             <AppIcon name="message-square" :size="15" />
-            <span>{{ conversationTitle(item) }}</span>
+            <span class="recent-label-line">
+              <span class="recent-conversation-title">{{ conversationTitle(item) }}</span>
+              <small v-if="conversationProjectName(item)">{{ conversationProjectName(item) }}</small>
+            </span>
           </button>
-          <button class="recent-pin" type="button" aria-label="取消置顶" @click.stop="toggleRecentPinned(item)">
+          <button class="recent-pin ui-icon-action" type="button" aria-label="取消置顶" @click.stop="toggleRecentPinned(item)">
             <AppIcon name="pin-off" :size="15" />
           </button>
           <button
-            class="recent-more"
+            class="recent-more ui-icon-action"
             type="button"
             @mouseenter="menuHovering = true"
             @click="openRecentMenu($event, item)"
@@ -521,22 +649,24 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
           v-if="recentExpanded"
           :key="item.id"
           class="recent-row"
-          :data-full-title="conversationTitle(item)"
           @mouseleave="closeMenuSoon"
         >
           <button
             class="recent-item"
             type="button"
             :aria-label="conversationTitle(item)"
-            @click="go(`/chat/${item.id}`)"
+            @click="go(conversationPath(item))"
           >
-            <span>{{ conversationTitle(item) }}</span>
+            <span class="recent-label-line">
+              <span class="recent-conversation-title">{{ conversationTitle(item) }}</span>
+              <small v-if="conversationProjectName(item)">{{ conversationProjectName(item) }}</small>
+            </span>
           </button>
-          <button class="recent-pin" type="button" aria-label="置顶" @click.stop="toggleRecentPinned(item)">
+          <button class="recent-pin ui-icon-action" type="button" aria-label="置顶" @click.stop="toggleRecentPinned(item)">
             <AppIcon name="pin" :size="15" />
           </button>
           <button
-            class="recent-more"
+            class="recent-more ui-icon-action"
             type="button"
             @mouseenter="menuHovering = true"
             @click="openRecentMenu($event, item)"
@@ -547,7 +677,7 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
       </div>
     </section>
 
-    <button class="settings" type="button">
+    <button class="settings ui-hover-row" type="button">
       <AppIcon name="settings" :size="20" />
       <span>设置</span>
     </button>
@@ -557,16 +687,18 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
         <span>主题</span>
         <button
           class="theme-toggle"
-          :class="{ 'theme-toggle--dark': themeStore.mode === 'dark' }"
+          :class="{ 'theme-toggle--dark': themeStore.isDark }"
           type="button"
-          :aria-label="themeStore.mode === 'dark' ? '切换到浅色主题' : '切换到深色主题'"
+          role="switch"
+          :aria-checked="themeStore.isDark"
+          :aria-label="themeStore.isDark ? '切换到浅色主题' : '切换到深色主题'"
           @click="themeStore.toggle"
         >
           <span />
         </button>
       </div>
       <div class="account-row">
-        <button class="login-entry" type="button" @click="handleUserClick">
+        <button class="login-entry ui-hover-row" type="button" @click="handleUserClick">
           <span class="login-avatar"><AppIcon name="user" :size="20" /></span>
           <span>
             <strong>{{ userDisplayName() }}</strong>
@@ -587,16 +719,16 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
 
     <div
       v-if="menuOpen"
-      class="floating-menu"
+      class="floating-menu ui-menu-panel"
       :style="{ left: `${menuPos.x}px`, top: `${menuPos.y}px` }"
       @mouseenter="menuHovering = true"
       @mouseleave="closeMenuSoon"
       @click.stop
     >
       <template v-for="item in menuItems" :key="item.label">
-        <div v-if="item.divided" class="menu-divider" />
-        <button class="menu-action" :class="{ 'menu-action--danger': item.danger }" type="button" @click="item.action">
-          <AppIcon :name="item.icon" :size="16" />
+        <div v-if="item.divided" class="menu-divider ui-menu-divider" />
+        <button class="menu-action ui-menu-item" :class="{ 'menu-action--danger': item.danger, 'ui-menu-item--danger': item.danger }" type="button" @click="item.action">
+          <span class="ui-menu-icon"><AppIcon :name="item.icon" :size="16" /></span>
           <span>{{ item.label }}</span>
         </button>
       </template>
@@ -631,8 +763,8 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
           <label>
             <span>项目名称</span>
             <div class="project-name-field">
-              <button class="project-icon-trigger" type="button" @click="iconPaletteOpen = !iconPaletteOpen">
-                <AppIcon name="graduation" :size="18" />
+              <button class="project-icon-trigger" type="button" @click="toggleIconPalette">
+                <GraduationCap :size="18" />
               </button>
               <input value="JS" />
             </div>
@@ -650,7 +782,7 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
           <button class="delete-project-btn" type="button">删除项目</button>
         </div>
 
-        <div v-if="iconPaletteOpen" class="icon-palette">
+        <div v-if="iconPaletteOpen" class="icon-palette ui-menu-panel" @click.stop>
           <div class="palette-colors">
             <button
               v-for="color in paletteColors"
@@ -664,11 +796,11 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
           <div class="palette-icons">
             <button
               v-for="icon in paletteIcons"
-              :key="icon"
-              :class="{ 'palette-icon--active': icon === 'graduation' }"
+              :key="icon.key"
+              :class="{ 'palette-icon--active': icon.key === 'graduation' }"
               type="button"
             >
-              <AppIcon :name="icon" :size="21" />
+              <component :is="icon.component" :size="21" />
             </button>
           </div>
           <button class="close-palette" type="button" @click="iconPaletteOpen = false">关闭菜单</button>
@@ -676,63 +808,65 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
       </section>
     </div>
 
-    <div v-if="createProjectOpen" class="modal-backdrop" @click.self="createProjectOpen = false">
-      <section class="create-project-modal">
+    <div v-if="createProjectOpen" class="modal-backdrop" @click.self="closeCreateProject">
+      <section class="create-project-modal" @click="closeCreateProjectPanels">
         <header>
           <h2>创建项目</h2>
-          <button class="project-gear" type="button" @click="iconPaletteOpen = !iconPaletteOpen">
-            <AppIcon name="settings" :size="17" />
-          </button>
-          <button type="button" @click="createProjectOpen = false">×</button>
+          <button type="button" @click="closeCreateProject">×</button>
         </header>
         <label>
           <span>项目名称</span>
-          <div class="project-name-field create-name-field">
-            <button class="project-icon-trigger project-icon-trigger--muted" :style="{ color: createProjectColor }" type="button" @click="iconPaletteOpen = !iconPaletteOpen">
-              <AppIcon :name="createProjectIcon" :size="20" />
+          <div
+            class="project-name-field create-name-field"
+            :style="{ '--project-accent-color': projectIconColor(createProjectColor) }"
+          >
+            <button class="project-icon-trigger project-icon-trigger--muted" type="button" @click.stop="toggleIconPalette">
+              <component :is="createProjectIconComponent" :size="20" />
             </button>
             <input v-model="createProjectTitle" placeholder="哥本哈根之旅" maxlength="40" @keydown.enter.prevent="submitCreateProject" />
           </div>
         </label>
-        <label class="library-field" @click.stop>
+        <div class="library-field">
           <span>关联知识库</span>
-          <button class="library-trigger" type="button" @click="libraryMenuOpen = !libraryMenuOpen">
+          <button class="library-trigger" type="button" @click.stop="toggleLibraryMenu">
             <span>{{ createLibraryLabel }}</span>
-            <AppIcon name="chevron-down" :size="14" />
+            <AppIcon :name="libraryMenuOpen ? 'chevron-up' : 'chevron-down'" :size="14" />
           </button>
-          <div v-if="libraryMenuOpen" class="library-menu">
-            <button type="button" @click="selectCreateLibrary(null)">
-              <AppIcon name="close" :size="16" />
+          <div v-if="libraryMenuOpen" class="library-menu ui-menu-panel" @click.stop>
+            <button class="ui-menu-item" type="button" @click="selectCreateLibrary(null)">
+              <span class="ui-menu-icon"><AppIcon name="close" :size="16" /></span>
               <span>无</span>
             </button>
             <button
-              v-for="library in courseLibraries"
+              v-for="library in knowledgeBaseStore.list"
               :key="library.id"
+              class="ui-menu-item"
               type="button"
               @click="selectCreateLibrary(library.id)"
             >
-              <AppIcon name="folder" :size="16" />
+              <span class="ui-menu-icon"><AppIcon name="folder" :size="16" /></span>
               <span>{{ library.name }}</span>
             </button>
-            <button class="library-menu-create" type="button" @click="createKnowledgeBaseFromProject">
-              <AppIcon name="plus" :size="16" />
+            <div class="ui-menu-divider" />
+            <button class="library-menu-create ui-menu-item" type="button" @click="createKnowledgeBaseFromProject">
+              <span class="ui-menu-icon"><AppIcon name="plus" :size="16" /></span>
               <span>新建知识库</span>
             </button>
           </div>
-        </label>
+        </div>
         <p>项目会保存聊天和文件，以便用于持续进行的工作，或者仅用于让内容井井有条。</p>
         <footer>
           <button class="create-disabled" :class="{ 'create-disabled--ready': createProjectTitle.trim() }" type="button" @click="submitCreateProject">创建项目</button>
         </footer>
 
-        <div v-if="iconPaletteOpen" class="icon-palette icon-palette--create">
+        <div v-if="iconPaletteOpen" class="icon-palette icon-palette--create ui-menu-panel" @click.stop>
           <div class="palette-colors">
             <button
               v-for="color in paletteColors"
               :key="color"
               class="palette-color"
               :class="{ 'palette-color--active': color === createProjectColor }"
-              :style="{ background: color }"
+              :style="{ background: color, '--palette-selection-color': color }"
               type="button"
               @click="selectCreateColor(color)"
             />
@@ -740,18 +874,23 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
           <div class="palette-icons">
             <button
               v-for="icon in paletteIcons"
-              :key="icon"
-              :class="{ 'palette-icon--active': icon === createProjectIcon }"
+              :key="icon.key"
+              :class="{ 'palette-icon--active': icon.key === createProjectIcon }"
               type="button"
-              @click="selectCreateIcon(icon)"
+              @click="selectCreateIcon(icon.key)"
             >
-              <AppIcon :name="icon" :size="21" />
+              <component :is="icon.component" :size="21" />
             </button>
           </div>
           <button class="close-palette" type="button" @click="iconPaletteOpen = false">完成</button>
         </div>
       </section>
     </div>
+    <LibraryKnowledgeCreateModal
+      :open="knowledgeCreateOpen"
+      @close="knowledgeCreateOpen = false"
+      @created="handleProjectKnowledgeCreated"
+    />
   </aside>
 </template>
 
@@ -811,8 +950,8 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
 }
 
 .collapsed-pill button:hover {
-  border-radius: 7px;
-  background: var(--color-hover, rgba(0, 0, 0, 0.04));
+  border-radius: var(--ui-hover-radius);
+  background: var(--ui-hover-strong-bg);
   color: var(--color-text);
 }
 
@@ -900,7 +1039,7 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
 }
 
 .sidebar-toggle:hover {
-  background: var(--color-hover, rgba(0, 0, 0, 0.04));
+  background: var(--ui-hover-strong-bg);
   color: var(--color-text);
 }
 
@@ -944,7 +1083,7 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
 
 .nav-item:hover,
 .nav-item--active {
-  background: var(--color-hover, rgba(0, 0, 0, 0.04));
+  background: var(--ui-hover-bg);
   color: var(--color-text);
 }
 
@@ -1046,7 +1185,7 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
 .tree-more:hover,
 .recent-pin:hover,
 .recent-more:hover {
-  background: var(--color-hover-strong, rgba(0, 0, 0, 0.08));
+  background: var(--ui-hover-strong-bg);
   color: var(--color-text);
 }
 
@@ -1054,48 +1193,16 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
   position: fixed;
   z-index: 300;
   width: 198px;
-  padding: 8px;
-  border: 1px solid var(--color-border);
-  border-radius: 14px;
-  background: var(--color-surface);
-  box-shadow: var(--shadow-lg);
 }
 
 .menu-action {
-  width: 100%;
-  height: 38px;
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-  color: var(--color-text);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 10px;
-  font-size: 14px;
-  font-weight: 400;
-  text-align: left;
+  height: var(--ui-menu-item-height);
 }
 
 .menu-action :deep(svg) {
   width: 16px;
   height: 16px;
   stroke-width: 2;
-}
-
-.menu-action:hover {
-  background: var(--color-hover, rgba(0, 0, 0, 0.04));
-}
-
-.menu-action--danger {
-  color: var(--color-danger);
-}
-
-.menu-divider {
-  height: 1px;
-  background: var(--color-border);
-  margin: 6px 6px;
 }
 
 .learning-tree {
@@ -1134,7 +1241,7 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
 
 .tree-item:hover,
 .tree-item--active {
-  background: var(--color-hover, rgba(0, 0, 0, 0.04));
+  background: var(--ui-hover-bg);
   color: var(--color-text);
 }
 
@@ -1208,7 +1315,7 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
 }
 
 .recent-title:hover {
-  background: var(--color-hover, rgba(0, 0, 0, 0.04));
+  background: var(--ui-hover-bg);
 }
 
 .recent-title-chevron {
@@ -1227,7 +1334,7 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
   min-height: 30px;
   border-radius: 8px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: 6px;
   padding: 6px 58px 6px 4px;
@@ -1240,7 +1347,7 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
 }
 
 .recent-row--pinned .recent-item {
-  grid-template-columns: 18px minmax(0, 1fr) auto;
+  grid-template-columns: 18px minmax(0, 1fr);
 }
 
 .recent-pin,
@@ -1263,41 +1370,6 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
   right: 4px;
 }
 
-.recent-row:hover .recent-item {
-  background: var(--color-hover);
-  color: var(--color-text);
-}
-
-.recent-row::after {
-  content: attr(data-full-title);
-  position: absolute;
-  left: 4px;
-  top: calc(100% + 4px);
-  z-index: 80;
-  max-width: 218px;
-  padding: 5px 8px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-surface);
-  color: var(--color-text);
-  box-shadow: var(--shadow-sm);
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 18px;
-  letter-spacing: 0;
-  white-space: normal;
-  word-break: break-all;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(-2px);
-  transition: opacity 0.14s ease, transform 0.14s ease;
-}
-
-.recent-row:hover::after {
-  opacity: 1;
-  transform: translateY(0);
-}
-
 .recent-item span {
   min-width: 0;
   overflow: hidden;
@@ -1310,12 +1382,27 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
 }
 
 .recent-item small {
-  color: var(--color-text-muted);
-  font-size: 12px;
+  color: color-mix(in srgb, var(--color-text-muted) 70%, var(--color-bg));
+  flex: none;
+  font-size: 14px;
+  font-weight: 400;
   max-width: 82px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.recent-label-line {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  overflow: hidden;
+}
+
+.recent-conversation-title {
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .recent-pin {
@@ -1329,7 +1416,7 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
 }
 
 .recent-pin:hover {
-  background: var(--color-hover, rgba(0, 0, 0, 0.04));
+  background: var(--ui-hover-strong-bg);
   color: var(--color-text);
 }
 
@@ -1374,7 +1461,7 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
   height: 26px;
   border: 1px solid var(--color-border);
   border-radius: 999px;
-  background: var(--color-hover, rgba(0, 0, 0, 0.04));
+  background: var(--color-hover);
   cursor: pointer;
   padding: 2px;
   transition: background 0.18s ease, border-color 0.18s ease;
@@ -1421,14 +1508,14 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
 }
 
 .login-entry:hover {
-  background: var(--color-hover, rgba(0, 0, 0, 0.04));
+  background: var(--ui-hover-bg);
 }
 
 .login-avatar {
   width: 34px;
   height: 34px;
   border-radius: 999px;
-  background: var(--color-hover, rgba(0, 0, 0, 0.04));
+  background: var(--color-hover);
   color: var(--color-text-muted);
   display: grid;
   place-items: center;
@@ -1467,7 +1554,7 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
 }
 
 .logout-btn:hover {
-  background: var(--color-hover, rgba(0, 0, 0, 0.04));
+  background: var(--ui-hover-bg);
   color: var(--color-text);
 }
 
@@ -1536,10 +1623,6 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
   place-items: center;
   font-size: 20px;
   line-height: 1;
-}
-
-.project-gear {
-  font-size: 0 !important;
 }
 
 .rename-modal header button:hover,
@@ -1645,11 +1728,15 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
 }
 
 .project-icon-trigger--muted {
-  color: #9aa3b2;
+  color: var(--color-text-muted);
 }
 
 .create-name-field {
   grid-template-columns: 36px minmax(0, 1fr);
+}
+
+.create-name-field .project-icon-trigger {
+  color: var(--project-accent-color) !important;
 }
 
 .project-name-field input,
@@ -1706,10 +1793,6 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
   top: 126px;
   width: 260px;
   padding: 12px 12px 0;
-  border: 1px solid var(--color-border);
-  border-radius: 16px;
-  background: var(--color-surface);
-  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.16);
   z-index: 2;
   overflow: hidden;
 }
@@ -1742,7 +1825,7 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
 
 .palette-color--active {
   border: 3px solid var(--color-surface);
-  outline: 2px solid var(--color-text);
+  outline: 2px solid var(--palette-selection-color, var(--color-text));
   outline-offset: -1px;
   box-shadow: none;
 }
@@ -1809,6 +1892,11 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
 
 .library-field {
   position: relative;
+  display: grid;
+  gap: 8px;
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .library-trigger {
@@ -1840,40 +1928,14 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
   right: 0;
   top: calc(100% + 6px);
   z-index: 4;
-  padding: 8px;
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  background: var(--color-surface);
-  box-shadow: var(--shadow-lg);
   display: grid;
-  gap: 3px;
 }
 
 .library-menu button {
-  width: 100%;
-  min-height: 36px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--color-text);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 10px;
-  cursor: pointer;
-  font: inherit;
-  font-size: 14px;
-  text-align: left;
-}
-
-.library-menu button:hover {
-  background: var(--color-hover);
+  height: var(--ui-menu-item-height);
 }
 
 .library-menu-create {
-  border-top: 1px solid var(--color-border) !important;
-  border-radius: 0 0 8px 8px !important;
-  margin-top: 4px;
   color: var(--color-primary) !important;
 }
 
@@ -1886,7 +1948,7 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
   height: 34px;
   border: 0;
   border-radius: 999px;
-  background: #c7c7c7;
+  background: var(--color-border);
   color: var(--color-bg);
   padding: 0 14px;
   cursor: not-allowed;

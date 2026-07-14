@@ -12,12 +12,8 @@
   margin: 10px 0;
   padding: 30px 12px 12px;
   border-radius: var(--radius-md);
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--color-hover);
   overflow: auto;
-}
-
-:root[data-theme='dark'] .markdown pre {
-  background: rgba(255, 255, 255, 0.06);
 }
 
 .markdown code {
@@ -39,26 +35,14 @@
 }
 
 .markdown th {
-  background-color: rgba(0, 0, 0, 0.04);
+  background-color: var(--color-hover);
   font-weight: 600;
 }
 
-:root[data-theme='dark'] .markdown th {
-  background-color: rgba(255, 255, 255, 0.06);
-}
-
 .markdown tr:nth-child(even) {
-  background-color: rgba(0, 0, 0, 0.02);
-}
-
-:root[data-theme='dark'] .markdown tr:nth-child(even) {
-  background-color: rgba(255, 255, 255, 0.02);
+  background-color: color-mix(in srgb, var(--color-text) 2%, transparent);
 }
 
 .markdown tr:hover {
-  background-color: rgba(0, 0, 0, 0.04);
-}
-
-:root[data-theme='dark'] .markdown tr:hover {
-  background-color: rgba(255, 255, 255, 0.04);
+  background-color: var(--color-hover);
 }

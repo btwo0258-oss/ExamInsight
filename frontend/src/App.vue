@@ -16,11 +16,11 @@ const knowledgeBaseStore = useKnowledgeBaseStore()
 const examAnalysisStore = useExamAnalysisStore()
 
 onMounted(async () => {
-  themeStore.init()
   authStore.init()
   
   // 如果用户已登录，加载对话、知识库和考试分析数据
   if (authStore.isAuthed) {
+    await themeStore.syncFromServer()
     await conversationStore.fetchList()
     await knowledgeBaseStore.fetchList()
     await examAnalysisStore.fetchList()

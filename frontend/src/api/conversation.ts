@@ -10,6 +10,9 @@ export type Conversation = {
   totalTokens?: number
   updateTime?: string
   createTime?: string
+  learningProjectId?: number | null
+  learningProjectName?: string
+  conversationType?: 'general' | 'learning-setup' | 'learning-tutor'
 }
 
 function getMockConvsKey(): string {
@@ -51,7 +54,7 @@ export async function listConversations(): Promise<Conversation[]> {
   }
 }
 
-export async function createConversation(payload?: { kbId?: number | null; knowledgeBaseId?: number | null; title?: string }): Promise<Conversation> {
+export async function createConversation(payload?: { kbId?: number | null; knowledgeBaseId?: number | null; title?: string; learningProjectId?: number | null; learningProjectName?: string; conversationType?: Conversation['conversationType'] }): Promise<Conversation> {
   const actualKbId = payload?.kbId ?? payload?.knowledgeBaseId ?? null
   const reqPayload = { kbId: actualKbId, title: payload?.title }
   if (mockEnabled.value) {
@@ -63,6 +66,9 @@ export async function createConversation(payload?: { kbId?: number | null; knowl
       isPinned: false,
       messageCount: 0,
       updateTime: new Date().toISOString(),
+      learningProjectId: payload?.learningProjectId ?? null,
+      learningProjectName: payload?.learningProjectName,
+      conversationType: payload?.conversationType ?? 'general',
     }
     list.unshift(next)
     saveMockConvs(list)
@@ -82,6 +88,9 @@ export async function createConversation(payload?: { kbId?: number | null; knowl
         isPinned: false,
         messageCount: 0,
         updateTime: new Date().toISOString(),
+        learningProjectId: payload?.learningProjectId ?? null,
+        learningProjectName: payload?.learningProjectName,
+        conversationType: payload?.conversationType ?? 'general',
       }
       list.unshift(next)
       saveMockConvs(list)
@@ -93,7 +102,7 @@ export async function createConversation(payload?: { kbId?: number | null; knowl
 
 export async function updateConversation(
   id: number,
-  payload: { title?: string; status?: number; isPinned?: boolean; knowledgeBaseId?: number | null },
+  payload: { title?: string; status?: number; isPinned?: boolean; knowledgeBaseId?: number | null; learningProjectId?: number | null; learningProjectName?: string; conversationType?: Conversation['conversationType'] },
 ): Promise<Partial<Conversation>> {
   if (mockEnabled.value) {
     const list = getMockConvs()

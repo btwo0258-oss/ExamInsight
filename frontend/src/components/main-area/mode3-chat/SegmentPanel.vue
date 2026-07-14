@@ -19,6 +19,8 @@ const tooltipVisible = ref(false)
 const tooltipPos = ref({ top: 0, left: 0 })
 
 let clickTimer: number | null = null
+let tooltipFrame: number | null = null
+let tooltipAnchor: HTMLElement | null = null
 
 function throttle(fn: Function, delay: number) {
   let lastTime = 0
@@ -62,17 +64,38 @@ const segments = computed(() => {
 const isCompact = computed(() => segments.value.length < 10)
 
 function showTooltip(e: MouseEvent, content: string) {
-  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  tooltipAnchor = e.currentTarget as HTMLElement
   tooltipContent.value = content
+  tooltipVisible.value = false
+  if (tooltipFrame !== null) cancelAnimationFrame(tooltipFrame)
+  tooltipFrame = requestAnimationFrame(syncTooltipPosition)
+}
+
+function syncTooltipPosition() {
+  if (!tooltipAnchor || !isHover.value) {
+    tooltipFrame = null
+    return
+  }
+
+  const rect = tooltipAnchor.getBoundingClientRect()
   tooltipPos.value = {
     top: rect.top + rect.height / 2,
-    left: rect.left - 8
+    left: rect.left - 8,
   }
   tooltipVisible.value = true
+  tooltipFrame = requestAnimationFrame(syncTooltipPosition)
 }
 
 function hideTooltip() {
+  tooltipAnchor = null
   tooltipVisible.value = false
+  if (tooltipFrame !== null) cancelAnimationFrame(tooltipFrame)
+  tooltipFrame = null
+}
+
+function closeOutline() {
+  isHover.value = false
+  hideTooltip()
 }
 
 function scrollTo(id: string, index: number) {
@@ -161,6 +184,7 @@ watch(
 
 onUnmounted(() => {
   if (clickTimer) clearTimeout(clickTimer)
+  hideTooltip()
   scrollContainer?.removeEventListener('scroll', updateActiveIndex)
 })
 </script>
@@ -170,7 +194,7 @@ onUnmounted(() => {
     class="ds-outline-root"
     :class="{ 'is-hovered': isHover, 'is-compact': isCompact }"
     @mouseenter="isHover = true"
-    @mouseleave="isHover = false"
+    @mouseleave="closeOutline"
   >
     <div class="outline-wrapper">
       <div class="outline-scroll-viewport">
@@ -227,7 +251,7 @@ onUnmounted(() => {
 .outline-wrapper {
   width: 36px;
   height: 360px;
-  background: rgba(255, 255, 252, 0.62);
+  background: color-mix(in srgb, var(--color-surface) 62%, transparent);
   border: 1px solid transparent;
   border-radius: 12px;
   box-shadow: none;
@@ -242,10 +266,6 @@ onUnmounted(() => {
   flex-direction: column;
 }
 
-:root[data-theme='dark'] .outline-wrapper {
-  background: rgba(30, 30, 30, 0.5);
-}
-
 .is-compact .outline-wrapper {
   height: auto;
   max-height: 400px;
@@ -253,15 +273,9 @@ onUnmounted(() => {
 
 .is-hovered .outline-wrapper {
   width: 220px;
-  background: #fffffc;
-  border: 1px solid rgba(0,0,0,0.06);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.08);
-}
-
-:root[data-theme='dark'] .is-hovered .outline-wrapper {
-  background: #1e1e1e;
-  border-color: rgba(255,255,255,0.08);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg);
 }
 
 .outline-scroll-viewport {
@@ -302,16 +316,12 @@ onUnmounted(() => {
 }
 
 .is-hovered .outline-row:hover {
-  background: rgba(0, 0, 0, 0.06);
-}
-
-:root[data-theme='dark'] .is-hovered .outline-row:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--color-hover-strong);
 }
 
 .row-text {
   font-size: 13px;
-  color: #888;
+  color: var(--color-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   margin-right: 12px;
@@ -331,11 +341,8 @@ onUnmounted(() => {
   transform: translateX(0);
 }
 
-:root[data-theme='dark'] .row-text { color: #b0b0b0; }
-.is-hovered .outline-row:hover .row-text { color: #1a1a1a; }
-:root[data-theme='dark'] .is-hovered .outline-row:hover .row-text { color: #ffffff; }
-.is-active .row-text { color: #1a1a1a; font-weight: 600; }
-:root[data-theme='dark'] .is-active .row-text { color: #ffffff !important; }
+.is-hovered .outline-row:hover .row-text { color: var(--color-text); }
+.is-active .row-text { color: var(--color-text); font-weight: 600; }
 
 .row-indicator {
   width: 20px;
@@ -347,20 +354,17 @@ onUnmounted(() => {
 .dash-line {
   width: 12px;
   height: 3px;
-  background: #c0c0c0;
+  background: color-mix(in srgb, var(--color-text-muted) 50%, transparent);
   border-radius: 2px;
   transition: all 0.2s;
 }
 
-:root[data-theme='dark'] .dash-line { background: #666; }
 .is-hovered .outline-row:hover .dash-line {
   width: 16px;
   height: 4px;
-  background: #737373;
+  background: var(--color-text-muted);
 }
-:root[data-theme='dark'] .is-hovered .outline-row:hover .dash-line { background: #d4d4d4; }
-.is-active .dash-line { background: #1a1a1a !important; width: 20px; height: 4px; }
-:root[data-theme='dark'] .is-active .dash-line { background: #ffffff !important; }
+.is-active .dash-line { background: var(--color-text) !important; width: 20px; height: 4px; }
 
 .outline-scroll-viewport::-webkit-scrollbar { width: 0px; }
 </style>
@@ -370,14 +374,14 @@ onUnmounted(() => {
 .simple-tooltip {
   position: fixed;
   z-index: 9999;
-  background: #1f1f1f;
-  color: #f0f0f0;
+  background: var(--color-tooltip-bg);
+  color: var(--color-tooltip-text);
   padding: 10px 14px;
   border-radius: 8px;
   font-size: 13px;
   line-height: 1.6;
   pointer-events: none;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-md);
   
   /* 定位：向左对齐，垂直居中 */
   transform: translate(-100%, -50%);
@@ -390,10 +394,4 @@ onUnmounted(() => {
   white-space: normal;
 }
 
-/* 黑夜模式 */
-:root[data-theme='dark'] .simple-tooltip {
-  background: #2a2a2a;
-  color: #e0e0e0;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-}
 </style>

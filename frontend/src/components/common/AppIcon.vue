@@ -2891,6 +2891,20 @@ const props = withDefaults(defineProps<Props>(), { size: 20 });
   </svg>
 
   <svg
+    v-else-if="name === 'arrow-up'"
+    class="icon"
+    :width="props.size"
+    :height="props.size"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    :style="{ color: props.color }"
+  >
+    <line x1="12" y1="19" x2="12" y2="5" stroke="currentColor" stroke-width="3" stroke-linecap="round" />
+    <polyline points="5 12 12 5 19 12" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+  </svg>
+
+  <svg
     v-else-if="name === 'eye'"
     class="icon"
     :width="props.size"

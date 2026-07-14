@@ -125,15 +125,15 @@ function handleViewDetail(id: number) {
               />
             </button>
             <div class="overlay" v-if="showSortMenu" @click="showSortMenu = false"></div>
-            <div class="dropdown-menu" v-if="showSortMenu">
+            <div class="dropdown-menu ui-menu-panel" v-if="showSortMenu">
               <div
-                class="dropdown-item"
+                class="dropdown-item ui-menu-item"
                 @click="
                   viewMode = 'grid';
                   showSortMenu = false;
                 "
               >
-                <AppIcon name="grid" :size="16" />
+                <AppIcon class="ui-menu-icon" name="grid" :size="16" />
                 <span class="dropdown-text">图标排序</span>
                 <AppIcon
                   v-if="viewMode === 'grid'"
@@ -143,13 +143,13 @@ function handleViewDetail(id: number) {
                 />
               </div>
               <div
-                class="dropdown-item"
+                class="dropdown-item ui-menu-item"
                 @click="
                   viewMode = 'list';
                   showSortMenu = false;
                 "
               >
-                <AppIcon name="list" :size="16" />
+                <AppIcon class="ui-menu-icon" name="list" :size="16" />
                 <span class="dropdown-text">列表排序</span>
                 <AppIcon
                   v-if="viewMode === 'list'"
@@ -158,15 +158,15 @@ function handleViewDetail(id: number) {
                   color="var(--color-primary)"
                 />
               </div>
-              <div class="dropdown-divider"></div>
+              <div class="dropdown-divider ui-menu-divider"></div>
               <div
-                class="dropdown-item"
+                class="dropdown-item ui-menu-item"
                 @click="
                   sortBy = 'updated_at';
                   showSortMenu = false;
                 "
               >
-                <AppIcon name="clock" :size="16" />
+                <AppIcon class="ui-menu-icon" name="clock" :size="16" />
                 <span class="dropdown-text">按时间排序</span>
                 <AppIcon
                   v-if="sortBy === 'updated_at'"
@@ -176,13 +176,13 @@ function handleViewDetail(id: number) {
                 />
               </div>
               <div
-                class="dropdown-item"
+                class="dropdown-item ui-menu-item"
                 @click="
                   sortBy = 'name';
                   showSortMenu = false;
                 "
               >
-                <AppIcon name="user" :size="16" />
+                <AppIcon class="ui-menu-icon" name="user" :size="16" />
                 <span class="dropdown-text">按名称排序</span>
                 <AppIcon
                   v-if="sortBy === 'name'"
@@ -353,37 +353,13 @@ function handleViewDetail(id: number) {
   position: absolute;
   top: 120%;
   right: 0;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-  padding: 8px;
   min-width: 180px;
   z-index: 50;
   display: flex;
   flex-direction: column;
 }
-.dropdown-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background-color 0.2s ease;
-  color: var(--color-text);
-  font-size: 14px;
-}
-.dropdown-item:hover {
-  background: var(--color-surface-hover);
-}
 .dropdown-text {
   flex: 1;
-}
-.dropdown-divider {
-  height: 1px;
-  background: var(--color-border);
-  margin: 4px 0;
 }
 
 .empty {
@@ -476,11 +452,7 @@ function handleViewDetail(id: number) {
 }
 
 .plus-icon {
-  color: #fff;
-}
-
-:root[data-theme="dark"] .plus-icon {
-  color: #000;
+  color: var(--color-on-primary);
 }
 
 .new-card__text {

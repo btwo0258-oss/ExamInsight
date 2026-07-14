@@ -434,20 +434,20 @@ async function confirmDeleteDocument() {
               <button class="more-btn" @click="toggleMenu($event, conv.id)">
                 <AppIcon name="more-horizontal" :size="16" />
               </button>
-              <div v-if="activeMenuId === conv.id" class="dropdown-menu">
-                <div class="menu-item" @click.stop="handleRename(conv.id, conv.title)">
-                  <AppIcon name="edit" :size="14" />
+              <div v-if="activeMenuId === conv.id" class="dropdown-menu ui-menu-panel">
+                <div class="menu-item ui-menu-item" @click.stop="handleRename(conv.id, conv.title)">
+                  <AppIcon class="ui-menu-icon" name="edit" :size="16" />
                   <span>重命名</span>
                 </div>
-                <div class="menu-item" @click.stop="handleRemoveFromKB(conv.id)">
-                  <AppIcon name="close" :size="14" />
+                <div class="menu-item ui-menu-item" @click.stop="handleRemoveFromKB(conv.id)">
+                  <AppIcon class="ui-menu-icon" name="close" :size="16" />
                   <span>移除</span>
                 </div>
                 <div
-                  class="menu-item menu-item--danger"
+                  class="menu-item ui-menu-item ui-menu-item--danger"
                   @click.stop="handleDeleteConversation(conv.id)"
                 >
-                  <AppIcon name="trash" :size="14" />
+                  <AppIcon class="ui-menu-icon" name="trash" :size="16" />
                   <span>删除</span>
                 </div>
               </div>
@@ -1045,37 +1045,9 @@ async function confirmDeleteDocument() {
   position: absolute;
   top: 100%;
   right: 0;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 4px;
-  min-width: 120px;
-  box-shadow: var(--shadow-lg);
+  min-width: 168px;
   z-index: 100;
   margin-top: 4px;
-}
-
-.menu-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  font-size: 13px;
-  color: var(--color-text);
-  cursor: pointer;
-  border-radius: 4px;
-}
-
-.menu-item:hover {
-  background: var(--color-surface-hover);
-}
-
-.menu-item--danger {
-  color: #ef4444;
-}
-
-.menu-item--danger:hover {
-  background: rgba(239, 68, 68, 0.1);
 }
 
 .documents {

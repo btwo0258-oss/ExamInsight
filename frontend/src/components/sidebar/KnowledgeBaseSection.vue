@@ -93,16 +93,12 @@ function handleViewList() {
   align-items: center;
   justify-content: space-between;
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: var(--ui-hover-radius);
   transition: background-color 0.2s;
 }
 
 .section__header:hover {
-  background: rgba(0, 0, 0, 0.04);
-}
-
-:root[data-theme='dark'] .section__header:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--ui-hover-bg);
 }
 
 .header-left, .header-right {
@@ -154,11 +150,7 @@ function handleViewList() {
 }
 
 .create-button:hover {
-  background: rgba(0, 0, 0, 0.04);
-}
-
-:root[data-theme='dark'] .create-button:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--ui-hover-bg);
 }
 
 .create-text {

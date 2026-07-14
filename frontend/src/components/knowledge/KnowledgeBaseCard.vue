@@ -130,13 +130,13 @@ function formatDate(dateString: string): string {
             <AppIcon name="more-horizontal" :size="20" />
           </button>
           <div class="overlay" v-if="showActions" @click.stop="showActions = false"></div>
-          <div class="actions-menu" v-if="showActions">
-            <div class="menu-item" @click.stop="handleEdit">
-              <AppIcon name="edit" :size="16" />
+          <div class="actions-menu ui-menu-panel" v-if="showActions">
+            <div class="menu-item ui-menu-item" @click.stop="handleEdit">
+              <AppIcon class="ui-menu-icon" name="edit" :size="16" />
               <span>编辑信息</span>
             </div>
-            <div class="menu-item danger" @click.stop="handleDelete">
-              <AppIcon name="trash" :size="16" />
+            <div class="menu-item ui-menu-item ui-menu-item--danger" @click.stop="handleDelete">
+              <AppIcon class="ui-menu-icon" name="trash" :size="16" />
               <span>删除知识库</span>
             </div>
           </div>
@@ -291,37 +291,9 @@ function formatDate(dateString: string): string {
   position: absolute;
   top: 100%;
   right: 0;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  box-shadow: var(--shadow-lg);
-  padding: 6px;
-  min-width: 140px;
+  min-width: 168px;
   z-index: 100;
   margin-top: 4px;
-}
-
-.menu-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-radius: 6px;
-  font-size: 13px;
-  color: var(--color-text);
-  transition: background 0.2s;
-}
-
-.menu-item:hover {
-  background: var(--color-bg-alt);
-}
-
-.menu-item.danger {
-  color: #ef4444;
-}
-
-.menu-item.danger:hover {
-  background: rgba(239, 68, 68, 0.05);
 }
 
 /* Grid layout overrides */

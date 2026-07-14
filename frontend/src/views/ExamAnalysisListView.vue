@@ -29,9 +29,9 @@
                   />
                 </button>
                 <div class="overlay" v-if="showSortMenu" @click="showSortMenu = false"></div>
-                <div class="dropdown-menu" v-if="showSortMenu">
+                <div class="dropdown-menu ui-menu-panel" v-if="showSortMenu">
                   <div
-                    class="dropdown-item"
+                    class="dropdown-item ui-menu-item"
                     @click="
                       viewMode = 'grid';
                       showSortMenu = false;
@@ -47,7 +47,7 @@
                     />
                   </div>
                   <div
-                    class="dropdown-item"
+                    class="dropdown-item ui-menu-item"
                     @click="
                       viewMode = 'list';
                       showSortMenu = false;
@@ -62,9 +62,9 @@
                       color="var(--color-primary)"
                     />
                   </div>
-                  <div class="dropdown-divider"></div>
+                  <div class="ui-menu-divider"></div>
                   <div
-                    class="dropdown-item"
+                    class="dropdown-item ui-menu-item"
                     @click="
                       sortMode = 'time';
                       showSortMenu = false;
@@ -80,7 +80,7 @@
                     />
                   </div>
                   <div
-                    class="dropdown-item"
+                    class="dropdown-item ui-menu-item"
                     @click="
                       sortMode = 'name';
                       showSortMenu = false;
@@ -150,9 +150,9 @@
                   v-if="activeMenuId === item.id"
                   @click.stop="activeMenuId = null"
                 ></div>
-                <div class="actions-menu" v-if="activeMenuId === item.id">
+                <div class="actions-menu ui-menu-panel" v-if="activeMenuId === item.id">
                   <div
-                    class="menu-item"
+                    class="menu-item ui-menu-item"
                     @click.stop="
                       handleEdit(item);
                       activeMenuId = null;
@@ -162,7 +162,7 @@
                     <span>重命名</span>
                   </div>
                   <div
-                    class="menu-item danger"
+                    class="menu-item danger ui-menu-item ui-menu-item--danger"
                     @click.stop="
                       handleDelete(item.id);
                       activeMenuId = null;
@@ -484,39 +484,17 @@ function confirmDelete() {
   position: absolute;
   top: 120%;
   right: 0;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-  padding: 8px;
   min-width: 180px;
   z-index: 50;
   display: flex;
   flex-direction: column;
 }
 .dropdown-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background-color 0.2s ease;
-  color: var(--color-text);
-  font-size: 14px;
-}
-.dropdown-item:hover {
-  background: var(--color-surface-hover);
+  gap: var(--ui-menu-gap);
 }
 .dropdown-text {
   flex: 1;
 }
-.dropdown-divider {
-  height: 1px;
-  background: var(--color-border);
-  margin: 4px 0;
-}
-
 .list {
   transition: all 0.3s ease;
 }
@@ -600,11 +578,7 @@ function confirmDelete() {
 }
 
 .plus-icon {
-  color: #fff;
-}
-
-:root[data-theme="dark"] .plus-icon {
-  color: #000;
+  color: var(--color-on-primary);
 }
 
 .new-card__text {
@@ -706,37 +680,9 @@ function confirmDelete() {
   position: absolute;
   top: 100%;
   right: 0;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  box-shadow: var(--shadow-lg);
-  padding: 6px;
   min-width: 140px;
   z-index: 100;
   margin-top: 4px;
-}
-
-.menu-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-radius: 6px;
-  font-size: 13px;
-  color: var(--color-text);
-  transition: background 0.2s;
-}
-
-.menu-item:hover {
-  background: var(--color-bg-alt);
-}
-
-.menu-item.danger {
-  color: #ef4444;
-}
-
-.menu-item.danger:hover {
-  background: rgba(239, 68, 68, 0.05);
 }
 
 .list--grid .list-item {
@@ -844,11 +790,7 @@ function confirmDelete() {
 }
 
 .mini__btn:hover {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--color-hover);
   color: var(--color-text);
-}
-
-:root[data-theme="dark"] .mini__btn:hover {
-  background: rgba(255, 255, 255, 0.06);
 }
 </style>

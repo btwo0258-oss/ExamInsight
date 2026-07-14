@@ -32,7 +32,7 @@ async function createNewChat() {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  background: var(--color-text);
+  background: var(--color-primary);
   border: 1px solid var(--color-border);
   border-radius: 999px;
   padding: 10px;
@@ -40,29 +40,15 @@ async function createNewChat() {
   font-weight: 500;
   cursor: pointer;
   box-shadow: var(--shadow-sm);
-  color: var(--color-surface);
+  color: var(--color-on-primary);
   transition: all 0.2s ease;
 }
 
 .new-btn :deep(svg) {
-  color: var(--color-surface);
-}
-
-:root[data-theme='dark'] .new-btn {
-  background: var(--color-surface);
-  color: var(--color-text);
-  border-color: var(--color-border);
-}
-
-:root[data-theme='dark'] .new-btn :deep(svg) {
-  color: var(--color-text);
+  color: var(--color-on-primary);
 }
 
 .new-btn:hover {
-  border-color: #333;
-}
-
-:root[data-theme='dark'] .new-btn:hover {
-  border-color: var(--color-text);
+  border-color: var(--color-primary);
 }
 </style>

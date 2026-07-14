@@ -9,6 +9,9 @@ import SourceChunks from "./SourceChunks.vue";
 import AppIcon from "@/components/common/AppIcon.vue";
 import MessageActions from "./MessageActions.vue";
 import { copyText } from "@/utils/clipboard";
+import LearningProfileCard from "@/components/student/LearningProfileCard.vue";
+import type { LearningProfileData } from "@/components/student/LearningProfileCard.vue";
+import LearningPlanDocument from "@/components/student/LearningPlanDocument.vue";
 
 type Props = {
   message: ChatMessage;
@@ -23,6 +26,10 @@ const emit = defineEmits<{
   edit: [messageId: string];
   regenerate: [messageId: string];
   generateMindmap: [messageId: string, content: string];
+  confirmLearningProfile: [messageId: string];
+  updateLearningProfile: [messageId: string, profile: LearningProfileData];
+  updateLearningDocument: [messageId: string, content: string];
+  regenerateLearningDocument: [messageId: string];
 }>();
 
 const isUser = computed(() => props.message.role === "user");
@@ -143,6 +150,10 @@ async function submitEdit() {
 }
 
 async function onRegenerate() {
+  if (props.message.kind === "learning-document") {
+    emit("regenerateLearningDocument", props.message.id);
+    return;
+  }
   if (!props.conversationId || isRegenerateDisabled.value) return;
 
   // Rate limiting check
@@ -172,9 +183,9 @@ async function onRegenerate() {
   await messageStore.regenerate(props.conversationId, turnId);
 }
 
-async function onGenerateMindmap() {
+async function onGenerateMindmap(_messageId?: string, content?: string) {
   if (!props.conversationId) return;
-  emit("generateMindmap", props.message.id, props.message.content);
+  emit("generateMindmap", props.message.id, content ?? props.message.content);
 }
 </script>
 
@@ -185,6 +196,9 @@ async function onGenerateMindmap() {
     </div>
 
     <div class="bubble-content-wrap">
+      <div v-if="isUser && message.tutorSource" class="tutor-source">
+        来自：{{ message.tutorSource.label }}
+      </div>
       <!-- Uploaded files display -->
       <div v-if="isUser && message.files && message.files.length > 0" class="uploaded-files">
         <div v-for="(file, idx) in message.files" :key="idx" class="file-card">
@@ -217,7 +231,21 @@ async function onGenerateMindmap() {
           </div>
         </div>
         <div v-else class="content content--ai">
-          <MarkdownRenderer v-if="showMarkdown" :content="message.content" :is-streaming="isStreaming" />
+          <LearningProfileCard
+            v-if="message.kind === 'learning-profile'"
+            :profile="message.learningData.profile"
+            :loading="message.learningData.loading"
+            :confirmed="message.learningData.confirmed"
+            @confirm="emit('confirmLearningProfile', message.id)"
+            @change="emit('updateLearningProfile', message.id, $event)"
+          />
+          <LearningPlanDocument
+            v-else-if="message.kind === 'learning-document'"
+            :content="message.learningData.content"
+            :loading="message.learningData.loading"
+            @update="(content) => emit('updateLearningDocument', message.id, content)"
+          />
+          <MarkdownRenderer v-else-if="showMarkdown" :content="message.content" :is-streaming="isStreaming" />
           <span v-if="isStreaming" class="cursor" />
           <!-- @ts-ignore -->
           <SourceChunks v-if="message.sourceChunks?.length" :chunks="message.sourceChunks" />
@@ -245,7 +273,7 @@ async function onGenerateMindmap() {
       <div
         class="message-footer"
         :class="{ 'message-footer--user': isUser }"
-        v-if="!isEditing && (!isStreaming || isUser)"
+        v-if="(!message.kind || (message.kind === 'learning-document' && !message.learningData?.loading)) && !isEditing && (!isStreaming || isUser)"
       >
         <div v-if="versionCount > 1" class="version-switcher">
           <button class="version-btn" :disabled="currentVersionIndex <= 1" @click="prevVersion">
@@ -365,21 +393,24 @@ async function onGenerateMindmap() {
   align-items: flex-end;
 }
 
+.tutor-source {
+  padding: 0 4px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: right;
+}
+
 .file-card {
   display: flex;
   align-items: center;
   gap: 12px;
-  background-color: var(--color-surface, #ffffff);
-  border: 1px solid var(--color-border, #e5e7eb);
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
   border-radius: 12px;
   padding: 12px 16px;
   min-width: 220px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-}
-
-:root[data-theme="dark"] .file-card {
-  background-color: #1e1e20;
-  border-color: #303133;
+  box-shadow: var(--shadow-sm);
 }
 
 .file-info {
@@ -392,20 +423,16 @@ async function onGenerateMindmap() {
 .file-name {
   font-size: 14px;
   font-weight: 500;
-  color: var(--color-text, #111827);
+  color: var(--color-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 200px;
 }
 
-:root[data-theme="dark"] .file-name {
-  color: #e4e7ed;
-}
-
 .file-meta {
   font-size: 12px;
-  color: var(--color-text-muted, #6b7280);
+  color: var(--color-text-muted);
 }
 
 .message-footer {
@@ -424,7 +451,7 @@ async function onGenerateMindmap() {
   align-items: center;
   gap: 6px;
   font-size: 13px;
-  color: var(--color-text-secondary, #909399);
+  color: var(--color-text-muted);
   user-select: none;
 }
 
@@ -449,12 +476,8 @@ async function onGenerateMindmap() {
 }
 
 .version-btn:not(:disabled):hover {
-  color: var(--color-text, #303133);
-  background-color: rgba(0, 0, 0, 0.05);
-}
-:root[data-theme="dark"] .version-btn:not(:disabled):hover {
-  color: #e4e7ed;
-  background-color: rgba(255, 255, 255, 0.1);
+  color: var(--color-text);
+  background-color: var(--color-hover-strong);
 }
 
 .bubble {
@@ -467,28 +490,27 @@ async function onGenerateMindmap() {
 }
 
 .bubble--user {
-  background: #303133;
-  color: #ffffff;
+  background: var(--color-primary);
+  color: var(--color-on-primary);
   border-bottom-right-radius: 4px;
   text-align: left;
 }
 
 .bubble--ai {
-  background: #ffffff;
-  border: 1px solid #e4e7ed;
-  color: #303133;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
   border-bottom-left-radius: 4px;
 }
 
-:root[data-theme="dark"] .bubble--user {
-  background: #ffffff;
-  color: #303133;
-}
-
-:root[data-theme="dark"] .bubble--ai {
-  background: #1e1e20;
-  border: 1px solid #303133;
-  color: #e4e7ed;
+.bubble--ai:has(.profile-card),
+.bubble--ai:has(.plan-document) {
+  width: 100%;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .cursor {
@@ -513,7 +535,7 @@ async function onGenerateMindmap() {
 
 .response-time {
   font-size: 12px;
-  color: var(--color-text-secondary, #666);
+  color: var(--color-text-muted);
   margin-top: 8px;
   text-align: right;
   cursor: pointer;
@@ -522,16 +544,12 @@ async function onGenerateMindmap() {
 }
 
 .response-time:hover {
-  color: var(--color-text, #333);
-}
-
-:root[data-theme="dark"] .response-time:hover {
-  color: #fff;
+  color: var(--color-text);
 }
 
 .response-error {
   font-size: 12px;
-  color: var(--color-error, #ff4d4f);
+  color: var(--color-danger);
   margin-top: 8px;
 }
 
@@ -561,13 +579,9 @@ async function onGenerateMindmap() {
 
 .edit-desc {
   font-size: 12px;
-  color: #606266;
+  color: var(--color-text-muted);
   transition: color 0.3s;
 }
-:root[data-theme="dark"] .edit-desc {
-  color: #a3a6ad;
-}
-
 .edit-textarea {
   width: 100%;
   padding: 8px 12px;
@@ -579,16 +593,9 @@ async function onGenerateMindmap() {
   outline: none;
 }
 
-/* Light mode (User bubble is dark grey) */
 .bubble--user .edit-textarea {
-  background-color: #ffffff;
-  color: #303133;
-}
-
-/* Dark mode (User bubble is white) */
-:root[data-theme="dark"] .bubble--user .edit-textarea {
-  background-color: #1e1e20;
-  color: #e4e7ed;
+  background-color: var(--color-surface);
+  color: var(--color-text);
 }
 
 .edit-actions {
@@ -634,30 +641,19 @@ async function onGenerateMindmap() {
 
 /* Cancel Button */
 .edit-actions .cancel {
-  background-color: #f0f2f5;
-  color: #606266;
+  background-color: var(--color-surface-subtle);
+  color: var(--color-text-muted);
 }
 .edit-actions .cancel:hover {
-  background-color: #e4e7ed;
-}
-:root[data-theme="dark"] .edit-actions .cancel {
-  background-color: #303133;
-  color: #e4e7ed;
-}
-:root[data-theme="dark"] .edit-actions .cancel:hover {
-  background-color: #404246;
+  background-color: var(--color-hover-strong);
 }
 
 /* Submit Button (Regenerate) */
 .edit-actions .submit {
   background-color: transparent;
-  color: #ffffff;
+  color: var(--color-on-primary);
 }
 .edit-actions .submit:hover {
   opacity: 0.8;
-}
-:root[data-theme="dark"] .edit-actions .submit {
-  background-color: transparent;
-  color: #303133;
 }
 </style>

@@ -146,6 +146,14 @@ header button {
   cursor: pointer;
   font-size: 24px;
   color: var(--color-text-muted);
+  width: 32px;
+  height: 32px;
+  border-radius: var(--ui-hover-radius);
+}
+
+header button:hover {
+  background: var(--ui-hover-strong-bg);
+  color: var(--color-text);
 }
 
 .drop-zone {
@@ -165,7 +173,7 @@ header button {
 }
 
 .attachment-previews { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
-.upload-error { margin: -4px 0 14px; color: #dc2626; font-size: 13px; }
+.upload-error { margin: -4px 0 14px; color: var(--color-danger); font-size: 13px; }
 
 .drop-zone span,
 .field span,

@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
 import LearningDetailShell from '@/components/student/LearningDetailShell.vue'
 import LearningQuestionCard from '@/components/student/LearningQuestionCard.vue'
+import LearningTutorPanel from '@/components/student/LearningTutorPanel.vue'
 import type { CodeLanguageKey } from '@/mock'
 import { evaluateExerciseAnswer, useLearningStore } from '@/stores/learning'
 
@@ -383,29 +384,13 @@ class Dog extends Animal {
     </section>
 
     <template #aside>
-      <aside class="tutor-panel panel">
-          <header>
-            <span><AppIcon name="brain" :size="20" /></span>
-            <h2>AI 助教</h2>
-          </header>
-          <div class="assistant-card">
-            <p>你现在卡在方法重写和运行时绑定，我会用代码例子解释。</p>
-            <strong>关键要点</strong>
-            <ul>
-              <li>方法重写让子类提供新的实现</li>
-              <li>动态绑定确保运行时调用子类实现</li>
-            </ul>
-          </div>
-          <label>
-            <textarea placeholder="继续追问当前知识点..." />
-            <AppIcon name="send" :size="18" />
-          </label>
-          <div class="quick-row">
-            <button type="button">换个例子</button>
-            <button type="button">生成图解</button>
-            <button type="button">出 3 道题</button>
-          </div>
-      </aside>
+      <LearningTutorPanel
+        :plan="plan"
+        :stage="activeStage"
+        :task="activeTask"
+        :exercise="exercise"
+        mode="inline"
+      />
     </template>
 
     <template #footer>
@@ -449,13 +434,13 @@ textarea {
 }
 
 .task-nav-head > span {
-  color: #64748b;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 
 .day-section {
   margin-top: 10px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--color-border);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -472,20 +457,28 @@ textarea {
   align-items: center;
   padding: 10px;
   border: 0;
-  background: #f8fafc;
-  color: #334155;
+  background: transparent;
+  color: var(--color-text);
   text-align: left;
   cursor: pointer;
 }
 
+.day-title:hover {
+  background: var(--ui-hover-bg);
+}
+
+.day-section.active .day-title {
+  background: var(--ui-hover-strong-bg);
+}
+
 .day-title > small {
   grid-column: 2;
-  color: #64748b;
+  color: var(--color-text-muted);
   font-size: 11px;
 }
 
 .day-title span {
-  color: #2563eb;
+  color: var(--color-info);
   font-size: 12px;
   font-weight: 800;
 }
@@ -504,7 +497,7 @@ textarea {
 }
 
 .task-row small {
-  color: #2563eb;
+  color: var(--color-info);
   font-size: 10px;
   font-weight: 800;
 }
@@ -523,21 +516,21 @@ textarea {
 .content-context {
   margin-bottom: 16px;
   padding-bottom: 14px;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .content-context span,
 .inline-resource-label {
   border-radius: 999px;
-  background: #eff6ff;
-  color: #2563eb;
+  background: color-mix(in srgb, #2563eb 11%, var(--color-surface));
+  color: var(--color-info);
   padding: 5px 10px;
   font-size: 12px;
   font-weight: 800;
 }
 
 .content-context p {
-  color: #64748b;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 
@@ -558,8 +551,8 @@ textarea {
   place-items: center;
   border: 1px solid #dbeafe;
   border-radius: 8px;
-  background: #f8fbff;
-  color: #334155;
+  background: color-mix(in srgb, #2563eb 7%, var(--color-surface));
+  color: var(--color-text);
   text-align: center;
   font-size: 13px;
   font-weight: 700;
@@ -569,14 +562,14 @@ textarea {
   margin: 20px 0 0;
   padding: 15px 18px;
   border-left: 3px solid #2563eb;
-  background: #eff6ff;
-  color: #334155;
+  background: color-mix(in srgb, #2563eb 11%, var(--color-surface));
+  color: var(--color-text);
   line-height: 1.7;
 }
 
 .footer-hint {
   margin-right: auto;
-  color: #64748b;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 
@@ -619,10 +612,14 @@ textarea {
   font-weight: 800;
 }
 
+.outline-btn:hover {
+  background: var(--ui-hover-bg);
+}
+
 .primary-btn {
   border: 1px solid var(--color-primary);
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-on-primary);
 }
 
 .outline-btn {
@@ -675,7 +672,7 @@ textarea {
   height: 9px;
   flex: 0 0 auto;
   border-radius: 50%;
-  background: #cbd5e1;
+  background: var(--color-border);
 }
 
 .task-row > i.running {
@@ -695,7 +692,7 @@ textarea {
 
 .task-row > em {
   flex: 0 0 auto;
-  color: #64748b;
+  color: var(--color-text-muted);
   font-size: 11px;
   font-style: normal;
   white-space: nowrap;
@@ -703,7 +700,11 @@ textarea {
 
 .task-row.active {
   border-color: var(--color-primary);
-  background: #f4f6f8;
+  background: var(--ui-hover-strong-bg);
+}
+
+.task-row:hover:not(.active) {
+  background: var(--ui-hover-bg);
 }
 
 .today-progress {
@@ -715,7 +716,7 @@ textarea {
 }
 
 .today-progress strong {
-  color: #2563eb;
+  color: var(--color-info);
   font-size: 28px;
 }
 
@@ -784,7 +785,17 @@ pre,
 .lesson-copy,
 .quiz-card,
 .assistant-card {
-  padding: 18px;
+  padding: 24px;
+}
+
+.lesson-copy > .inline-resource-label {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.lesson-copy > h2 {
+  line-height: 1.35;
 }
 
 .lesson-copy p,
@@ -808,16 +819,17 @@ pre,
   border: 1px dashed #bfdbfe;
   border-radius: 8px;
   padding: 18px;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   justify-content: center;
-  gap: 18px;
-  color: #2563eb;
+  gap: 12px;
+  color: var(--color-info);
   text-align: center;
 }
 
 .diagram span {
-  min-width: 110px;
+  min-width: 0;
   border: 1px solid var(--color-border);
   border-radius: 8px;
   padding: 12px;
@@ -827,7 +839,7 @@ pre,
 pre {
   margin: 0;
   padding: 18px;
-  background: #f8fafc;
+  background: var(--color-hover);
   overflow: auto;
   color: var(--color-text);
 }
@@ -852,7 +864,7 @@ pre {
   padding: 20px;
   border: 1px solid #bbf7d0;
   border-radius: 10px;
-  background: #f0fdf4;
+  background: color-mix(in srgb, #16a34a 9%, var(--color-surface));
 }
 
 .inline-result-summary header {
@@ -866,24 +878,24 @@ pre {
 }
 
 .inline-result-summary strong {
-  color: #15803d;
+  color: var(--color-success);
   font-size: 21px;
 }
 
 .inline-result-summary span {
-  color: #64748b;
+  color: var(--color-text-muted);
   font-size: 11px;
 }
 
 .inline-result-summary header p,
 .inline-wrong-review p {
   margin: 0;
-  color: #475569;
+  color: var(--color-text-muted);
 }
 
 .mastery-recommendation {
   margin: 0;
-  color: #166534;
+  color: var(--color-success);
   font-size: 13px;
 }
 
@@ -910,8 +922,15 @@ pre {
 .text-action {
   border: 0;
   background: transparent;
-  color: #475569;
+  color: var(--color-text-muted);
   cursor: pointer;
+  border-radius: var(--ui-hover-radius);
+  padding: 6px 8px;
+}
+
+.text-action:hover {
+  background: var(--ui-hover-bg);
+  color: var(--color-text);
 }
 
 .followup-config {
@@ -926,13 +945,13 @@ pre {
 }
 
 .followup-config small {
-  color: #64748b;
+  color: var(--color-text-muted);
 }
 
 .followup-config label {
   display: grid;
   gap: 4px;
-  color: #64748b;
+  color: var(--color-text-muted);
   font-size: 12px;
 }
 
@@ -942,7 +961,7 @@ pre {
   padding: 0 10px;
   border: 1px solid #cbd5e1;
   border-radius: 8px;
-  background: #fff;
+  background: var(--color-surface);
 }
 
 .quiz-card header > div {
@@ -972,11 +991,11 @@ pre {
 
 .checkpoint-card {
   border-color: #bfdbfe;
-  background: #f8fbff;
+  background: color-mix(in srgb, #2563eb 7%, var(--color-surface));
 }
 
 .checkpoint-label {
-  color: #2563eb;
+  color: var(--color-info);
   font-size: 11px;
   font-weight: 800;
 }
@@ -1017,8 +1036,8 @@ pre {
 
 .review-tags span {
   border-radius: 6px;
-  background: #fff7ed;
-  color: #f97316;
+  background: color-mix(in srgb, #f97316 10%, var(--color-surface));
+  color: var(--color-warning);
   padding: 5px 9px;
   font-weight: 800;
 }
@@ -1035,19 +1054,19 @@ pre {
   border-radius: 999px;
   display: grid;
   place-items: center;
-  background: #eff6ff;
-  color: #2563eb;
+  background: color-mix(in srgb, #2563eb 11%, var(--color-surface));
+  color: var(--color-info);
 }
 
 .assistant-card {
   margin-top: 18px;
-  background: #f8fafc;
+  background: var(--color-hover);
 }
 
 .assistant-card strong {
   display: block;
   margin-top: 12px;
-  color: #2563eb;
+  color: var(--color-info);
 }
 
 .tutor-panel label {
@@ -1084,6 +1103,10 @@ pre {
   background: var(--color-surface);
   color: var(--color-text);
   cursor: pointer;
+}
+
+.quick-row button:hover {
+  background: var(--ui-hover-bg);
 }
 
 @media (max-width: 1280px) {

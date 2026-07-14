@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
+import LearningProjectResourceChips from '@/components/student/LearningProjectResourceChips.vue'
 import StudentShell from '@/components/student/StudentShell.vue'
 import { courseLibraries } from '@/mock'
 import { useLearningStore } from '@/stores/learning'
@@ -46,23 +47,12 @@ function statusIcon(value: string) {
   return iconMap[value] ?? 'list-filter'
 }
 
-function resourceIcon(group: string) {
-  if (group === '思维导图') return 'mind-topic'
-  if (group === '代码案例') return 'code'
-  if (group === 'PPT') return 'presentation'
-  return 'file'
-}
-
-function metaText(plan: { period: string; libraryId: number; targetType: string; updatedAt: string }) {
-  return `${plan.period}｜${libraryName(plan.libraryId)}｜${plan.targetType}｜${plan.updatedAt}`
-}
-
-function resourceText(plan: { resources: Array<{ group: string }> }) {
-  return plan.resources.map((resource) => resource.group).join('、') || '暂无资源'
+function metaText(plan: { period: string; libraryId: number; targetType: string }) {
+  return `${plan.period}｜${libraryName(plan.libraryId)}｜${plan.targetType}`
 }
 
 function primaryAction(plan: { id: number; status: string }) {
-  if (plan.status === '待开启') router.push(`/learning/new?projectId=${plan.id}`)
+  if (plan.status === '待开启') router.push(`/chat?learningProjectId=${plan.id}`)
   else router.push(`/learning/${plan.id}/study`)
 }
 </script>
@@ -86,20 +76,23 @@ function primaryAction(plan: { id: number; status: string }) {
               {{ status }}
               <AppIcon name="chevron-down" :size="14" />
             </button>
-            <div v-if="statusMenuOpen" class="status-menu">
+            <div v-if="statusMenuOpen" class="status-menu ui-menu-panel">
               <button
                 v-for="option in statusOptions"
                 :key="option"
+                class="ui-menu-item"
                 type="button"
+                :aria-selected="status === option"
                 @click="selectStatus(option)"
               >
-                <AppIcon :name="statusIcon(option)" :size="18" />
+                <span class="ui-menu-icon"><AppIcon :name="statusIcon(option)" :size="16" /></span>
                 {{ option }}
               </button>
             </div>
           </div>
           <div class="view-switch" aria-label="切换展示方式">
             <button
+              class="ui-icon-action"
               type="button"
               :class="{ active: viewMode === 'grid' }"
               title="网格展示"
@@ -108,6 +101,7 @@ function primaryAction(plan: { id: number; status: string }) {
               <AppIcon name="grid" :size="17" />
             </button>
             <button
+              class="ui-icon-action"
               type="button"
               :class="{ active: viewMode === 'list' }"
               title="列表展示"
@@ -116,7 +110,7 @@ function primaryAction(plan: { id: number; status: string }) {
               <AppIcon name="list" :size="17" />
             </button>
           </div>
-          <button type="button" @click="router.push('/learning/new')">新建学习</button>
+          <button type="button" @click="router.push('/chat?learning=1')">新建学习</button>
         </div>
       </header>
 
@@ -159,12 +153,7 @@ function primaryAction(plan: { id: number; status: string }) {
               <div><small>正确率</small><strong>{{ plan.correctRate }}%</strong></div>
             </div>
 
-            <div class="resource-chips" :title="resourceText(plan)">
-              <span v-for="resource in plan.resources" :key="resource.id">
-                <AppIcon :name="resourceIcon(resource.group)" :size="15" />
-                {{ resource.group }}
-              </span>
-            </div>
+            <LearningProjectResourceChips v-if="plan.resources.length" :resources="plan.resources" />
 
             <footer>
               <button class="primary-btn" type="button" @click="primaryAction(plan)">
@@ -282,31 +271,10 @@ h1 {
   right: 0;
   z-index: 30;
   width: 178px;
-  padding: 8px;
-  border: 1px solid #dbe2ec;
-  border-radius: 16px;
-  background: #fff;
-  box-shadow: 0 18px 46px rgba(15, 23, 42, 0.14);
 }
 
 .status-menu button {
-  width: 100%;
-  height: 42px;
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-  color: #111827;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 10px;
-  font-weight: 600;
-  text-align: left;
-}
-
-.status-menu button:hover {
-  background: #f2f4f7;
+  height: var(--ui-menu-item-height);
 }
 
 .view-switch {
@@ -334,7 +302,7 @@ h1 {
 
 .view-switch button:hover,
 .view-switch button.active {
-  background: #f2f4f7;
+  background: var(--color-hover);
   color: var(--color-text);
 }
 
@@ -342,7 +310,7 @@ h1 {
 .primary-btn {
   border: 1px solid var(--color-primary);
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-on-primary);
 }
 
 .head-actions > button {
@@ -384,10 +352,10 @@ h1 {
   place-items: center;
 }
 
-.summary-icon--blue { background: #eff6ff; color: #2563eb; }
-.summary-icon--green { background: #ecfdf3; color: #16a34a; }
-.summary-icon--purple { background: #f5f3ff; color: #7c3aed; }
-.summary-icon--orange { background: #fff7ed; color: #f97316; }
+.summary-icon--blue { background: color-mix(in srgb, #2563eb 11%, var(--color-surface)); color: var(--color-info); }
+.summary-icon--green { background: color-mix(in srgb, #16a34a 11%, var(--color-surface)); color: var(--color-success); }
+.summary-icon--purple { background: color-mix(in srgb, #7c3aed 11%, var(--color-surface)); color: #7c3aed; }
+.summary-icon--orange { background: color-mix(in srgb, #f97316 10%, var(--color-surface)); color: var(--color-warning); }
 
 .summary-grid small,
 .stats small {
@@ -420,7 +388,7 @@ h1 {
 }
 
 .project-card {
-  height: 392px;
+  height: auto;
   padding: 20px;
   display: flex;
   flex-direction: column;
@@ -440,8 +408,8 @@ h1 {
 }
 
 .card-header {
-  min-height: 50px;
-  max-height: 50px;
+  min-height: 24px;
+  max-height: 24px;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -449,14 +417,15 @@ h1 {
 }
 
 .project-card h2 {
+  flex: 1 1 auto;
   min-width: 0;
   color: var(--color-text);
   font-size: 17px;
   line-height: 1.4;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  display: block;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .status {
@@ -467,23 +436,23 @@ h1 {
   font-weight: 800;
 }
 
-.status--待开启 { background: #f5f3ff; color: #7c3aed; }
-.status--进行中 { background: #eff6ff; color: #2563eb; }
+.status--待开启 { background: color-mix(in srgb, #7c3aed 11%, var(--color-surface)); color: #7c3aed; }
+.status--进行中 { background: color-mix(in srgb, #2563eb 11%, var(--color-surface)); color: var(--color-info); }
 .status--已生成,
-.status--已完成 { background: #ecfdf3; color: #16a34a; }
-.status--待完善 { background: #fff7ed; color: #f97316; }
+.status--已完成 { background: color-mix(in srgb, #16a34a 11%, var(--color-surface)); color: var(--color-success); }
+.status--待完善 { background: color-mix(in srgb, #f97316 10%, var(--color-surface)); color: var(--color-warning); }
 
 .meta {
   margin-top: 14px;
-  min-height: 42px;
-  max-height: 42px;
+  min-height: 22px;
+  max-height: 22px;
   color: var(--color-text-muted);
   font-size: 13px;
-  line-height: 1.6;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  line-height: 22px;
+  display: block;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .progress-row {
@@ -499,7 +468,7 @@ h1 {
   display: block;
   height: 6px;
   border-radius: 999px;
-  background: #e5e7eb;
+  background: var(--color-border);
   overflow: hidden;
 }
 
@@ -536,30 +505,10 @@ h1 {
 
 .resource-chips {
   margin-top: 18px;
-  max-height: 68px;
-  min-height: 68px;
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  overflow: hidden;
-}
-
-.resource-chips span {
-  height: 30px;
-  border: 1px solid var(--color-border);
-  border-radius: 7px;
-  padding: 0 9px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: #4b5563;
-  font-size: 13px;
-  max-width: 100%;
-  white-space: nowrap;
 }
 
 .project-card footer {
-  margin-top: auto;
+  margin-top: 18px;
   display: flex;
   gap: 12px;
 }

@@ -70,12 +70,8 @@ watch(() => props.content, () => {
   margin: 10px 0;
   padding: 30px 12px 12px;
   border-radius: var(--radius-md);
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--color-surface-subtle);
   overflow: auto;
-}
-
-:root[data-theme='dark'] .markdown pre {
-  background: rgba(255, 255, 255, 0.06);
 }
 
 .markdown code {

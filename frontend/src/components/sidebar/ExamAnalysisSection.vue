@@ -110,9 +110,9 @@ function confirmDelete() {
 
 function getMenuItems(id: number, title: string): MenuItem[] {
   return [
-    { label: '重命名', action: () => handleRename(id, title) },
+    { label: '重命名', icon: 'edit', action: () => handleRename(id, title) },
     { label: '', divided: true },
-    { label: '删除', danger: true, action: () => handleDelete(id, title) },
+    { label: '删除', icon: 'trash', danger: true, action: () => handleDelete(id, title) },
   ]
 }
 </script>
@@ -215,11 +215,7 @@ function getMenuItems(id: number, title: string): MenuItem[] {
 }
 
 .section__header:hover {
-  background: rgba(0, 0, 0, 0.04);
-}
-
-:root[data-theme='dark'] .section__header:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--color-hover);
 }
 
 .header-left, .header-right {
@@ -271,11 +267,7 @@ function getMenuItems(id: number, title: string): MenuItem[] {
 }
 
 .create-button:hover {
-  background: rgba(0, 0, 0, 0.04);
-}
-
-:root[data-theme='dark'] .create-button:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--color-hover);
 }
 
 .create-text {

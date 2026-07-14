@@ -43,11 +43,7 @@ function handleViewList() {
 }
 
 .section__header:hover {
-  background: rgba(0, 0, 0, 0.04);
-}
-
-:root[data-theme='dark'] .section__header:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--ui-hover-bg);
 }
 
 .title-wrap {

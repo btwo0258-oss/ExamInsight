@@ -1,7 +1,9 @@
 :root {
   --color-primary: #333333;
+  --color-on-primary: #ffffff;
   --color-bg: #FFFFFC;
   --color-surface: #fffffc;
+  --color-surface-subtle: #fbfcfe;
   --color-sidebar: #FFFFFC;
   --color-text: #333333;
   --color-text-muted: #666666;
@@ -9,9 +11,22 @@
   --color-hover: rgba(0, 0, 0, 0.04);
   --color-hover-strong: rgba(0, 0, 0, 0.08);
   --color-accent: #333333;
+  --color-info: #2563eb;
   --color-danger: #ef4444;
   --color-success: #10b981;
   --color-warning: #f59e0b;
+  --color-overlay: rgba(15, 23, 42, 0.34);
+  --color-tooltip-bg: #1f1f1f;
+  --color-tooltip-text: #f0f0f0;
+
+  /* Legacy aliases kept here so every component resolves through the same theme contract. */
+  --color-background-soft: var(--color-surface-subtle);
+  --color-bg-alt: var(--color-surface-subtle);
+  --color-input-bg: var(--color-surface);
+  --color-primary-hover: color-mix(in srgb, var(--color-primary) 88%, var(--color-bg));
+  --color-primary-light: color-mix(in srgb, var(--color-primary) 14%, transparent);
+  --color-surface-hover: var(--color-hover);
+  --color-text-light: var(--color-text-muted);
 
   --sidebar-width: 320px;
   --chat-width: clamp(340px, 62vw, 920px);
@@ -23,12 +38,28 @@
   --shadow-sm: 0 1px 8px rgba(0, 0, 0, 0.06);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
+
+  --ui-hover-bg: var(--color-hover-strong);
+  --ui-hover-strong-bg: color-mix(in srgb, var(--color-text) 16%, transparent);
+  --ui-hover-radius: 8px;
+  --ui-menu-bg: var(--color-surface);
+  --ui-menu-border: var(--color-border);
+  --ui-menu-radius: 14px;
+  --ui-menu-item-radius: 10px;
+  --ui-menu-item-height: 38px;
+  --ui-menu-padding: 8px;
+  --ui-menu-gap: 10px;
+  --ui-menu-icon-size: 16px;
+  --ui-menu-shadow: var(--shadow-lg);
+  --ui-transition: 160ms ease;
 }
 
 :root[data-theme='dark'] {
   --color-primary: #fffffc;
+  --color-on-primary: #0f0f10;
   --color-bg: #0f0f10;
   --color-surface: #151518;
+  --color-surface-subtle: #111114;
   --color-sidebar: #151518;
   --color-text: #f0f0ee;
   --color-text-muted: #b7b7b3;
@@ -36,6 +67,12 @@
   --color-hover: rgba(255, 255, 252, 0.08);
   --color-hover-strong: rgba(255, 255, 252, 0.12);
   --color-accent: #fffffc;
+  --color-info: #60a5fa;
+  --color-overlay: rgba(0, 0, 0, 0.62);
+  --color-tooltip-bg: #2a2a2a;
+  --color-tooltip-text: #e0e0e0;
 
   --shadow-sm: 0 1px 10px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.42);
+  --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.5);
 }

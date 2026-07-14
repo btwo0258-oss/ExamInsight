@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref, onMounted } from 'vue'
+import { nextTick, ref } from 'vue'
 import ModelSwitch from './ModelSwitch.vue'
 import AttachmentCard from '@/components/main-area/mode3-chat/input/AttachmentCard.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
@@ -75,7 +75,6 @@ function triggerUpload() {
 function setText(nextText: string) {
   text.value = nextText
   nextTick(() => {
-    autosize()
     areaEl.value?.focus()
   })
 }
@@ -93,25 +92,14 @@ function send() {
   emit('send', trimmedText, [...files.value])
   text.value = ''
   files.value = []
-  if (areaEl.value) areaEl.value.style.height = 'auto'
 }
-
-function autosize() {
-  if (!areaEl.value) return
-  areaEl.value.style.height = 'auto'
-  const scrollH = areaEl.value.scrollHeight
-  // 限制最大高度为 200px (约 8-10 行)，超过后开始内部滚动
-  const maxH = 200 
-  areaEl.value.style.height = (scrollH > maxH ? maxH : scrollH) + 'px'
-}
-
-onMounted(() => {
-  if (areaEl.value) autosize()
-})
 </script>
 
 <template>
   <div class="chat-composer">
+    <div v-if="$slots.context" class="composer-context">
+      <slot name="context" />
+    </div>
     <!-- 附件预览 -->
     <div v-if="files.length" class="attachment-previews">
       <AttachmentCard v-for="(f, i) in files" :key="i" :file="f" @remove="removeFile(i)" />
@@ -125,7 +113,6 @@ onMounted(() => {
         class="main-textarea"
         :placeholder="placeholder"
         :disabled="disabled || isStreaming"
-        @input="autosize"
         @keydown.enter.exact.prevent="send"
         rows="1"
       ></textarea>
@@ -199,6 +186,12 @@ onMounted(() => {
   margin-bottom: 12px;
 }
 
+.composer-context {
+  position: relative;
+  z-index: 4;
+  margin: 0 12px -1px;
+}
+
 .input-container {
   position: relative;
   /* 1. 背景色改为指定颜色 */
@@ -212,8 +205,9 @@ onMounted(() => {
 
 .main-textarea {
   width: 100%;
-  min-height: 52px;
-  max-height: 200px;
+  height: 100px;
+  min-height: 100px;
+  max-height: 100px;
   /* 3. 重要：增加底部 Padding，确保文字不会穿过/被挡住工具栏 */
   padding: 14px 12px 60px 16px; 
   border: none;
@@ -291,7 +285,7 @@ onMounted(() => {
 }
 
 .icon-action-btn:hover {
-  background: var(--color-hover);
+  background: var(--ui-hover-strong-bg);
   color: var(--color-text);
 }
 

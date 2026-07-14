@@ -20,7 +20,7 @@ const isUser = computed(() => props.message.role === "user");
 const copied = ref(false);
 
 function handleCopy() {
-  emit("copy", props.message.content);
+  emit("copy", props.message.kind === "learning-document" ? props.message.learningData?.content || "" : props.message.content);
   copied.value = true;
   setTimeout(() => {
     copied.value = false;
@@ -37,7 +37,8 @@ function handleRegenerate() {
 }
 
 function handleGenerateMindmap() {
-  emit("generateMindmap", props.message.id, props.message.content);
+  const content = props.message.kind === "learning-document" ? props.message.learningData?.content || "" : props.message.content;
+  emit("generateMindmap", props.message.id, content);
 }
 </script>
 
@@ -85,18 +86,14 @@ function handleGenerateMindmap() {
   border-radius: 4px;
   background: transparent;
   border: none;
-  color: var(--color-text-secondary, #909399);
+  color: var(--color-text-muted);
   cursor: pointer;
   transition: color 0.2s ease;
   padding: 0;
 }
 
 .action-btn:hover:not(:disabled) {
-  color: var(--color-text, #303133);
-}
-
-:root[data-theme="dark"] .action-btn:hover:not(:disabled) {
-  color: #e4e7ed;
+  color: var(--color-text);
 }
 
 .action-btn:disabled {

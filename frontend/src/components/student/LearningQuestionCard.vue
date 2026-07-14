@@ -217,7 +217,7 @@ watch([() => props.exercise.id, () => props.exercise.selectedLanguage], () => {
 
 .question-card--checkpoint {
   border-color: #bfdbfe;
-  background: #f8fbff;
+  background: color-mix(in srgb, #2563eb 7%, var(--color-surface));
 }
 
 .question-head,
@@ -251,7 +251,7 @@ small,
 }
 
 .scene-label {
-  color: #2563eb;
+  color: var(--color-info);
   font-size: 11px;
   font-weight: 800;
 }
@@ -268,7 +268,7 @@ pre {
   padding: 16px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
-  background: #f8fafc;
+  background: var(--color-hover);
   color: var(--color-text);
   overflow: auto;
   line-height: 1.55;
@@ -293,9 +293,13 @@ pre {
   cursor: pointer;
 }
 
+.option-list label:hover {
+  background: var(--ui-hover-bg);
+}
+
 .option-list label.selected {
   border-color: #93c5fd;
-  background: #eff6ff;
+  background: var(--ui-hover-strong-bg);
 }
 
 .text-answer,
@@ -357,7 +361,7 @@ pre {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 12px;
-  background: #f8fafc;
+  background: var(--color-hover);
 }
 
 .code-toolbar,
@@ -420,8 +424,8 @@ pre {
   gap: 8px;
   padding: 12px 14px 14px;
   border-top: 1px solid #334155;
-  background: #fff7ed;
-  color: #9a3412;
+  background: color-mix(in srgb, #f97316 10%, var(--color-surface));
+  color: var(--color-warning);
   font-size: 12px;
   line-height: 1.55;
 }
@@ -438,15 +442,15 @@ pre {
 }
 
 .code-run-result--passed {
-  background: #ecfdf3;
-  color: #166534;
+  background: color-mix(in srgb, #16a34a 11%, var(--color-surface));
+  color: var(--color-success);
 }
 
 .code-run-result--compile_error,
 .code-run-result--runtime_error,
 .code-run-result--timeout {
-  background: #fef2f2;
-  color: #b91c1c;
+  background: color-mix(in srgb, #dc2626 9%, var(--color-surface));
+  color: var(--color-danger);
 }
 
 .failed-case {
@@ -489,10 +493,14 @@ pre {
   font-weight: 800;
 }
 
+.outline-btn:hover {
+  background: var(--ui-hover-bg);
+}
+
 .primary-btn {
   border: 1px solid var(--color-primary);
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-on-primary);
 }
 
 .outline-btn {
@@ -513,14 +521,14 @@ pre {
   margin-top: 16px;
   padding: 13px 15px;
   border-radius: 8px;
-  background: #fff7ed;
-  color: #9a3412;
+  background: color-mix(in srgb, #f97316 10%, var(--color-surface));
+  color: var(--color-warning);
   line-height: 1.55;
 }
 
 .answer-feedback.correct {
-  background: #ecfdf3;
-  color: #166534;
+  background: color-mix(in srgb, #16a34a 11%, var(--color-surface));
+  color: var(--color-success);
 }
 
 .question-navigation {

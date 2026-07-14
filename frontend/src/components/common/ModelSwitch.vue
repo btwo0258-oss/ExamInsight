@@ -40,7 +40,7 @@ onUnmounted(() => document.removeEventListener('click', closeDropdown))
 
 <template>
   <div class="model-switch">
-    <button class="model-trigger" @click.stop="toggleDropdown" type="button">
+    <button class="model-trigger ui-hover-row" @click.stop="toggleDropdown" type="button">
       <span>{{ currentModelName }}</span>
       <svg class="chevron" viewBox="0 0 24 24" width="14" :class="{ rotate: isOpen }">
         <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -48,12 +48,12 @@ onUnmounted(() => document.removeEventListener('click', closeDropdown))
     </button>
 
     <transition name="slide-up">
-      <div v-if="isOpen" class="dropdown-menu">
+      <div v-if="isOpen" class="dropdown-menu ui-menu-panel">
         <div 
           v-for="(model, index) in models" 
           :key="model.name" 
-          class="menu-item"
-          :class="{ active: modelStore.currentModel === model.name }"
+          class="menu-item ui-menu-item"
+          :aria-selected="modelStore.currentModel === model.name"
           @click="selectModel(model)"
         >
           <div class="item-info">
@@ -107,36 +107,25 @@ onUnmounted(() => document.removeEventListener('click', closeDropdown))
   bottom: calc(100% + 12px);
   left: 0;
   width: 260px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.1);
-  padding: 8px;
   /* 确保 z-index 足够大，能够遮盖对话框/输入框容器 */
   z-index: 2000; 
 }
 
 .menu-item {
-  display: flex;
-  align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-.menu-item:hover, .menu-item.active {
-  background: var(--color-hover);
+  padding: 4px 10px;
 }
 
 .item-name {
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 400;
+  line-height: 16px;
   color: var(--color-text);
 }
 
 .item-desc {
   font-size: 12px;
+  line-height: 14px;
   color: var(--color-text-muted);
 }
 

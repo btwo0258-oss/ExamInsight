@@ -123,10 +123,6 @@ function handleLogout() {
   flex: 1;
   overflow-y: auto;
   padding: 24px;
-  background-color: #fafafa;
-}
-
-:root[data-theme='dark'] .admin-content {
   background-color: var(--color-bg);
 }
 </style>

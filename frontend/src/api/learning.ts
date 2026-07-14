@@ -22,6 +22,17 @@ function normalizePlans(input: LegacyLearningPlan[]): LearningPlan[] {
     })
     const plan = { ...legacyPlan, stages } as LearningPlan
     delete (plan as LearningPlan & { days?: LearningPlan['stages'] }).days
+    if (!plan.resources.some((resource) => resource.group === '学习方案')) {
+      plan.resources.unshift({
+        id: Math.max(0, ...plan.resources.map((resource) => resource.id)) + 1,
+        group: '学习方案',
+        title: `${plan.title}学习方案`,
+        desc: '最终确认的学习目标、学习画像与阶段安排。',
+        status: '已生成',
+        action: '查看',
+        fileName: `${plan.title}-学习方案.md`,
+      })
+    }
     plan.resources = plan.resources.filter((resource) => !['练习题', '推荐阅读'].includes(String(resource.group)))
     plan.trainingSets ??= []
     plan.wrongReviewSets ??= []

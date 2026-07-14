@@ -62,11 +62,7 @@ function goHome() {
 }
 
 .header__brand:hover {
-  background: rgba(0, 0, 0, 0.04);
-}
-
-:root[data-theme="dark"] .header__brand:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--ui-hover-bg);
 }
 
 .header__btn {
@@ -82,10 +78,6 @@ function goHome() {
 }
 
 .header__btn:hover {
-  background: rgba(0, 0, 0, 0.04);
-}
-
-:root[data-theme="dark"] .header__btn:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--ui-hover-strong-bg);
 }
 </style>

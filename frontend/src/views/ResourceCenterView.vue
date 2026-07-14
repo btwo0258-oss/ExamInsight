@@ -709,12 +709,8 @@ watch(sidebarOpen, (open) => {
 }
 
 .download-btn:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--color-hover);
   border-color: var(--color-border);
-}
-
-:root[data-theme="dark"] .download-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
 }
 
 .loading-state {
@@ -838,11 +834,7 @@ watch(sidebarOpen, (open) => {
 }
 
 .mini__btn:hover {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--color-hover);
   color: var(--color-text);
-}
-
-:root[data-theme="dark"] .mini__btn:hover {
-  background: rgba(255, 255, 255, 0.06);
 }
 </style>

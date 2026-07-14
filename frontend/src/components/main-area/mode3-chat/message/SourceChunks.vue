@@ -67,13 +67,9 @@ function toggle(i: number) {
 .chunk {
   border: 1px solid var(--color-border);
   border-radius: 6px;
-  background: rgba(0, 0, 0, 0.02);
+  background: var(--color-surface-subtle);
   cursor: pointer;
   overflow: hidden;
-}
-
-:root[data-theme='dark'] .chunk {
-  background: rgba(255, 255, 255, 0.02);
 }
 
 .chunk__title {
@@ -96,7 +92,7 @@ function toggle(i: number) {
 }
 
 .chunk__score {
-  color: #10a37f;
+  color: var(--color-success);
   font-size: 11px;
 }
 

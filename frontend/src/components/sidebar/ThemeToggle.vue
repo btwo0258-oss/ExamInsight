@@ -11,7 +11,8 @@ const themeStore = useThemeStore()
       class="switch"
       type="button"
       role="switch"
-      :aria-checked="themeStore.mode === 'dark'"
+      :aria-checked="themeStore.isDark"
+      :aria-label="themeStore.isDark ? '切换到浅色主题' : '切换到深色主题'"
       @click="themeStore.toggle"
     >
       <span class="switch__knob" />
@@ -40,14 +41,10 @@ const themeStore = useThemeStore()
   height: 26px;
   border-radius: 999px;
   border: 1px solid var(--color-border);
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--color-hover);
   padding: 2px;
   cursor: pointer;
   position: relative;
-}
-
-:root[data-theme='dark'] .switch {
-  background: rgba(255, 255, 255, 0.06);
 }
 
 .switch__knob {

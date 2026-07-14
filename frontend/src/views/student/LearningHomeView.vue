@@ -538,6 +538,10 @@ button {
   cursor: pointer;
 }
 
+.chips button:hover {
+  background: var(--ui-hover-bg);
+}
+
 .profile-flow {
   max-width: 1260px;
   margin: 0 auto;
@@ -573,15 +577,15 @@ button {
   border-radius: 999px;
   display: grid;
   place-items: center;
-  background: #f2f4f7;
+  background: var(--color-hover);
   color: var(--color-text);
   font-weight: 800;
   flex: 0 0 auto;
 }
 
 .avatar--ai {
-  background: #eff6ff;
-  color: #2563eb;
+  background: color-mix(in srgb, #2563eb 11%, var(--color-surface));
+  color: var(--color-info);
 }
 
 .message {
@@ -595,7 +599,7 @@ button {
 }
 
 .message--user {
-  background: #f4f6f8;
+  background: var(--color-hover);
 }
 
 .choice-grid {
@@ -643,7 +647,7 @@ button {
   display: grid;
   place-items: center;
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-on-primary);
   font-weight: 800;
   margin-bottom: 14px;
 }
@@ -663,6 +667,7 @@ button {
 .chips button.selected {
   border-color: var(--color-primary);
   color: var(--color-primary);
+  background: var(--ui-hover-strong-bg);
   box-shadow: inset 0 0 0 1px var(--color-primary);
 }
 
@@ -752,8 +757,8 @@ button {
   height: 28px;
   border: 1px solid #bfdbfe;
   border-radius: 6px;
-  background: #eff6ff;
-  color: #2563eb;
+  background: color-mix(in srgb, #2563eb 11%, var(--color-surface));
+  color: var(--color-info);
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -857,7 +862,7 @@ button {
   display: block;
   min-height: 38px;
   border-radius: 8px;
-  background: linear-gradient(90deg, var(--color-hover), #eef2f7, var(--color-hover));
+  background: linear-gradient(90deg, var(--color-hover), var(--color-border), var(--color-hover));
   background-size: 220% 100%;
   animation: skeleton-loading 1.1s ease-in-out infinite;
 }
@@ -972,7 +977,11 @@ button {
 }
 
 .document-actions button:hover {
-  background: var(--color-hover);
+  background: var(--ui-hover-strong-bg);
+}
+
+.outline-btn:hover {
+  background: var(--ui-hover-bg);
 }
 
 .document-actions button:disabled,
@@ -1073,7 +1082,7 @@ button {
 .primary-btn {
   border: 1px solid var(--color-primary);
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-on-primary);
 }
 
 .outline-btn {

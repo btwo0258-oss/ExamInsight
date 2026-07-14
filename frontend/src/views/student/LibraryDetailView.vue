@@ -1,19 +1,39 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
 import StudentShell from '@/components/student/StudentShell.vue'
 import UploadMaterialModal from '@/components/student/UploadMaterialModal.vue'
 import { courseLibraries } from '@/mock'
 import { useLibraryResourceStore } from '@/stores/libraryResource'
+import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 
 const route = useRoute()
 const router = useRouter()
 const libraryResourceStore = useLibraryResourceStore()
+const knowledgeBaseStore = useKnowledgeBaseStore()
 const uploadOpen = ref(false)
-const library = computed(() => courseLibraries.find((item) => item.id === Number(route.params.id)) ?? courseLibraries[0]!)
+const library = computed(() => {
+  const id = Number(route.params.id)
+  const stored = knowledgeBaseStore.list.find((item) => item.id === id)
+  const preset = courseLibraries.find((item) => item.id === id)
+  return {
+    id,
+    name: stored?.name || preset?.name || '未命名知识库',
+    description: stored?.description || preset?.description || '暂无说明',
+    tags: preset?.tags || [],
+    fileCount: stored?.documentCount || preset?.fileCount || 0,
+    chunkCount: preset?.chunkCount || 0,
+    status: preset?.status || 'ready',
+    updatedAt: stored?.updateTime || preset?.updatedAt || '刚刚',
+  }
+})
 const files = computed(() => libraryResourceStore.resources.filter((item) => item.id.startsWith('mock-') || item.libraryId === library.value.id))
 const fileCount = computed(() => library.value.fileCount + libraryResourceStore.resources.filter((item) => item.libraryId === library.value.id).length)
+
+onMounted(() => {
+  void knowledgeBaseStore.fetchList()
+})
 </script>
 
 <template>
@@ -121,7 +141,7 @@ const fileCount = computed(() => library.value.fileCount + libraryResourceStore.
           <div class="summary-list">
             <article>
               <span>主要知识点</span>
-              <strong>{{ library.tags.join('、') }}</strong>
+              <strong>{{ library.tags.join('、') || '待上传资料后识别' }}</strong>
             </article>
             <article>
               <span>推荐用途</span>
@@ -144,7 +164,8 @@ const fileCount = computed(() => library.value.fileCount + libraryResourceStore.
 .detail-page {
   min-height: 100%;
   padding: 34px 28px 56px;
-  background: #fffffc;
+  background: var(--color-bg);
+  color: var(--color-text);
 }
 
 .detail-page,
@@ -170,13 +191,20 @@ p {
   height: 28px;
   border: 0;
   background: transparent;
-  color: #667085;
+  color: var(--color-text-muted);
   display: inline-flex;
   align-items: center;
   gap: 6px;
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
+  border-radius: var(--ui-hover-radius);
+  padding: 0 8px;
+}
+
+.back-btn:hover,
+.outline-btn:hover {
+  background: var(--ui-hover-bg);
 }
 
 .back-btn .icon {
@@ -186,10 +214,10 @@ p {
 
 .hero-card {
   margin-top: 14px;
-  border: 1px solid #dbe2ec;
+  border: 1px solid var(--color-border);
   border-radius: 8px;
   padding: 24px;
-  background: #fffffc;
+  background: var(--color-surface);
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 24px;
@@ -198,12 +226,12 @@ p {
 
 h1 {
   font-size: 30px;
-  color: #111827;
+  color: var(--color-text);
 }
 
 .hero-card p {
   margin-top: 10px;
-  color: #667085;
+  color: var(--color-text-muted);
   line-height: 1.6;
 }
 
@@ -217,8 +245,8 @@ h1 {
 .tags span {
   padding: 5px 10px;
   border-radius: 6px;
-  background: #f2f4f7;
-  color: #667085;
+  background: var(--color-hover);
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 
@@ -240,15 +268,15 @@ h1 {
 }
 
 .outline-btn {
-  border: 1px solid #cfd7e3;
-  background: #fffffc;
-  color: #1f2937;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 
 .primary-btn {
-  border: 1px solid #111827;
-  background: #111827;
-  color: #fff;
+  border: 1px solid var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
 }
 
 .stats {
@@ -260,10 +288,10 @@ h1 {
 
 .stats article,
 .panel {
-  border: 1px solid #dbe2ec;
+  border: 1px solid var(--color-border);
   border-radius: 8px;
-  background: #fffffc;
-  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.03);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
 }
 
 .stats article {
@@ -274,11 +302,11 @@ h1 {
 
 .stats strong {
   font-size: 26px;
-  color: #111827;
+  color: var(--color-text);
 }
 
 .stats span {
-  color: #667085;
+  color: var(--color-text-muted);
 }
 
 .content-grid {
@@ -307,19 +335,19 @@ h1 {
 
 h2 {
   font-size: 21px;
-  color: #1f2937;
+  color: var(--color-text);
 }
 
 .section-head label {
   width: 220px;
   height: 38px;
-  border: 1px solid #cfd7e3;
+  border: 1px solid var(--color-border);
   border-radius: 8px;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 0 10px;
-  color: #667085;
+  color: var(--color-text-muted);
 }
 
 .section-head input {
@@ -338,14 +366,14 @@ table {
 th,
 td {
   height: 44px;
-  border-top: 1px solid #e6ebf3;
+  border-top: 1px solid var(--color-border);
   text-align: left;
-  color: #344054;
+  color: var(--color-text);
   font-size: 14px;
 }
 
 th {
-  color: #667085;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 
@@ -358,26 +386,33 @@ td:first-child {
 .status {
   padding: 4px 9px;
   border-radius: 999px;
-  background: #f2f4f7;
-  color: #667085;
+  background: var(--color-hover);
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 
 .status.success {
-  background: #dcfce7;
-  color: #16a34a;
+  background: color-mix(in srgb, var(--color-success) 15%, var(--color-surface));
+  color: var(--color-success);
 }
 
 .status.active {
-  background: #edf4ff;
-  color: #2563eb;
+  background: color-mix(in srgb, var(--color-info) 12%, var(--color-surface));
+  color: var(--color-info);
 }
 
 .icon-btn {
   border: 0;
   background: transparent;
-  color: #667085;
+  color: var(--color-text-muted);
   cursor: pointer;
+  border-radius: var(--ui-hover-radius);
+  padding: 6px;
+}
+
+.icon-btn:hover {
+  background: var(--ui-hover-strong-bg);
+  color: var(--color-text);
 }
 
 .summary-panel {
@@ -385,7 +420,7 @@ td:first-child {
 }
 
 .summary-panel p {
-  color: #667085;
+  color: var(--color-text-muted);
   line-height: 1.7;
 }
 
@@ -396,19 +431,19 @@ td:first-child {
 }
 
 .summary-list article {
-  border-top: 1px solid #e6ebf3;
+  border-top: 1px solid var(--color-border);
   padding-top: 12px;
 }
 
 .summary-list span {
   display: block;
-  color: #667085;
+  color: var(--color-text-muted);
   font-size: 13px;
   margin-bottom: 5px;
 }
 
 .summary-list strong {
-  color: #1f2937;
+  color: var(--color-text);
   line-height: 1.5;
 }
 

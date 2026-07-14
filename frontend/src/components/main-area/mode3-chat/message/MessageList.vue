@@ -3,6 +3,7 @@ import { nextTick, ref, watch } from "vue";
 
 import MessageBubble from "./MessageBubble.vue";
 import type { ChatMessage } from "@/stores/message";
+import type { LearningProfileData } from "@/components/student/LearningProfileCard.vue";
 
 type Props = {
   conversationId: number | null;
@@ -12,6 +13,10 @@ type Props = {
 const props = defineProps<Props>();
 const emit = defineEmits<{
   generateMindmap: [messageId: string, content: string];
+  confirmLearningProfile: [messageId: string];
+  updateLearningProfile: [messageId: string, profile: LearningProfileData];
+  updateLearningDocument: [messageId: string, content: string];
+  regenerateLearningDocument: [messageId: string];
 }>();
 
 const wrap = ref<HTMLDivElement | null>(null);
@@ -64,6 +69,10 @@ watch(
         :conversation-id="conversationId"
         :is-streaming="m.streaming"
         @generate-mindmap="(id, content) => emit('generateMindmap', id, content)"
+        @confirm-learning-profile="(id) => emit('confirmLearningProfile', id)"
+        @update-learning-profile="(id, profile) => emit('updateLearningProfile', id, profile)"
+        @update-learning-document="(id, content) => emit('updateLearningDocument', id, content)"
+        @regenerate-learning-document="(id) => emit('regenerateLearningDocument', id)"
       />
     </div>
   </div>

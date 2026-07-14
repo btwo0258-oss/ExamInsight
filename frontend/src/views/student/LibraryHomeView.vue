@@ -1,21 +1,24 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
 import StudentShell from '@/components/student/StudentShell.vue'
 import UploadMaterialModal from '@/components/student/UploadMaterialModal.vue'
-import { courseLibraries, type CourseLibrary } from '@/mock'
+import LibraryKnowledgeCreateModal from '@/components/student/LibraryKnowledgeCreateModal.vue'
 import { useLibraryResourceStore } from '@/stores/libraryResource'
+import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import type { LibraryResource } from '@/stores/libraryResource'
+import type { KnowledgeBase } from '@/api/knowledgeBase'
 
 type LibraryFilter = 'all' | 'knowledge' | 'mindmap' | 'image' | 'file'
 type ViewMode = 'grid' | 'list'
 type LibraryAsset =
-  | { kind: 'knowledge'; id: string; source: CourseLibrary }
+  | { kind: 'knowledge'; id: string; source: KnowledgeBase }
   | { kind: 'file'; id: string; source: LibraryResource }
 
 const router = useRouter()
 const libraryResourceStore = useLibraryResourceStore()
+const knowledgeBaseStore = useKnowledgeBaseStore()
 const uploadOpen = ref(false)
 const newKnowledgeOpen = ref(false)
 const newMenuOpen = ref(false)
@@ -35,7 +38,7 @@ const filters: Array<{ label: string; value: LibraryFilter }> = [
 ]
 
 const knowledgeAssets = computed<LibraryAsset[]>(() =>
-  courseLibraries.map((source) => ({ kind: 'knowledge', id: `knowledge-${source.id}`, source })),
+  knowledgeBaseStore.list.map((source) => ({ kind: 'knowledge', id: `knowledge-${source.id}`, source })),
 )
 
 const fileAssets = computed<LibraryAsset[]>(() =>
@@ -56,6 +59,11 @@ const visibleAssets = computed(() => {
   return [...knowledgeAssets.value, ...fileAssets.value]
 })
 
+const firstFileAfterKnowledgeId = computed(() => {
+  if (!visibleAssets.value.some((asset) => asset.kind === 'knowledge')) return null
+  return visibleAssets.value.find((asset) => asset.kind === 'file')?.id ?? null
+})
+
 const selectedCount = computed(() => selectedIds.value.length)
 const hasSelection = computed(() => selectedCount.value > 0)
 
@@ -71,6 +79,11 @@ function openUpload() {
 function openNewKnowledge() {
   newKnowledgeOpen.value = true
   newMenuOpen.value = false
+}
+
+function handleKnowledgeCreated() {
+  activeFilter.value = 'knowledge'
+  newKnowledgeOpen.value = false
 }
 
 function toggleSelection(id: string) {
@@ -129,22 +142,30 @@ function startLearning(libraryId: number) {
   router.push({ path: '/learning', query: { libraryId } })
 }
 
-function knowledgeTitle(item: CourseLibrary) {
+function knowledgeTitle(item: KnowledgeBase) {
   return item.name.replace('资料库', '').trim()
 }
 
-function knowledgeFileCount(item: CourseLibrary) {
-  return item.fileCount + libraryResourceStore.resources.filter((resource) => resource.libraryId === item.id).length
+function knowledgeFileCount(item: KnowledgeBase) {
+  return (item.documentCount || 0) + libraryResourceStore.resources.filter((resource) => resource.libraryId === item.id).length
+}
+
+function knowledgeUpdatedAt(item: KnowledgeBase) {
+  return item.updateTime?.includes('今天') ? item.updateTime : item.updateTime || '刚刚'
 }
 
 function assetModifiedAt(asset: LibraryAsset) {
-  if (asset.kind === 'knowledge') return asset.source.updatedAt.includes('今天') ? '今天' : asset.source.updatedAt
+  if (asset.kind === 'knowledge') return knowledgeUpdatedAt(asset.source).includes('今天') ? '今天' : knowledgeUpdatedAt(asset.source)
   return asset.source.updatedAt.includes('今天') ? '今天' : asset.source.updatedAt
 }
 
 function assetSize(asset: LibraryAsset) {
   return asset.kind === 'knowledge' ? '—' : fileSize(asset.source)
 }
+
+onMounted(() => {
+  void knowledgeBaseStore.fetchList()
+})
 </script>
 
 <template>
@@ -164,17 +185,17 @@ function assetSize(asset: LibraryAsset) {
               新建
               <AppIcon name="chevron-down" :size="15" />
             </button>
-            <div v-if="newMenuOpen" class="new-menu">
-              <button type="button" @click="openUpload">
-                <AppIcon name="upload-cloud" :size="18" />
+            <div v-if="newMenuOpen" class="new-menu ui-menu-panel">
+              <button class="ui-menu-item" type="button" @click="openUpload">
+                <span class="ui-menu-icon"><AppIcon name="upload-cloud" :size="16" /></span>
                 上传资料
               </button>
-              <button type="button" @click="openNewKnowledge">
-                <AppIcon name="folder" :size="18" />
+              <button class="ui-menu-item" type="button" @click="openNewKnowledge">
+                <span class="ui-menu-icon"><AppIcon name="folder" :size="16" /></span>
                 新建知识库
               </button>
-              <button type="button" @click="newMenuOpen = false">
-                <AppIcon name="mindmap" :size="18" />
+              <button class="ui-menu-item" type="button" @click="newMenuOpen = false">
+                <span class="ui-menu-icon"><AppIcon name="mindmap" :size="16" /></span>
                 创建思维导图
               </button>
             </div>
@@ -216,12 +237,12 @@ function assetSize(asset: LibraryAsset) {
         <div class="view-tools">
           <span v-if="selectedCount">已选 {{ selectedCount }} 个</span>
 
-          <button class="filter-btn" type="button" aria-label="筛选">
+          <button class="filter-btn ui-icon-action" type="button" aria-label="筛选">
             <AppIcon name="list-filter" :size="18" />
           </button>
           <span class="view-divider" />
           <button
-            class="round-icon"
+            class="round-icon ui-icon-action"
             :class="{ active: viewMode === 'grid' }"
             type="button"
             aria-label="网格视图"
@@ -230,7 +251,7 @@ function assetSize(asset: LibraryAsset) {
             <AppIcon name="grid" :size="18" />
           </button>
           <button
-            class="round-icon"
+            class="round-icon ui-icon-action"
             :class="{ active: viewMode === 'list' }"
             type="button"
             aria-label="列表视图"
@@ -245,10 +266,11 @@ function assetSize(asset: LibraryAsset) {
         <article
           v-for="asset in visibleAssets"
           :key="asset.id"
-          class="asset-card"
+          class="asset-card ui-hover-row"
           :class="{
             'asset-card--knowledge': asset.kind === 'knowledge',
             'asset-card--selected': isSelected(asset.id),
+            'asset-card--new-row': asset.id === firstFileAfterKnowledgeId,
           }"
           @click="asset.kind === 'knowledge' ? router.push(`/library/${asset.source.id}`) : toggleSelection(asset.id)"
         >
@@ -257,26 +279,27 @@ function assetSize(asset: LibraryAsset) {
               <AppIcon name="folder" :size="22" />
             </span>
             <strong>{{ knowledgeTitle(asset.source) }}</strong>
-            <small>{{ knowledgeFileCount(asset.source) }} 个文档 · {{ asset.source.updatedAt }}</small>
+            <small>{{ knowledgeFileCount(asset.source) }} 个文档 · {{ knowledgeUpdatedAt(asset.source) }}</small>
             <button
-              class="knowledge-more"
+              class="knowledge-more ui-icon-action"
               type="button"
               aria-label="知识库菜单"
               @click.stop="toggleKnowledgeMenu(asset.id)"
             >
               <AppIcon name="more-horizontal" :size="16" />
             </button>
-            <div v-if="knowledgeMenuId === asset.id" class="floating-menu asset-floating-menu" @click.stop>
-              <button class="menu-action" type="button" @click="startLearning(asset.source.id)">
-                <AppIcon name="graduation" :size="17" />
+            <div v-if="knowledgeMenuId === asset.id" class="floating-menu asset-floating-menu ui-menu-panel" @click.stop>
+              <button class="menu-action ui-menu-item" type="button" @click="startLearning(asset.source.id)">
+                <span class="ui-menu-icon"><AppIcon name="graduation" :size="16" /></span>
                 开始智能学习
               </button>
-              <button class="menu-action" type="button" @click="closeKnowledgeMenu">
-                <AppIcon name="edit" :size="17" />
+              <button class="menu-action ui-menu-item" type="button" @click="closeKnowledgeMenu">
+                <span class="ui-menu-icon"><AppIcon name="edit" :size="16" /></span>
                 重命名
               </button>
-              <button class="menu-action menu-action--danger" type="button" @click="closeKnowledgeMenu">
-                <AppIcon name="trash" :size="17" />
+              <div class="ui-menu-divider" />
+              <button class="menu-action menu-action--danger ui-menu-item ui-menu-item--danger" type="button" @click="closeKnowledgeMenu">
+                <span class="ui-menu-icon"><AppIcon name="trash" :size="16" /></span>
                 删除知识库
               </button>
             </div>
@@ -287,16 +310,16 @@ function assetSize(asset: LibraryAsset) {
               <span v-if="isSelected(asset.id)">✓</span>
             </button>
             <div class="asset-grid-actions" @click.stop>
-              <button type="button" aria-label="重命名">
+              <button class="ui-icon-action" type="button" aria-label="重命名">
                 <AppIcon name="edit" :size="18" />
               </button>
-              <button type="button" aria-label="移动" @click="openMoveModal">
+              <button class="ui-icon-action" type="button" aria-label="移动" @click="openMoveModal">
                 <AppIcon name="folder-move" :size="18" />
               </button>
-              <button type="button" aria-label="下载">
+              <button class="ui-icon-action" type="button" aria-label="下载">
                 <AppIcon name="download" :size="18" />
               </button>
-              <button class="danger-icon" type="button" aria-label="删除">
+              <button class="danger-icon ui-icon-action" type="button" aria-label="删除">
                 <AppIcon name="trash" :size="18" />
               </button>
             </div>
@@ -328,7 +351,7 @@ function assetSize(asset: LibraryAsset) {
         <article
           v-for="asset in visibleAssets"
           :key="asset.id"
-          class="asset-row"
+          class="asset-row ui-hover-row"
           :class="{ 'asset-row--selected': isSelected(asset.id) }"
           @click="asset.kind === 'knowledge' ? router.push(`/library/${asset.source.id}`) : toggleSelection(asset.id)"
         >
@@ -342,44 +365,47 @@ function assetSize(asset: LibraryAsset) {
           <div class="row-actions">
             <button
               v-if="asset.kind === 'knowledge'"
+              class="ui-icon-action"
               type="button"
               @click.stop="toggleKnowledgeMenu(asset.id)"
             >
               <AppIcon name="more-horizontal" :size="16" />
             </button>
             <template v-else>
-              <button type="button" @click.stop="toggleFileMenu(asset.id)"><AppIcon name="more-horizontal" :size="16" /></button>
+              <button class="ui-icon-action" type="button" @click.stop="toggleFileMenu(asset.id)"><AppIcon name="more-horizontal" :size="16" /></button>
             </template>
           </div>
-          <div v-if="knowledgeMenuId === asset.id" class="floating-menu asset-floating-menu menu--row" @click.stop>
-            <button class="menu-action" type="button" @click="startLearning(asset.source.id)">
-              <AppIcon name="graduation" :size="17" />
+          <div v-if="knowledgeMenuId === asset.id" class="floating-menu asset-floating-menu menu--row ui-menu-panel" @click.stop>
+            <button class="menu-action ui-menu-item" type="button" @click="startLearning(Number(asset.source.id))">
+              <span class="ui-menu-icon"><AppIcon name="graduation" :size="16" /></span>
               开始智能学习
             </button>
-            <button class="menu-action" type="button" @click="closeKnowledgeMenu">
-              <AppIcon name="edit" :size="17" />
+            <button class="menu-action ui-menu-item" type="button" @click="closeKnowledgeMenu">
+              <span class="ui-menu-icon"><AppIcon name="edit" :size="16" /></span>
               重命名
             </button>
-            <button class="menu-action menu-action--danger" type="button" @click="closeKnowledgeMenu">
-              <AppIcon name="trash" :size="17" />
+            <div class="ui-menu-divider" />
+            <button class="menu-action menu-action--danger ui-menu-item ui-menu-item--danger" type="button" @click="closeKnowledgeMenu">
+              <span class="ui-menu-icon"><AppIcon name="trash" :size="16" /></span>
               删除知识库
             </button>
           </div>
-          <div v-if="fileMenuId === asset.id" class="floating-menu asset-floating-menu menu--row" @click.stop>
-            <button class="menu-action" type="button" @click="closeFileMenu">
-              <AppIcon name="download" :size="17" />
+          <div v-if="fileMenuId === asset.id" class="floating-menu asset-floating-menu menu--row ui-menu-panel" @click.stop>
+            <button class="menu-action ui-menu-item" type="button" @click="closeFileMenu">
+              <span class="ui-menu-icon"><AppIcon name="download" :size="16" /></span>
               下载
             </button>
-            <button class="menu-action" type="button" @click="closeFileMenu">
-              <AppIcon name="edit" :size="17" />
+            <button class="menu-action ui-menu-item" type="button" @click="closeFileMenu">
+              <span class="ui-menu-icon"><AppIcon name="edit" :size="16" /></span>
               重命名
             </button>
-            <button class="menu-action" type="button" @click="openMoveModal">
-              <AppIcon name="folder-move" :size="17" />
+            <button class="menu-action ui-menu-item" type="button" @click="openMoveModal">
+              <span class="ui-menu-icon"><AppIcon name="folder-move" :size="16" /></span>
               移动
             </button>
-            <button class="menu-action menu-action--danger" type="button" @click="closeFileMenu">
-              <AppIcon name="trash" :size="17" />
+            <div class="ui-menu-divider" />
+            <button class="menu-action menu-action--danger ui-menu-item ui-menu-item--danger" type="button" @click="closeFileMenu">
+              <span class="ui-menu-icon"><AppIcon name="trash" :size="16" /></span>
               删除
             </button>
           </div>
@@ -389,32 +415,11 @@ function assetSize(asset: LibraryAsset) {
 
     <UploadMaterialModal :open="uploadOpen" @close="uploadOpen = false" />
 
-    <div v-if="newKnowledgeOpen" class="modal-backdrop" @click.self="newKnowledgeOpen = false">
-      <section class="new-knowledge-modal">
-        <header>
-          <h2>新建知识库</h2>
-          <button type="button" @click="newKnowledgeOpen = false">×</button>
-        </header>
-        <div class="new-knowledge-form">
-          <label>
-            <span>知识库名称</span>
-            <input placeholder="例如：Java 面向对象" />
-          </label>
-          <label>
-            <span>所属课程</span>
-            <input placeholder="例如：Java 程序设计" />
-          </label>
-          <label>
-            <span>说明</span>
-            <textarea placeholder="简单说明知识库用途，便于后续智能学习分析" />
-          </label>
-        </div>
-        <footer>
-          <button class="outline-btn" type="button" @click="newKnowledgeOpen = false">取消</button>
-          <button class="primary-btn" type="button" @click="newKnowledgeOpen = false">创建知识库</button>
-        </footer>
-      </section>
-    </div>
+    <LibraryKnowledgeCreateModal
+      :open="newKnowledgeOpen"
+      @close="newKnowledgeOpen = false"
+      @created="handleKnowledgeCreated"
+    />
 
     <div v-if="moveModalOpen" class="modal-backdrop" @click.self="moveModalOpen = false">
       <section class="move-modal">
@@ -424,7 +429,7 @@ function assetSize(asset: LibraryAsset) {
         </header>
         <span class="move-label">知识库</span>
         <div class="move-list">
-          <button v-for="item in courseLibraries" :key="item.id" type="button">
+          <button v-for="item in knowledgeBaseStore.list" :key="item.id" type="button">
             <span class="move-icon"><AppIcon name="folder" :size="20" /></span>
             <span>{{ knowledgeTitle(item) }}</span>
             <AppIcon name="chevron-right" :size="16" />
@@ -445,7 +450,8 @@ function assetSize(asset: LibraryAsset) {
 .library-page {
   min-height: 100%;
   padding: 58px 64px 72px;
-  background: #fffffc;
+  background: var(--color-bg);
+  color: var(--color-text);
 }
 
 .library-page,
@@ -471,7 +477,7 @@ p {
 h1 {
   font-size: 34px;
   font-weight: 800;
-  color: #111827;
+  color: var(--color-text);
 }
 
 .library-header {
@@ -491,14 +497,14 @@ h1 {
 .search-box {
   width: 240px;
   height: 36px;
-  border: 1px solid #dbe2ec;
+  border: 1px solid var(--color-border);
   border-radius: 999px;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 0 12px;
-  background: #fff;
-  color: #667085;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
 }
 
 .search-box input {
@@ -518,8 +524,8 @@ h1 {
   border: 0;
   border-radius: 999px;
   padding: 0 14px;
-  background: #111;
-  color: #fff;
+  background: var(--color-primary);
+  color: var(--color-on-primary);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -533,30 +539,10 @@ h1 {
   right: 0;
   z-index: 30;
   width: 178px;
-  padding: 8px;
-  border: 1px solid #dbe2ec;
-  border-radius: 16px;
-  background: #fff;
-  box-shadow: 0 18px 46px rgba(15, 23, 42, 0.14);
 }
 
 .new-menu button {
-  width: 100%;
-  height: 42px;
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-  color: #111827;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 10px;
-  font-weight: 600;
-}
-
-.new-menu button:hover {
-  background: #f2f4f7;
+  height: var(--ui-menu-item-height);
 }
 
 .library-controls {
@@ -577,15 +563,15 @@ h1 {
   border: 1px solid transparent;
   border-radius: 999px;
   background: transparent;
-  color: #344054;
+  color: var(--color-text);
   padding: 0 16px;
   cursor: pointer;
 }
 
 .tabs button.active {
-  border-color: #d4dce8;
-  background: #fff;
-  color: #111827;
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 
 .view-tools {
@@ -595,7 +581,7 @@ h1 {
 }
 
 .view-tools > span {
-  color: #111827;
+  color: var(--color-text);
   font-size: 14px;
   margin: 0 10px;
 }
@@ -611,10 +597,10 @@ h1 {
 .bulk-primary,
 .danger-outline {
   height: 34px;
-  border: 1px solid #d9dee8;
+  border: 1px solid var(--color-border);
   border-radius: 999px;
-  background: #fff;
-  color: #111827;
+  background: var(--color-surface);
+  color: var(--color-text);
   padding: 0 16px;
   display: inline-flex;
   align-items: center;
@@ -625,20 +611,20 @@ h1 {
 }
 
 .bulk-actions button:disabled {
-  color: #98a2b3;
-  background: #f2f4f7;
+  color: var(--color-text-muted);
+  background: var(--color-hover);
   cursor: not-allowed;
 }
 
 .bulk-primary {
-  background: #111 !important;
-  color: #fff !important;
-  border-color: #111 !important;
+  background: var(--color-primary) !important;
+  color: var(--color-on-primary) !important;
+  border-color: var(--color-primary) !important;
   padding: 0 18px;
 }
 
 .bulk-primary :deep(svg) {
-  color: #fff;
+  color: var(--color-on-primary);
 }
 
 .danger-outline {
@@ -653,7 +639,7 @@ h1 {
   border: 0;
   border-radius: 10px;
   background: transparent;
-  color: #667085;
+  color: var(--color-text-muted);
   cursor: pointer;
   display: grid;
   place-items: center;
@@ -661,13 +647,13 @@ h1 {
 
 .view-tools .filter-btn {
   background: transparent;
-  color: #667085;
+  color: var(--color-text-muted);
 }
 
 .view-divider {
   width: 1px;
   height: 24px;
-  background: #edf0f5;
+  background: var(--color-border);
   margin: 0 4px;
 }
 
@@ -675,8 +661,8 @@ h1 {
 .round-icon:hover,
 .view-tools .filter-btn:hover,
 .view-tools .filter-btn:focus-visible {
-  background: #f2f4f7;
-  color: #111827;
+  background: var(--color-hover);
+  color: var(--color-text);
 }
 
 .asset-grid {
@@ -685,17 +671,21 @@ h1 {
   gap: 18px;
 }
 
+.asset-card--new-row {
+  grid-column-start: 1;
+}
+
 .asset-card {
   position: relative;
   min-height: 246px;
-  border: 1px solid #e6ebf3;
+  border: 1px solid var(--color-border);
   border-radius: 18px;
-  background: linear-gradient(180deg, #fff 0%, #fbfcfe 100%);
+  background: linear-gradient(180deg, var(--color-surface) 0%, var(--color-surface-subtle) 100%);
   padding: 18px 18px 16px;
   cursor: pointer;
   display: grid;
   grid-template-rows: auto 1fr auto;
-  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.06);
+  box-shadow: var(--shadow-sm);
 }
 
 .asset-card--knowledge {
@@ -706,7 +696,7 @@ h1 {
   align-items: center;
   column-gap: 12px;
   box-shadow: none;
-  background: #fff;
+  background: var(--color-surface);
 }
 
 .asset-card--knowledge strong {
@@ -720,19 +710,19 @@ h1 {
 }
 
 .asset-card--selected {
-  border-color: #111827;
-  box-shadow: inset 0 0 0 1px #111827, 0 18px 38px rgba(15, 23, 42, 0.08);
+  border-color: var(--color-text);
+  box-shadow: inset 0 0 0 1px var(--color-text), var(--shadow-sm);
 }
 
 .asset-card strong {
   max-width: 78%;
-  color: #111827;
+  color: var(--color-text);
   font-size: 15px;
   line-height: 1.35;
 }
 
 .asset-card small {
-  color: #7b8494;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 
@@ -740,11 +730,11 @@ h1 {
   grid-row: 1 / 3;
   width: 34px;
   height: 34px;
-  border: 1px solid #dbe2ec;
+  border: 1px solid var(--color-border);
   border-radius: 8px;
   display: grid;
   place-items: center;
-  color: #111827;
+  color: var(--color-text);
 }
 
 .asset-check {
@@ -753,10 +743,10 @@ h1 {
   right: 16px;
   width: 24px;
   height: 24px;
-  border: 1px solid #d4dce8;
+  border: 1px solid var(--color-border);
   border-radius: 999px;
-  background: #fff;
-  color: #2563eb;
+  background: var(--color-surface);
+  color: var(--color-info);
   cursor: pointer;
   font-size: 14px;
   font-weight: 900;
@@ -779,8 +769,8 @@ h1 {
   height: 34px;
   border: 0;
   border-radius: 10px;
-  background: #f8fafc;
-  color: #667085;
+  background: var(--color-hover);
+  color: var(--color-text-muted);
   cursor: pointer;
   display: grid;
   place-items: center;
@@ -794,8 +784,8 @@ h1 {
 }
 
 .asset-more:hover {
-  background: #f2f4f7;
-  color: #111827;
+  background: var(--color-hover);
+  color: var(--color-text);
 }
 
 .asset-grid-actions {
@@ -816,15 +806,15 @@ h1 {
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #344054;
+  color: var(--color-text);
   cursor: pointer;
   display: grid;
   place-items: center;
 }
 
 .asset-grid-actions button:hover {
-  background: rgba(255, 255, 255, 0.72);
-  color: #111827;
+  background: var(--color-hover-strong);
+  color: var(--color-text);
 }
 
 .asset-card:hover .asset-grid-actions,
@@ -841,8 +831,8 @@ h1 {
   height: 34px;
   border: 0;
   border-radius: 10px;
-  background: #f8fafc;
-  color: #667085;
+  background: var(--color-hover);
+  color: var(--color-text-muted);
   cursor: pointer;
   display: grid;
   place-items: center;
@@ -856,8 +846,8 @@ h1 {
 }
 
 .knowledge-more:hover {
-  background: #f2f4f7;
-  color: #111827;
+  background: var(--color-hover);
+  color: var(--color-text);
 }
 
 .floating-menu {
@@ -866,28 +856,10 @@ h1 {
   top: 54px;
   z-index: 25;
   width: 166px;
-  padding: 8px;
-  border: 1px solid #d9dee8;
-  border-radius: 14px;
-  background: #fff;
-  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.14);
 }
 
 .menu-action {
-  width: 100%;
-  height: 38px;
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-  color: #111827;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 10px;
-  font-size: 14px;
-  font-weight: 400;
-  text-align: left;
+  height: var(--ui-menu-item-height);
 }
 
 .menu-action :deep(svg) {
@@ -896,11 +868,6 @@ h1 {
   stroke-width: 2;
 }
 
-.menu-action:hover {
-  background: #f2f4f7;
-}
-
-.menu-action--danger,
 .danger-text {
   color: #ff2457 !important;
 }
@@ -911,15 +878,15 @@ h1 {
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: #4b5563;
+  color: var(--color-text-muted);
   cursor: pointer;
   display: grid;
   place-items: center;
 }
 
 .row-actions button:hover {
-  background: #f2f4f7;
-  color: #111827;
+  background: var(--color-hover);
+  color: var(--color-text);
 }
 
 .danger-icon {
@@ -933,7 +900,7 @@ h1 {
   border-radius: 14px;
   display: grid;
   place-items: center;
-  color: #0b84ff;
+  color: var(--color-info);
 }
 
 .asset-list {
@@ -949,7 +916,7 @@ h1 {
   align-items: center;
   gap: 10px;
   padding: 0 8px;
-  color: #344054;
+  color: var(--color-text);
   font-size: 14px;
 }
 
@@ -961,10 +928,10 @@ h1 {
 .asset-row-check {
   width: 18px;
   height: 18px;
-  border: 1px solid #d9dee8;
+  border: 1px solid var(--color-border);
   border-radius: 4px;
-  background: #fff;
-  color: #fff;
+  background: var(--color-surface);
+  color: var(--color-on-primary);
   cursor: pointer;
   display: grid;
   place-items: center;
@@ -976,8 +943,8 @@ h1 {
 
 .list-select-all--active,
 .asset-row--selected .asset-row-check {
-  border-color: #111;
-  background: #111;
+  border-color: var(--color-primary);
+  background: var(--color-primary);
   opacity: 1;
   pointer-events: auto;
 }
@@ -986,27 +953,27 @@ h1 {
   width: 10px;
   height: 2px;
   border-radius: 999px;
-  background: #fff;
+  background: var(--color-on-primary);
 }
 
 .asset-row {
   position: relative;
   min-height: 65px;
   border: 0;
-  border-bottom: 1px solid #edf0f5;
+  border-bottom: 1px solid var(--color-border);
   border-radius: 0;
   display: grid;
   grid-template-columns: 26px 34px minmax(0, 1fr) 140px 120px 54px;
   align-items: center;
   gap: 10px;
   padding: 0 8px;
-  color: #344054;
+  color: var(--color-text);
   cursor: pointer;
 }
 
 .asset-row:hover,
 .asset-row--selected {
-  background: #fafafa;
+  background: var(--color-hover);
   border-radius: 12px;
   border-color: transparent;
 }
@@ -1016,7 +983,7 @@ h1 {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  color: #111827;
+  color: var(--color-text);
 }
 
 .asset-row-check {
@@ -1062,15 +1029,15 @@ h1 {
 }
 
 .outline-btn {
-  border: 1px solid #cfd7e3;
-  background: #fffffc;
-  color: #1f2937;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 
 .primary-btn {
-  border: 1px solid #111827;
-  background: #111827;
-  color: #fff;
+  border: 1px solid var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
 }
 
 .modal-backdrop {
@@ -1080,16 +1047,16 @@ h1 {
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(15, 23, 42, 0.34);
+  background: var(--color-overlay);
 }
 
 .new-knowledge-modal {
   width: min(620px, 100%);
   padding: 20px;
   border-radius: 16px;
-  background: #fff;
-  border: 1px solid #d9dee8;
-  box-shadow: 0 20px 56px rgba(15, 23, 42, 0.18);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg);
 }
 
 .new-knowledge-modal header,
@@ -1103,7 +1070,7 @@ h1 {
 .new-knowledge-modal header button {
   border: 0;
   background: transparent;
-  color: #667085;
+  color: var(--color-text-muted);
   cursor: pointer;
   font-size: 24px;
 }
@@ -1117,7 +1084,7 @@ h1 {
 .new-knowledge-form label {
   display: grid;
   gap: 8px;
-  color: #111827;
+  color: var(--color-text);
   font-size: 14px;
   font-weight: 500;
 }
@@ -1126,9 +1093,9 @@ h1 {
 .new-knowledge-form textarea {
   min-width: 0;
   width: 100%;
-  border: 1px solid #dbe2ec;
+  border: 1px solid var(--color-border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--color-surface);
   padding: 0 12px;
   box-sizing: border-box;
   font-size: 14px;
@@ -1137,7 +1104,7 @@ h1 {
 
 .new-knowledge-form input::placeholder,
 .new-knowledge-form textarea::placeholder {
-  color: #8a94a6;
+  color: var(--color-text-muted);
   font-size: 13px;
   font-weight: 500;
 }
@@ -1162,10 +1129,10 @@ h1 {
   width: min(872px, 100%);
   min-height: 560px;
   padding: 32px;
-  border: 1px solid #d9dee8;
+  border: 1px solid var(--color-border);
   border-radius: 16px;
-  background: #fff;
-  box-shadow: 0 20px 56px rgba(15, 23, 42, 0.18);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-lg);
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
 }
@@ -1193,11 +1160,11 @@ h1 {
 }
 
 .move-modal header button:hover {
-  background: #f2f4f7;
+  background: var(--color-hover);
 }
 
 .move-label {
-  color: #111827;
+  color: var(--color-text);
   font-size: 13px;
   margin-bottom: 16px;
 }
@@ -1212,9 +1179,9 @@ h1 {
 .move-list button {
   height: 58px;
   border: 0;
-  border-bottom: 1px solid #edf0f5;
-  background: #fff;
-  color: #111827;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
   cursor: pointer;
   display: grid;
   grid-template-columns: 40px minmax(0, 1fr) 20px;
@@ -1224,13 +1191,13 @@ h1 {
 }
 
 .move-list button:hover {
-  background: #f8fafc;
+  background: var(--color-hover);
 }
 
 .move-icon {
   width: 32px;
   height: 32px;
-  border: 1px solid #dbe2ec;
+  border: 1px solid var(--color-border);
   border-radius: 8px;
   display: grid;
   place-items: center;
@@ -1248,8 +1215,8 @@ h1 {
   height: 34px;
   border: 0;
   border-radius: 999px;
-  background: #c7c7c7;
-  color: #fff;
+  background: var(--color-border);
+  color: var(--color-text-muted);
   padding: 0 16px;
   cursor: not-allowed;
   font-weight: 700;

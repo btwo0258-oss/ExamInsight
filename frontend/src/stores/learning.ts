@@ -20,11 +20,16 @@ export type CreateLearningPlanInput = {
   studyDepth: string
   questionCount: number
   supplementalRequirement: string
+  draftPlanId?: number | null
+  libraryName?: string
 }
 
 export type CreateLearningDraftInput = {
   title: string
   libraryId: number | null
+  libraryName?: string
+  icon?: string
+  iconColor?: string
 }
 
 export type UpdateLearningPlanInput = {
@@ -235,21 +240,34 @@ export const useLearningStore = defineStore('learning', () => {
     return plans.value.find((plan) => plan.id === id)
   }
 
+  function renamePlan(id: number, title: string) {
+    const plan = getPlan(id)
+    if (!plan || !title.trim()) return false
+    plan.title = title.trim()
+    plan.updatedAt = '刚刚'
+    persist()
+    return true
+  }
+
   function createPlan(input: CreateLearningPlanInput) {
     const template = structuredClone(mockPlans[0]!)
-    const library = courseLibraries.find((item) => item.id === input.libraryId) ?? courseLibraries[0]!
-    const id = Math.max(0, ...plans.value.map((plan) => plan.id)) + 1
-    const focus = library.tags.slice(0, 3).join('、') || library.course
-    const topics = library.tags.length ? library.tags : [library.course]
+    const library = courseLibraries.find((item) => item.id === input.libraryId)
+    const draftPlan = input.draftPlanId ? getPlan(input.draftPlanId) : null
+    const id = draftPlan?.id ?? Math.max(0, ...plans.value.map((plan) => plan.id)) + 1
+    const libraryName = input.libraryName || library?.name || '无'
+    const subjectName = library?.course || input.libraryName?.replace(/知识库|资料库/g, '').trim() || '个性化学习'
+    const inferredTopics = input.weakPoints.split(/[、,，/]+/).map((item) => item.trim()).filter(Boolean)
+    const topics = library?.tags.length ? library.tags : inferredTopics.length ? inferredTopics : ['核心知识']
+    const focus = topics.slice(0, 3).join('、') || subjectName
 
     template.id = id
     template.relatedProjectId = input.projectId
-    template.title = `${library.course}${input.targetType}计划`
+    template.title = draftPlan?.title || `${subjectName}${input.targetType}计划`
     template.goal = input.supplementalRequirement
       ? `${input.prompt}（补充要求：${input.supplementalRequirement}）`
       : input.prompt
     template.updatedAt = '刚刚'
-    template.libraryId = library.id
+    template.libraryId = input.libraryId || library?.id || 0
     template.status = '进行中'
     template.period = input.period
     template.targetType = input.targetType
@@ -259,12 +277,12 @@ export const useLearningStore = defineStore('learning', () => {
     template.correctRate = 0
     template.weeklyHours = '0h'
     template.profile = [
-      { label: '资料来源', value: library.name },
+      { label: '学习目标', value: input.targetType },
       { label: '当前基础', value: input.foundation },
       { label: '重点知识', value: input.weakPoints || focus },
-      { label: '学习约束', value: input.preferences.join(' + ') || '考试复习' },
-      { label: '目标', value: input.targetType },
-      { label: '节奏', value: input.dailyTime },
+      { label: '时间安排', value: `${input.period}，${input.dailyTime}` },
+      { label: '学习方式', value: input.preferences.join(' + ') || input.studyDepth },
+      { label: '资料来源', value: libraryName },
       { label: '输出深度', value: input.studyDepth },
     ]
     if (input.supplementalRequirement) {
@@ -318,14 +336,24 @@ export const useLearningStore = defineStore('learning', () => {
     template.totalExercises = questionCount
     template.wrongQuestions = []
     template.trainingSets = []
-    template.dashboard = library.tags.slice(0, 3).map((label) => ({ label, value: 0 }))
+    template.dashboard = topics.slice(0, 3).map((label) => ({ label, value: 0 }))
     template.resources = template.resources.filter((resource) => input.resourceGroups.includes(resource.group))
     template.resources.forEach((resource) => {
-      resource.title = `${library.course}${resource.group}`
-      resource.desc = `基于${library.name}生成的${resource.group}学习资源。`
-      resource.fileName = `${library.course}-${resource.group}`
+      resource.title = `${subjectName}${resource.group}`
+      resource.desc = `基于${libraryName}生成的${resource.group}学习资源。`
+      resource.fileName = `${subjectName}-${resource.group}`
       resource.status = '已生成'
       resource.action = '查看'
+    })
+    template.resources.unshift({
+      id: Math.max(0, ...template.resources.map((resource) => resource.id)) + 1,
+      group: '学习方案',
+      title: `${template.title}学习方案`,
+      desc: '最终确认的学习目标、学习画像与阶段安排。',
+      status: '已生成',
+      action: '查看',
+      fileName: `${template.title}-学习方案.md`,
+      content: input.prompt,
     })
     const resourcePreferences: Partial<Record<LearningPlan['stages'][number]['tasks'][number]['type'], LearningResource['group'][]>> = {
       讲解: ['个性化学习手册', '思维导图', 'PPT'],
@@ -345,7 +373,9 @@ export const useLearningStore = defineStore('learning', () => {
     })
     assignQuestionBankToTasks(template)
 
-    plans.value.unshift(template)
+    const draftIndex = plans.value.findIndex((plan) => plan.id === draftPlan?.id)
+    if (draftIndex >= 0) plans.value.splice(draftIndex, 1, template)
+    else plans.value.unshift(template)
     template.resources.forEach((resource) => {
       libraryResourceStore.addGeneratedResource(
         resource,
@@ -368,9 +398,11 @@ export const useLearningStore = defineStore('learning', () => {
     template.id = id
     template.relatedProjectId = null
     template.title = title
+    template.icon = input.icon || 'folder'
+    template.iconColor = input.iconColor || '#000'
     template.goal = '待通过对话确认学习目标、学习约束和学习路径。'
     template.updatedAt = '刚刚'
-    template.libraryId = library?.id ?? 0
+    template.libraryId = input.libraryId ?? 0
     template.status = '待开启'
     template.period = '待确认'
     template.targetType = '待确认'
@@ -380,7 +412,7 @@ export const useLearningStore = defineStore('learning', () => {
     template.correctRate = 0
     template.weeklyHours = '0h'
     template.profile = [
-      { label: '资料来源', value: library?.name ?? '无' },
+      { label: '资料来源', value: input.libraryName || library?.name || '无' },
       { label: '学习约束', value: '待确认' },
       { label: '重点知识', value: '待确认' },
       { label: '节奏', value: '待确认' },
@@ -432,11 +464,10 @@ export const useLearningStore = defineStore('learning', () => {
 
     plan.targetType = input.targetType
     plan.period = input.period
-    setProfileValue(plan, '目标', input.targetType)
-    setProfileValue(plan, '节奏', input.dailyTime)
+    setProfileValue(plan, '学习目标', input.targetType)
+    setProfileValue(plan, '时间安排', `${input.period}，${input.dailyTime}`)
     setProfileValue(plan, '重点知识', input.weakPoints)
-    setProfileValue(plan, '薄弱点', input.weakPoints)
-    setProfileValue(plan, '学习约束', input.preferences.join(' + ') || '待确认')
+    setProfileValue(plan, '学习方式', input.preferences.join(' + ') || '待确认')
 
     if (!input.keepProgress) {
       plan.stages.forEach((stage) => {
@@ -1057,6 +1088,7 @@ export const useLearningStore = defineStore('learning', () => {
     plans,
     projectCount,
     getPlan,
+    renamePlan,
     createPlan,
     createDraftPlan,
     updatePlanConfig,

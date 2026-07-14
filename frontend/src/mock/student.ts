@@ -65,12 +65,14 @@ export type LearningStage = {
 
 export type LearningResource = {
   id: number
-  group: '个性化学习手册' | 'PPT' | '思维导图' | '代码案例'
+  group: '学习方案' | '个性化学习手册' | 'PPT' | '思维导图' | '代码案例' | '图片'
   title: string
   desc: string
   status: LearningResourceStatus
   action: string
   fileName?: string
+  content?: string
+  previewUrl?: string
   mindMapId?: number
   mindMapTreeData?: unknown
 }
@@ -205,6 +207,8 @@ export type LearningPlan = {
   id: number
   relatedProjectId?: number | null
   title: string
+  icon?: string
+  iconColor?: string
   goal: string
   updatedAt: string
   libraryId: number
@@ -501,12 +505,11 @@ export const learningPlans: LearningPlan[] = [
     correctRate: 68,
     weeklyHours: '6.5h',
     profile: [
-      { label: '专业方向', value: '计算机科学与技术' },
-      { label: '知识基础', value: '中等' },
-      { label: '薄弱点', value: '继承 / 接口' },
-      { label: '学习偏好', value: '图文 + 代码' },
-      { label: '目标', value: '考试复习' },
-      { label: '节奏', value: '每天 60-90 分钟' },
+      { label: '学习目标', value: '考试复习' },
+      { label: '当前基础', value: '基础一般' },
+      { label: '重点知识', value: '继承 / 多态 / 接口' },
+      { label: '时间安排', value: '3 天，每天 60-90 分钟' },
+      { label: '学习方式', value: '图文讲解 + 练习驱动' },
     ],
     stages: [
       {

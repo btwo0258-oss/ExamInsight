@@ -110,13 +110,15 @@ async function handleKnowledgeBaseCreated(kbId: number) {
 const menuItems = computed<MenuItem[]>(() => {
   const knowledgeBaseItems = knowledgeBaseStore.list.map(kb => ({
     label: kb.name,
+    icon: 'folder',
     action: () => handleMoveToKnowledgeBase(kb.id)
   }))
   
   return [
-    { label: '重命名', action: startEdit },
+    { label: '重命名', icon: 'edit', action: startEdit },
     {
       label: props.item.isPinned ? '取消置顶' : '置顶对话',
+      icon: props.item.isPinned ? 'pin-off' : 'pin',
       action: () => {
         conversationStore.togglePin(props.item.id)
         handleActionClick()
@@ -124,8 +126,9 @@ const menuItems = computed<MenuItem[]>(() => {
     },
     {
       label: '移至知识库',
+      icon: 'folder',
       children: [
-        { label: '+ 新建知识库', action: handleCreateKnowledgeBase },
+        { label: '新建知识库', icon: 'plus', action: handleCreateKnowledgeBase },
         { divided: true, label: '' },
         ...knowledgeBaseItems
       ]
@@ -133,6 +136,7 @@ const menuItems = computed<MenuItem[]>(() => {
     { divided: true, label: '' },
     { 
       label: '删除对话', 
+      icon: 'trash',
       danger: true, 
       action: () => {
         emit('remove', props.item.id)
@@ -202,20 +206,8 @@ const menuItems = computed<MenuItem[]>(() => {
   position: relative;
 }
 
-.item:hover {
-  background: rgba(0, 0, 0, 0.04);
-}
-
-:root[data-theme='dark'] .item:hover {
-  background: rgba(255, 255, 255, 0.06);
-}
-
 .item--active {
-  background: rgba(51, 51, 51, 0.08);
-}
-
-:root[data-theme='dark'] .item--active {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--color-hover-strong);
 }
 
 .item__title {
@@ -271,13 +263,9 @@ const menuItems = computed<MenuItem[]>(() => {
 }
 
 .actions-btn:hover {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--color-hover);
   color: var(--color-text);
   opacity: 1;
-}
-
-:root[data-theme='dark'] .actions-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
 }
 
 .actions-btn--active {

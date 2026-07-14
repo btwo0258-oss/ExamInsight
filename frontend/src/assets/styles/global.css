@@ -35,6 +35,102 @@ textarea {
   color: inherit;
 }
 
+/* Shared interaction primitives. Apply these classes explicitly to ordinary controls. */
+.ui-hover-row,
+.ui-icon-action,
+.ui-menu-item {
+  transition:
+    background-color var(--ui-transition),
+    color var(--ui-transition),
+    border-color var(--ui-transition);
+}
+
+.ui-hover-row {
+  border-radius: var(--ui-hover-radius);
+}
+
+.ui-hover-row:hover,
+.ui-hover-row:focus-visible {
+  background: var(--ui-hover-bg);
+  color: var(--color-text);
+}
+
+.ui-icon-action {
+  border-radius: var(--ui-hover-radius);
+}
+
+.ui-icon-action:hover,
+.ui-icon-action:focus-visible {
+  background: var(--ui-hover-strong-bg);
+  color: var(--color-text);
+}
+
+.ui-menu-panel.ui-menu-panel {
+  box-sizing: border-box;
+  padding: var(--ui-menu-padding);
+  border: 1px solid var(--ui-menu-border);
+  border-radius: var(--ui-menu-radius);
+  background: var(--ui-menu-bg);
+  box-shadow: var(--ui-menu-shadow);
+}
+
+.ui-menu-item.ui-menu-item {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--ui-menu-item-height);
+  border: 0;
+  border-radius: var(--ui-menu-item-radius);
+  background: transparent;
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
+  gap: var(--ui-menu-gap);
+  padding: 0 10px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.35;
+  text-align: left;
+}
+
+.ui-menu-item.ui-menu-item:hover,
+.ui-menu-item.ui-menu-item:focus-visible,
+.ui-menu-item.ui-menu-item[aria-selected='true'] {
+  background: var(--ui-hover-bg);
+  color: var(--color-text);
+  outline: none;
+}
+
+.ui-menu-item.ui-menu-item--danger {
+  color: var(--color-danger);
+}
+
+.ui-menu-item.ui-menu-item--danger:hover,
+.ui-menu-item.ui-menu-item--danger:focus-visible {
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  color: var(--color-danger);
+}
+
+.ui-menu-item.ui-menu-item--disabled,
+.ui-menu-item.ui-menu-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.ui-menu-icon {
+  width: var(--ui-menu-icon-size);
+  height: var(--ui-menu-icon-size);
+  flex: 0 0 var(--ui-menu-icon-size);
+  display: inline-grid;
+  place-items: center;
+}
+
+.ui-menu-divider {
+  height: 1px;
+  margin: 6px;
+  background: var(--color-border);
+}
+
 /* 滚动条样式 */
 ::-webkit-scrollbar {
   width: 6px;

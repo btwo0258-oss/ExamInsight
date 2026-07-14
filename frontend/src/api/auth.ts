@@ -22,6 +22,7 @@ type MockUser = {
 };
 
 const MOCK_USERS_KEY = "llm.mock.users";
+const MOCK_SETTINGS_KEY = "llm.mock.settings";
 
 function loadMockUsers(): MockUser[] {
   const raw = localStorage.getItem(MOCK_USERS_KEY);
@@ -177,7 +178,17 @@ export async function forgotPassword(username: string): Promise<{ message: strin
 
 export async function getSettings(): Promise<{ theme: string; defaultModel: string }> {
   if (mockEnabled.value) {
-    return { theme: 'light', defaultModel: 'deepseek-chat' };
+    const localTheme = localStorage.getItem('llm.theme');
+    const fallback = {
+      theme: localTheme === 'dark' ? 'dark' : 'light',
+      defaultModel: 'deepseek-chat',
+    };
+    try {
+      const saved = JSON.parse(localStorage.getItem(MOCK_SETTINGS_KEY) || '{}');
+      return { ...fallback, ...saved };
+    } catch {
+      return fallback;
+    }
   }
   const res = await request.get("/api/user/settings");
   return res.data?.data || res.data;
@@ -185,6 +196,8 @@ export async function getSettings(): Promise<{ theme: string; defaultModel: stri
 
 export async function updateSettings(payload: { theme?: string; defaultModel?: string }): Promise<void> {
   if (mockEnabled.value) {
+    const current = await getSettings();
+    localStorage.setItem(MOCK_SETTINGS_KEY, JSON.stringify({ ...current, ...payload }));
     return;
   }
   await request.put("/api/user/settings", payload);

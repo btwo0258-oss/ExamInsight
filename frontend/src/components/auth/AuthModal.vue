@@ -341,12 +341,9 @@ function goToAdminLogin() {
   border: 0;
   border-radius: 14px;
   padding: 16px 16px;
-  background: rgba(0, 0, 0, 0.04);
+  color: var(--color-text);
+  background: var(--color-hover);
   outline: none;
-}
-
-:root[data-theme="dark"] .field__input {
-  background: rgba(255, 255, 255, 0.06);
 }
 
 .row {
@@ -407,7 +404,7 @@ function goToAdminLogin() {
 }
 
 .forgot-password__header p {
-  color: #666;
+  color: var(--color-text-muted);
   font-size: 14px;
 }
 
@@ -419,25 +416,15 @@ function goToAdminLogin() {
   margin-top: 12px;
   padding: 10px;
   border-radius: 6px;
-  background: #fee;
-  color: #c33;
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  color: var(--color-danger);
   font-size: 14px;
   text-align: center;
 }
 
 .forgot-password__message.success {
-  background: #efe;
-  color: #3c3;
-}
-
-:root[data-theme="dark"] .forgot-password__message {
-  background: rgba(255, 0, 0, 0.1);
-  color: #f88;
-}
-
-:root[data-theme="dark"] .forgot-password__message.success {
-  background: rgba(0, 255, 0, 0.1);
-  color: #8f8;
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  color: var(--color-success);
 }
 
 .forgot-password__footer {
@@ -448,7 +435,7 @@ function goToAdminLogin() {
 
 .error {
   font-size: 12px;
-  color: #d73a49;
+  color: var(--color-danger);
 }
 
 .primary {

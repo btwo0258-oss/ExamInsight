@@ -281,11 +281,7 @@ onUnmounted(() => {
   z-index: 9999;
   display: flex;
   justify-content: flex-end;
-  background: rgba(0, 0, 0, 0.3);
-}
-
-:root[data-theme="dark"] .mindmap-panel-overlay {
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--color-overlay);
 }
 
 .mindmap-panel {
@@ -296,7 +292,7 @@ onUnmounted(() => {
   border-left: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
-  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-lg);
 }
 
 .panel-header {
@@ -330,7 +326,7 @@ onUnmounted(() => {
 }
 
 .panel-sidebar-toggle:hover {
-  background: var(--color-bg-alt);
+  background: var(--color-hover);
   color: var(--color-text);
 }
 
@@ -365,7 +361,7 @@ onUnmounted(() => {
 }
 
 .panel-btn:hover:not(:disabled) {
-  background: var(--color-bg-alt);
+  background: var(--color-hover);
   border-color: var(--color-primary);
   color: var(--color-primary);
 }
@@ -415,7 +411,7 @@ onUnmounted(() => {
 }
 
 .panel-close:hover {
-  background: var(--color-bg-alt);
+  background: var(--color-hover);
   color: var(--color-text);
 }
 
@@ -530,12 +526,12 @@ onUnmounted(() => {
 
 .kb-item:hover {
   border-color: var(--color-primary);
-  background: rgba(59, 130, 246, 0.05);
+  background: color-mix(in srgb, var(--color-info) 5%, transparent);
 }
 
 .kb-item--selected {
   border-color: var(--color-primary);
-  background: rgba(59, 130, 246, 0.1);
+  background: color-mix(in srgb, var(--color-info) 10%, transparent);
 }
 
 .kb-modal-actions {

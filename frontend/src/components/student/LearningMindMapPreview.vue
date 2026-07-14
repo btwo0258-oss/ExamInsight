@@ -6,6 +6,7 @@ import KeyboardNavigation from 'simple-mind-map/src/plugins/KeyboardNavigation.j
 // @ts-ignore
 import Drag from 'simple-mind-map/src/plugins/Drag.js'
 import 'simple-mind-map/dist/simpleMindMap.esm.css'
+import { useThemeStore } from '@/stores/theme'
 
 MindMap.usePlugin(KeyboardNavigation)
 MindMap.usePlugin(Drag)
@@ -14,6 +15,7 @@ const props = defineProps<{
   treeData?: unknown
   title: string
 }>()
+const themeStore = useThemeStore()
 
 const containerRef = ref<HTMLElement | null>(null)
 let mindMapInstance: any = null
@@ -37,6 +39,11 @@ function normalizeTreeData() {
   }
 }
 
+function themeColor(name: string, fallback: string) {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  return value || fallback
+}
+
 async function renderMindMap() {
   await nextTick()
   if (!containerRef.value) return
@@ -56,14 +63,14 @@ async function renderMindMap() {
     mousewheelAction: 'zoom',
     initRootNodePosition: ['center', 'center'],
     themeConfig: {
-      backgroundColor: '#f8fafc',
-      lineColor: '#64748b',
+      backgroundColor: themeColor('--color-bg', '#f8fafc'),
+      lineColor: themeColor('--color-text-muted', '#64748b'),
       lineWidth: 2,
       rootFillColor: 'transparent',
       rootBorderWidth: 0,
       rootFontSize: 24,
       rootFontWeight: 'bold',
-      rootColor: '#111827',
+      rootColor: themeColor('--color-text', '#111827'),
     },
   } as any)
 
@@ -75,7 +82,7 @@ async function renderMindMap() {
 onMounted(renderMindMap)
 
 watch(
-  () => props.treeData,
+  () => [props.treeData, themeStore.mode],
   () => renderMindMap(),
   { deep: true },
 )
@@ -97,6 +104,6 @@ onBeforeUnmount(() => {
   width: 100%;
   min-height: 380px;
   height: 100%;
-  background: #f8fafc;
+  background: var(--color-hover);
 }
 </style>

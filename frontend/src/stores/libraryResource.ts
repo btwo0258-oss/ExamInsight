@@ -36,9 +36,11 @@ function fileSize(size: number) {
 }
 
 function generatedType(group: LearningResource['group']) {
+  if (group === '学习方案') return 'Markdown'
   if (group === 'PPT') return 'PPT'
   if (group === '思维导图') return '思维导图'
   if (group === '代码案例') return 'ZIP'
+  if (group === '图片') return '图片'
   if (group === '个性化学习手册') return 'Markdown'
   return 'PDF'
 }
@@ -118,7 +120,7 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
       size: 'AI 生成',
       status: resource.status === '生成中' ? '向量化中' : '解析完成',
       updatedAt: '刚刚',
-      category: resource.group === '思维导图' ? 'mindmap' : 'file',
+      category: resource.group === '思维导图' ? 'mindmap' : resource.group === '图片' ? 'image' : 'file',
       source,
       projectId,
       libraryId,
