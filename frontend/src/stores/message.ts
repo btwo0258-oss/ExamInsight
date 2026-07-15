@@ -6,7 +6,9 @@ import { streamChat } from "@/api/chat";
 import { useModelStore } from "@/stores/model";
 import { useConversationStore } from "@/stores/conversation";
 import * as conversationApi from "@/api/conversation";
-import { USER_KEY, getStoredToken } from "@/api/request";
+import { isMockDataSource } from '@/config/dataSource'
+import { mockSession } from '@/mock/storage'
+import { documentRepository } from '@/repositories/document'
 
 export type ChatRole = "user" | "assistant" | "system";
 
@@ -32,6 +34,7 @@ export type ChatMessage = {
   content: string;
   createTime: number;
   streaming?: boolean;
+  errorMsg?: string;
   sourceChunks?: { docName: string; chunkIndex: number; content: string; _score?: number }[];
   durationMs?: number;
   // 版本控制
@@ -50,83 +53,57 @@ function uid() {
   return `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
-function getUserPrefix(): string {
-  const userStr = sessionStorage.getItem(USER_KEY) || localStorage.getItem(USER_KEY);
-  if (userStr) {
-    try {
-      const user = JSON.parse(userStr);
-      if (user && user.id) return String(user.id);
-    } catch {}
-  }
-  return "guest";
+function isAbortError(error: unknown) {
+  const candidate = error as { name?: string; code?: string }
+  return candidate?.name === 'AbortError'
+    || candidate?.name === 'CanceledError'
+    || candidate?.code === 'ERR_CANCELED'
+}
+
+function errorText(error: unknown, fallback = '请求失败') {
+  return error instanceof Error && error.message ? error.message : fallback
 }
 
 function keyForConversation(conversationId: number) {
-  const userPrefix = getUserPrefix();
-  return `llm.messages.${userPrefix}.${conversationId}`;
+  return `messages.${conversationId}`;
 }
 
 function loadLocal(conversationId: number): ChatMessage[] {
-  const key = keyForConversation(conversationId);
-  const raw = localStorage.getItem(key) ?? sessionStorage.getItem(key);
-  if (!raw) return [];
-  try {
-    return JSON.parse(raw) as ChatMessage[];
-  } catch {
-    return [];
-  }
+  if (!isMockDataSource) return []
+  return mockSession.get<ChatMessage[]>(keyForConversation(conversationId), [])
 }
 
 function saveLocal(conversationId: number, items: ChatMessage[]) {
-  const key = keyForConversation(conversationId);
-  const value = JSON.stringify(items);
-  sessionStorage.setItem(key, value);
-  localStorage.setItem(key, value);
+  if (isMockDataSource) mockSession.set(keyForConversation(conversationId), items)
 }
 
 function keyForActiveQVersions(conversationId: number) {
-  const userPrefix = getUserPrefix();
-  return `llm.active_q_versions.${userPrefix}.${conversationId}`;
+  return `message-versions.questions.${conversationId}`;
 }
 
 function keyForActiveAVersions(conversationId: number) {
-  const userPrefix = getUserPrefix();
-  return `llm.active_a_versions.${userPrefix}.${conversationId}`;
+  return `message-versions.answers.${conversationId}`;
 }
 
 function loadLocalActiveQVersions(conversationId: number): Record<string, number> {
-  const key = keyForActiveQVersions(conversationId);
-  const raw = localStorage.getItem(key) ?? sessionStorage.getItem(key);
-  if (!raw) return {};
-  try {
-    return JSON.parse(raw) as Record<string, number>;
-  } catch {
-    return {};
-  }
+  if (!isMockDataSource) return {}
+  return mockSession.get<Record<string, number>>(keyForActiveQVersions(conversationId), {})
 }
 
 function loadLocalActiveAVersions(conversationId: number): Record<string, Record<number, number>> {
-  const key = keyForActiveAVersions(conversationId);
-  const raw = localStorage.getItem(key) ?? sessionStorage.getItem(key);
-  if (!raw) return {};
-  try {
-    return JSON.parse(raw) as Record<string, Record<number, number>>;
-  } catch {
-    return {};
-  }
+  if (!isMockDataSource) return {}
+  return mockSession.get<Record<string, Record<number, number>>>(keyForActiveAVersions(conversationId), {})
 }
 
 function saveLocalActiveQVersions(conversationId: number, versions: Record<string, number>) {
-  sessionStorage.setItem(keyForActiveQVersions(conversationId), JSON.stringify(versions));
-  localStorage.setItem(keyForActiveQVersions(conversationId), JSON.stringify(versions));
+  if (isMockDataSource) mockSession.set(keyForActiveQVersions(conversationId), versions)
 }
 
 function saveLocalActiveAVersions(
   conversationId: number,
   versions: Record<string, Record<number, number>>,
 ) {
-  sessionStorage.setItem(keyForActiveAVersions(conversationId), JSON.stringify(versions));
-  localStorage.setItem(keyForActiveAVersions(conversationId), JSON.stringify(versions));
+  if (isMockDataSource) mockSession.set(keyForActiveAVersions(conversationId), versions)
 }
 
 function parseCreateTime(createTime: any): number {
@@ -199,7 +176,7 @@ export const useMessageStore = defineStore("message", () => {
 
     initLocalIfNeeded(conversationId);
 
-    if (fetchedFromServer.value[key]) return;
+    if (fetchedFromServer.value[key]) return true;
     fetchedFromServer.value[key] = true;
 
     try {
@@ -461,16 +438,17 @@ export const useMessageStore = defineStore("message", () => {
         saveLocalActiveQVersions(conversationId, existingQ);
         saveLocalActiveAVersions(conversationId, existingA);
       }
+      return true;
     } catch (err) {
       console.error("Failed to load messages from server:", err);
       fetchedFromServer.value[key] = false;
+      errorMessage.value = errorText(err, '加载历史消息失败');
+      return false;
     }
   }
 
   function stopStreaming() {
     controller.value?.abort();
-    controller.value = null;
-    isStreaming.value = false;
   }
 
   async function sendMessage(
@@ -483,6 +461,7 @@ export const useMessageStore = defineStore("message", () => {
     skipUserMsg: boolean = false,
     extraOptions?: { isRegenerate?: boolean; editMsgId?: number; parentId?: number; tutorContext?: string; tutorSource?: TutorSource },
   ) {
+    if (isStreaming.value) return;
     let text = content.trim();
     const hasFiles = files && files.length > 0;
     if (!text && !hasFiles && !skipUserMsg) return;
@@ -494,6 +473,8 @@ export const useMessageStore = defineStore("message", () => {
     await ensureLoaded(conversationId);
     errorMessage.value = null;
     const convIdStr = String(conversationId);
+    const nextController = new AbortController();
+    controller.value = nextController;
 
     // 1. 确定 Turn 和版本号
     const currentTurnId = turnId || uid();
@@ -518,41 +499,25 @@ export const useMessageStore = defineStore("message", () => {
       isStreaming.value = true;
       try {
         const extractedTexts = [];
-        const fileNames = [];
         for (const file of files) {
-          const formData = new FormData();
-          formData.append("file", file);
-          const token = getStoredToken();
-          const res = await fetch((import.meta.env.VITE_API_BASE_URL || "") + "/api/doc/extract", {
-            method: "POST",
-            body: formData,
-            headers: token ? { Authorization: `Bearer ${token}` } : {},
-          });
-          const json = await res.json();
-          if (json.code === 200) {
-            extractedTexts.push(`[文件：${file.name}]\n${json.data}`);
-            fileNames.push(file.name);
-          } else {
-            throw new Error(json.message || "文件解析失败");
-          }
+          const extracted = await documentRepository.extract(file, nextController.signal);
+          extractedTexts.push(`[文件：${file.name}]\n${extracted}`);
         }
         fileContext = extractedTexts.join("\n\n");
-        if (fileNames.length > 0) {
-          // 不再向 displayContent 追加附件文本，因为 UI 已经通过 message.files 渲染了附件卡片
-        }
       } catch (e) {
-        errorMessage.value = "文件上传/解析失败: " + e;
-        isStreaming.value = false;
+        if (!isAbortError(e) && !nextController.signal.aborted) {
+          errorMessage.value = `附件上传或解析失败：${errorText(e)}`;
+        }
+        if (controller.value === nextController) {
+          isStreaming.value = false;
+          controller.value = null;
+        }
         return;
       }
     }
 
     // 4. 记录准备发送消息状态（不覆盖后端生成的标题）
     const list = byConversation.value[convIdStr]!;
-
-    stopStreaming();
-    const nextController = new AbortController();
-    controller.value = nextController;
 
     // 5. 创建并插入消息
     const assistantMsg: ChatMessage = {
@@ -684,6 +649,7 @@ export const useMessageStore = defineStore("message", () => {
       const finalIdx = list.findIndex((m) => m.id === assistantMsg.id);
       if (finalIdx !== -1) {
         list[finalIdx].streaming = false;
+        list[finalIdx].errorMsg = undefined;
         list[finalIdx].durationMs = Date.now() - startTime;
         saveLocal(conversationId, list);
       }
@@ -782,14 +748,22 @@ export const useMessageStore = defineStore("message", () => {
       const errorIdx = list.findIndex((m) => m.id === assistantMsg.id);
       if (errorIdx !== -1) {
         list[errorIdx].streaming = false;
-        list[errorIdx].content =
-          list[errorIdx].content || (err instanceof Error ? err.message : "请求失败");
+        if (isAbortError(err) || nextController.signal.aborted) {
+          list[errorIdx].content = list[errorIdx].content || "已停止生成";
+          list[errorIdx].errorMsg = undefined;
+        } else {
+          list[errorIdx].errorMsg = errorText(err);
+        }
         saveLocal(conversationId, list);
       }
-      errorMessage.value = err instanceof Error ? err.message : "请求失败";
+      if (!isAbortError(err) && !nextController.signal.aborted) {
+        errorMessage.value = errorText(err);
+      }
     } finally {
-      isStreaming.value = false;
-      controller.value = null;
+      if (controller.value === nextController) {
+        isStreaming.value = false;
+        controller.value = null;
+      }
     }
   }
 
@@ -994,13 +968,17 @@ export const useMessageStore = defineStore("message", () => {
     delete byConversation.value[key];
     delete activeQVersions.value[key];
     delete activeAVersions.value[key];
-    sessionStorage.removeItem(keyForConversation(conversationId));
-    sessionStorage.removeItem(keyForActiveQVersions(conversationId));
-    sessionStorage.removeItem(keyForActiveAVersions(conversationId));
+    mockSession.remove(keyForConversation(conversationId));
+    mockSession.remove(keyForActiveQVersions(conversationId));
+    mockSession.remove(keyForActiveAVersions(conversationId));
   }
 
   function clearError() {
     errorMessage.value = null;
+  }
+
+  function reportError(error: unknown, fallback = '请求失败') {
+    errorMessage.value = errorText(error, fallback)
   }
 
   function clearMemoryState() {
@@ -1031,6 +1009,7 @@ export const useMessageStore = defineStore("message", () => {
     createConversation,
     clearConversation,
     clearError,
+    reportError,
     clearMemoryState,
     regenerate,
     editAndRegenerate,

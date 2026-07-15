@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import type { Exercise, LearningPlan, LearningStage, LearningTask } from '@/mock'
 import { useConversationStore } from '@/stores/conversation'
 import { useMessageStore } from '@/stores/message'
+import { isMockDataSource } from '@/config/dataSource'
 
 type TutorContext = {
   stage?: LearningStage
@@ -81,10 +82,11 @@ export const useLearningTutorStore = defineStore('learningTutor', () => {
   async function ensureConversation(plan: LearningPlan) {
     conversationStore.init()
     const title = `${plan.title} · AI 助教`
-    const storedId = conversationIds.value[plan.id] ?? Number(localStorage.getItem(storageKey(plan.id)) ?? sessionStorage.getItem(storageKey(plan.id)))
+    const storedId = conversationIds.value[plan.id]
+      ?? (isMockDataSource ? Number(sessionStorage.getItem(storageKey(plan.id))) : 0)
     let matched = conversationStore.list.find((item) => item.id === storedId)
       ?? conversationStore.list.find((item) => item.learningProjectId === plan.id && item.title === title)
-    if (!matched && Number.isFinite(storedId) && storedId > 0) {
+    if (isMockDataSource && !matched && Number.isFinite(storedId) && storedId > 0) {
       conversationStore.restoreLearningConversation(storedId, plan.id, plan.title, plan.libraryId || null, title)
       matched = conversationStore.list.find((item) => item.id === storedId)
     }
@@ -97,8 +99,7 @@ export const useLearningTutorStore = defineStore('learningTutor', () => {
       conversationType: 'learning-tutor',
     })
     conversationIds.value[plan.id] = conversationId
-    sessionStorage.setItem(storageKey(plan.id), String(conversationId))
-    localStorage.setItem(storageKey(plan.id), String(conversationId))
+    if (isMockDataSource) sessionStorage.setItem(storageKey(plan.id), String(conversationId))
     conversationStore.linkLearningProject(conversationId, plan.id, plan.title, 'learning-tutor')
     await messageStore.ensureLoaded(conversationId)
     return conversationId
@@ -121,7 +122,8 @@ export const useLearningTutorStore = defineStore('learningTutor', () => {
   }
 
   function getConversationId(planId: number) {
-    return conversationIds.value[planId] ?? (Number(localStorage.getItem(storageKey(planId)) ?? sessionStorage.getItem(storageKey(planId))) || null)
+    return conversationIds.value[planId]
+      ?? (isMockDataSource ? Number(sessionStorage.getItem(storageKey(planId))) || null : null)
   }
 
   return { conversationIds, ensureConversation, send, getConversationId }

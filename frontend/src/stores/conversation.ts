@@ -2,7 +2,6 @@ import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 import { useRoute, useRouter } from "vue-router";
 import * as conversationApi from "@/api/conversation";
-import { USER_KEY } from "@/api/request";
 
 export const useConversationStore = defineStore("conversation", () => {
   const router = useRouter();
@@ -10,21 +9,6 @@ export const useConversationStore = defineStore("conversation", () => {
 
   const list = ref<conversationApi.Conversation[]>([]);
   const isInitialized = ref(false);
-
-  function getUserPrefix(): string {
-    const userStr = sessionStorage.getItem(USER_KEY) || localStorage.getItem(USER_KEY);
-    if (userStr) {
-      try {
-        const user = JSON.parse(userStr);
-        if (user && user.id) return String(user.id);
-      } catch { }
-    }
-    return "guest";
-  }
-
-  function getStorageKey(): string {
-    return `llm.conversations.${getUserPrefix()}`;
-  }
 
   const currentId = computed<number | null>(() => {
     const param = route.params.id;
@@ -46,22 +30,7 @@ export const useConversationStore = defineStore("conversation", () => {
 
   function init() {
     if (isInitialized.value) return;
-    const stored = localStorage.getItem(getStorageKey()) ?? sessionStorage.getItem(getStorageKey());
-    if (stored) {
-      try {
-        list.value = JSON.parse(stored) as conversationApi.Conversation[];
-      } catch {
-        list.value = [];
-      }
-    } else {
-      list.value = [];
-    }
     isInitialized.value = true;
-  }
-
-  function saveToStorage() {
-    sessionStorage.setItem(getStorageKey(), JSON.stringify(list.value));
-    localStorage.setItem(getStorageKey(), JSON.stringify(list.value));
   }
 
   function upsertLocal(c: conversationApi.Conversation) {
@@ -71,12 +40,10 @@ export const useConversationStore = defineStore("conversation", () => {
     } else {
       list.value.unshift(c);
     }
-    saveToStorage();
   }
 
   function removeLocal(id: number) {
     list.value = list.value.filter((x) => x.id !== id);
-    saveToStorage();
   }
 
   async function fetchList() {
@@ -88,12 +55,8 @@ export const useConversationStore = defineStore("conversation", () => {
       list.value = res.sort(
         (a, b) => new Date(b.updateTime || 0).getTime() - new Date(a.updateTime || 0).getTime(),
       );
-      saveToStorage();
     } catch (err) {
       errorMessage.value = err instanceof Error ? err.message : "获取会话列表失败";
-      // 如果未登录或其他错误，保持列表为空
-      list.value = [];
-      saveToStorage();
       console.error("获取会话列表失败:", err);
     } finally {
       isLoading.value = false;
@@ -109,46 +72,14 @@ export const useConversationStore = defineStore("conversation", () => {
       learningProjectName: payload?.learningProjectName,
       conversationType: payload?.conversationType ?? 'general',
     };
-    const temp: conversationApi.Conversation = {
-      id: Date.now(),
-      title: payload?.title || "新对话",
-      knowledgeBaseId: payload?.kbId || null,
-      isPinned: false,
-      messageCount: 0,
-      updateTime: nowMs(),
-      createTime: nowMs(),
-      learningProjectId: payload?.learningProjectId ?? null,
-      learningProjectName: payload?.learningProjectName,
-      conversationType: payload?.conversationType ?? 'general',
-    };
-    upsertLocal(temp);
-
-    if (payload?.localOnly) {
-      if (shouldNavigate) await router.push(`/chat/${temp.id}`);
-      return temp.id;
-    }
-
-    try {
-      const real = await conversationApi.createConversation(apiPayload);
-      removeLocal(temp.id);
-      upsertLocal({
-        ...real,
-        learningProjectId: payload?.learningProjectId ?? real.learningProjectId ?? null,
-        learningProjectName: payload?.learningProjectName ?? real.learningProjectName,
-        conversationType: payload?.conversationType ?? real.conversationType ?? 'general',
-      });
-      if (shouldNavigate) await router.push(`/chat/${real.id}`);
-      return real.id;
-    } catch {
-      if (shouldNavigate) await router.push(`/chat/${temp.id}`);
-      return temp.id;
-    }
+    const created = await conversationApi.createConversation(apiPayload);
+    upsertLocal(created);
+    if (shouldNavigate) await router.push(`/chat/${created.id}`);
+    return created.id;
   }
 
   async function rename(id: number, nextTitle: string) {
-    try {
-      await conversationApi.updateConversation(id, { title: nextTitle });
-    } catch { }
+    await conversationApi.updateConversation(id, { title: nextTitle });
     const existing = list.value.find((x) => x.id === id);
     if (!existing) return;
     upsertLocal({ ...existing, title: nextTitle, updateTime: nowMs() });
@@ -158,12 +89,8 @@ export const useConversationStore = defineStore("conversation", () => {
     const existing = list.value.find((x) => x.id === id);
     if (!existing) return;
 
-    try {
-      await conversationApi.updateConversation(id, { knowledgeBaseId });
-      upsertLocal({ ...existing, knowledgeBaseId, updateTime: nowMs(), title: existing.title });
-    } catch {
-      upsertLocal({ ...existing, knowledgeBaseId, updateTime: nowMs() });
-    }
+    await conversationApi.updateConversation(id, { knowledgeBaseId });
+    upsertLocal({ ...existing, knowledgeBaseId, updateTime: nowMs(), title: existing.title });
   }
 
   function linkLearningProject(id: number, learningProjectId: number, learningProjectName: string, conversationType?: conversationApi.Conversation['conversationType']) {
@@ -172,6 +99,10 @@ export const useConversationStore = defineStore("conversation", () => {
     if (existing.learningProjectId === learningProjectId && existing.learningProjectName === learningProjectName && (!conversationType || existing.conversationType === conversationType)) return;
     const next = { ...existing, learningProjectId, learningProjectName, conversationType: conversationType ?? existing.conversationType };
     upsertLocal(next);
+    void conversationApi.updateConversation(id, { learningProjectId, learningProjectName, conversationType: next.conversationType })
+      .catch((error) => {
+        errorMessage.value = error instanceof Error ? error.message : '关联学习项目失败';
+      });
   }
 
   function restoreLearningConversation(
@@ -198,9 +129,7 @@ export const useConversationStore = defineStore("conversation", () => {
   }
 
   async function remove(id: number) {
-    try {
-      await conversationApi.deleteConversation(id);
-    } catch { }
+    await conversationApi.deleteConversation(id);
     removeLocal(id);
     if (currentId.value === id) {
       await router.push("/chat");
@@ -211,11 +140,8 @@ export const useConversationStore = defineStore("conversation", () => {
     const existing = list.value.find((x) => x.id === id);
     if (!existing) return;
     const isPinned = !existing.isPinned;
-    try {
-      await conversationApi.updateConversation(id, { isPinned });
-    } catch { }
+    await conversationApi.updateConversation(id, { isPinned });
     existing.isPinned = isPinned;
-    saveToStorage();
   }
 
   function clearAll() {
@@ -223,8 +149,6 @@ export const useConversationStore = defineStore("conversation", () => {
     isInitialized.value = false;
     errorMessage.value = null;
     isLoading.value = false;
-    sessionStorage.removeItem(getStorageKey());
-    localStorage.removeItem(getStorageKey());
   }
 
   async function open(id: number) {

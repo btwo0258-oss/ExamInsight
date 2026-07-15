@@ -9,6 +9,7 @@ import { useMessageStore } from '@/stores/message'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import { useExamAnalysisStore } from '@/stores/examAnalysis'
 import { useMindMapStore } from '@/stores/mindmap'
+import { isMockDataSource } from '@/config/dataSource'
 
 export type User = authApi.ApiUser
 
@@ -48,7 +49,7 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = next.token
     user.value = next.user
 
-    if (remember) {
+    if (remember && !isMockDataSource) {
       localStorage.setItem(TOKEN_KEY, next.token)
       localStorage.setItem(USER_KEY, JSON.stringify(next.user))
       sessionStorage.removeItem(TOKEN_KEY)

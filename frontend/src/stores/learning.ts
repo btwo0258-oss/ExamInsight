@@ -1,10 +1,19 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { getLearningPlans, saveLearningPlans } from '@/api/learning'
 import { generateMindMapFromAi } from '@/api/mindmap'
-import { courseLibraries, createCodeLanguageOptions, learningPlans as mockPlans } from '@/mock'
 import type { CodeLanguageKey, Exercise, LearningPlan, LearningResource, TrainingSet, WrongQuestion } from '@/mock'
 import { useLibraryResourceStore } from '@/stores/libraryResource'
+import { learningRepository } from '@/repositories/learning'
+import {
+  createMockQuestionBatch,
+  evaluateMockExerciseAnswer,
+} from '@/mock/generators/learning'
+import type {
+  LearningConfirmationRequest,
+  LearningProfileRequest,
+  LearningProfileResult,
+} from '@/types/contracts/learning'
+import { isApiDataSource } from '@/config/dataSource'
 
 export type CreateLearningPlanInput = {
   prompt: string
@@ -60,146 +69,7 @@ export type TrainingSetResult = {
 
 type DifficultyStrategy = NonNullable<LearningPlan['questionBank']>['difficultyStrategy']
 
-function normalizeAnswer(value: string) {
-  return value.trim().toLowerCase().replace(/[\s，。；、,.;]+/g, '')
-}
-
-export function evaluateExerciseAnswer(exercise: Exercise, userAnswer: string): ExerciseResult {
-  let correct = false
-  let score = 0
-  let feedback = exercise.explanation
-
-  if (exercise.type === '填空题') {
-    const accepted = exercise.acceptedAnswers?.length ? exercise.acceptedAnswers : [exercise.answer]
-    correct = accepted.some((answer) => normalizeAnswer(answer) === normalizeAnswer(userAnswer))
-    score = correct ? 100 : 0
-  } else if (exercise.type === '简答题') {
-    const keywords = exercise.gradingKeywords ?? []
-    const matched = keywords.filter((keyword) => normalizeAnswer(userAnswer).includes(normalizeAnswer(keyword)))
-    score = keywords.length ? Math.round((matched.length / keywords.length) * 100) : 0
-    correct = score >= (exercise.passingScore ?? 80)
-    feedback = correct
-      ? `已覆盖 ${matched.length}/${keywords.length} 个核心评分点。${exercise.explanation}`
-      : `已覆盖 ${matched.length}/${keywords.length} 个核心评分点；建议补充：${keywords.filter((item) => !matched.includes(item)).join('、') || '题目要求中的关键论证'}。`
-  } else if (exercise.type === '代码题') {
-    const language = exercise.codeLanguages?.find((item) => item.key === exercise.selectedLanguage) ?? exercise.codeLanguages?.[0]
-    const patterns = language?.requiredCodePatterns ?? exercise.requiredCodePatterns ?? []
-    const matched = patterns.filter((pattern) => userAnswer.includes(pattern))
-    score = patterns.length ? Math.round((matched.length / patterns.length) * 100) : 0
-    correct = patterns.length > 0 && matched.length === patterns.length
-    feedback = correct
-      ? `${language?.runtime ?? exercise.runtime ?? '当前语言'}原型规则检查通过。正式环境还需由安全判题服务执行 ${exercise.sampleTests?.length ?? 0} 组公开用例和隐藏用例。`
-      : `实现尚未通过原型规则检查，缺少关键逻辑：${patterns.filter((item) => !matched.includes(item)).join('、') || '待判题服务确认'}。`
-  } else {
-    correct = userAnswer === exercise.answer
-    score = correct ? 100 : 0
-  }
-
-  const correctAnswer = exercise.type === '代码题'
-    ? exercise.codeLanguages?.find((item) => item.key === exercise.selectedLanguage)?.referenceAnswer ?? exercise.answer
-    : exercise.answer
-  return { correct, score, feedback, explanation: exercise.explanation, correctAnswer }
-}
-
-function getDifficultyCounts(count: number, strategy: DifficultyStrategy) {
-  const ratios = strategy === '基础为主' ? [0.5, 0.4] : strategy === '强化提高' ? [0.2, 0.5] : [0.3, 0.5]
-  const basic = Math.round(count * ratios[0]!)
-  const advanced = Math.round(count * ratios[1]!)
-  return { basic, advanced, challenge: Math.max(0, count - basic - advanced) }
-}
-
-function inferDifficultyStrategy(foundation: string, studyDepth: string): DifficultyStrategy {
-  if (foundation.includes('零基础') || foundation.includes('薄弱')) return '基础为主'
-  if (foundation.includes('有一定') || studyDepth.includes('刷题') || studyDepth.includes('实操')) return '强化提高'
-  return '均衡'
-}
-
-function createQuestionBatch(
-  count: number,
-  topics: string[],
-  strategy: DifficultyStrategy,
-  startId: number,
-  batch: string,
-  purposeOverride?: Exercise['purpose'],
-): Exercise[] {
-  const distribution = getDifficultyCounts(count, strategy)
-  const checkpointEnd = Math.round(count * 0.2)
-  const practiceEnd = checkpointEnd + Math.round(count * 0.5)
-  const assessmentEnd = practiceEnd + Math.round(count * 0.2)
-  return Array.from({ length: count }, (_, index) => {
-    const topic = topics[index % Math.max(1, topics.length)] ?? '核心知识'
-    const difficulty: Exercise['difficulty'] = index < distribution.basic ? '基础' : index < distribution.basic + distribution.advanced ? '进阶' : '挑战'
-    const purpose = purposeOverride ?? (index < checkpointEnd ? '随堂检查' : index < practiceEnd ? '阶段练习' : index < assessmentEnd ? '阶段测验' : '备用题')
-    const scene: Exercise['scene'] = purpose === '随堂检查' ? 'checkpoint' : purpose === '阶段测验' ? 'assessment' : 'practice'
-    const cognitiveLevel: Exercise['cognitiveLevel'] = difficulty === '基础' ? '概念理解' : difficulty === '进阶' ? '直接应用' : '综合迁移'
-    const variant = index + 1
-    const objectiveTypes: Exercise['type'][] = ['单选题', '判断题', '填空题']
-    const fullTypes: Exercise['type'][] = ['单选题', '多选题', '判断题', '填空题', '简答题', '代码题']
-    const type = scene === 'checkpoint' ? objectiveTypes[index % objectiveTypes.length]! : fullTypes[index % fullTypes.length]!
-    const options = type === '判断题'
-      ? ['正确', '错误']
-      : type === '单选题' || type === '多选题'
-        ? ['A. 只记住题干结论', `B. 结合概念与场景分析${topic}`, `C. 核对${topic}的适用条件`, 'D. 忽略条件直接判断']
-        : []
-    const answer = type === '判断题' ? '正确'
-      : type === '多选题' ? `B. 结合概念与场景分析${topic}||C. 核对${topic}的适用条件`
-        : type === '填空题' ? topic
-          : type === '简答题' ? `需要说明${topic}的核心概念、适用条件以及在具体场景中的推理过程。`
-            : type === '代码题' ? `class Solution { boolean verify${variant}(Object value) { return value != null; } }`
-              : `B. 结合概念与场景分析${topic}`
-    const exercise: Exercise = {
-      id: startId + index,
-      title: type === '填空题' ? `${topic}·${cognitiveLevel}题 ${variant}：请填写本题对应的核心知识点。`
-        : type === '简答题' ? `${topic}·${cognitiveLevel}题 ${variant}：请结合具体场景说明概念、条件和推理过程。`
-          : type === '代码题' ? `${topic}·${cognitiveLevel}题 ${variant}：补全方法，使其能够验证输入并返回正确结果。`
-            : `${topic}·${cognitiveLevel}题 ${variant}：以下哪项最符合当前学习目标？`,
-      knowledge: topic,
-      difficulty,
-      type,
-      options,
-      answer,
-      explanation: `本题考查${topic}的${cognitiveLevel}，需要同时核对概念、适用条件和实际场景。`,
-      scene,
-      cognitiveLevel,
-      purpose,
-      generationBatch: batch,
-      submitted: false,
-    }
-    if (type === '填空题') exercise.acceptedAnswers = [topic, topic.replace(/\s+/g, '')]
-    if (type === '简答题') {
-      exercise.gradingKeywords = [topic, '适用条件', '场景']
-      exercise.gradingRubric = [`说明${topic}核心概念`, '指出适用条件', '结合场景完成推理']
-      exercise.passingScore = 80
-    }
-    if (type === '代码题') {
-      exercise.codeLanguages = createCodeLanguageOptions('verify', variant)
-      exercise.selectedLanguage = 'java'
-      exercise.codeDrafts = {}
-      exercise.sampleTests = [{ input: 'new Object()', expected: 'true' }, { input: 'null', expected: 'false' }]
-    }
-    return exercise
-  })
-}
-
-function assignQuestionBankToTasks(plan: LearningPlan) {
-  const groups = {
-    checkpoint: plan.exercises.filter((item) => item.purpose === '随堂检查'),
-    practice: plan.exercises.filter((item) => item.purpose === '阶段练习'),
-    assessment: plan.exercises.filter((item) => item.purpose === '阶段测验'),
-  }
-  const tasks = plan.stages.flatMap((stage) => stage.tasks)
-  const assign = (targets: typeof tasks, exercises: Exercise[]) => {
-    targets.forEach((task, taskIndex) => {
-      task.exerciseIds = exercises.filter((_, index) => index % Math.max(targets.length, 1) === taskIndex).map((item) => item.id)
-      if (task.exerciseIds.length && (task.type === '练习' || task.type === '测验')) {
-        task.title = task.title.match(/\d+\s*题/) ? task.title.replace(/\d+\s*题/, `${task.exerciseIds.length} 题`) : `${task.title} · ${task.exerciseIds.length} 题`
-      }
-    })
-  }
-  assign(tasks.filter((task) => task.type === '讲解'), groups.checkpoint)
-  assign(tasks.filter((task) => task.type === '练习'), groups.practice)
-  assign(tasks.filter((task) => task.type === '测验'), groups.assessment)
-}
+export const evaluateExerciseAnswer = evaluateMockExerciseAnswer
 
 function buildMindMapSourceContent(plan: LearningPlan, resource: LearningResource) {
   const profile = plan.profile.map((item) => `${item.label}: ${item.value}`).join('\n')
@@ -226,18 +96,84 @@ function buildMindMapSourceContent(plan: LearningPlan, resource: LearningResourc
 }
 
 export const useLearningStore = defineStore('learning', () => {
-  const plans = ref<LearningPlan[]>(getLearningPlans())
+  const plans = ref<LearningPlan[]>(learningRepository.initialPlans())
   const generatingResourceIds = ref<number[]>([])
+  const isLoading = ref(false)
+  const errorMessage = ref<string | null>(null)
   const libraryResourceStore = useLibraryResourceStore()
 
   const projectCount = computed(() => plans.value.length)
 
   function persist() {
-    saveLearningPlans(plans.value)
+    learningRepository.persistMockSnapshot(plans.value)
   }
 
   function getPlan(id: number) {
     return plans.value.find((plan) => plan.id === id)
+  }
+
+  function replacePlanFromServer(plan: LearningPlan) {
+    const index = plans.value.findIndex((item) => item.id === plan.id)
+    if (index >= 0) plans.value.splice(index, 1, plan)
+    else plans.value.unshift(plan)
+  }
+
+  function syncLearningActivity(input: Omit<Parameters<typeof learningRepository.recordActivity>[0], 'clientRequestId'>) {
+    if (!isApiDataSource) return
+    void learningRepository.recordActivity({
+      ...input,
+      clientRequestId: crypto.randomUUID(),
+    }).then(replacePlanFromServer)
+  }
+
+  async function fetchPlans() {
+    if (isLoading.value) return plans.value
+    isLoading.value = true
+    errorMessage.value = null
+    try {
+      plans.value = await learningRepository.listPlans()
+      return plans.value
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : '获取学习项目失败'
+      throw error
+    } finally {
+      isLoading.value = false
+    }
+  }
+
+  async function fetchPlan(id: number) {
+    isLoading.value = true
+    errorMessage.value = null
+    try {
+      const plan = await learningRepository.getPlan(id)
+      replacePlanFromServer(plan)
+      return plan
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : '获取学习项目失败'
+      throw error
+    } finally {
+      isLoading.value = false
+    }
+  }
+
+  function clearError() {
+    errorMessage.value = null
+  }
+
+  async function generateLearningProfile(input: LearningProfileRequest): Promise<LearningProfileResult> {
+    let job = await learningRepository.startProfileGeneration(input)
+    for (let attempt = 0; ['pending', 'running'].includes(job.status) && attempt < 120; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1000))
+      job = await learningRepository.getGenerationJob<LearningProfileResult>(job.jobId)
+    }
+    if (job.status !== 'succeeded' || !job.result) {
+      throw new Error(job.errorMessage || '学习画像生成失败')
+    }
+    return job.result
+  }
+
+  function generateLearningConfirmation(input: LearningConfirmationRequest) {
+    return learningRepository.generateConfirmation(input)
   }
 
   function renamePlan(id: number, title: string) {
@@ -249,189 +185,41 @@ export const useLearningStore = defineStore('learning', () => {
     return true
   }
 
-  function createPlan(input: CreateLearningPlanInput) {
-    const template = structuredClone(mockPlans[0]!)
-    const library = courseLibraries.find((item) => item.id === input.libraryId)
-    const draftPlan = input.draftPlanId ? getPlan(input.draftPlanId) : null
-    const id = draftPlan?.id ?? Math.max(0, ...plans.value.map((plan) => plan.id)) + 1
-    const libraryName = input.libraryName || library?.name || '无'
-    const subjectName = library?.course || input.libraryName?.replace(/知识库|资料库/g, '').trim() || '个性化学习'
-    const inferredTopics = input.weakPoints.split(/[、,，/]+/).map((item) => item.trim()).filter(Boolean)
-    const topics = library?.tags.length ? library.tags : inferredTopics.length ? inferredTopics : ['核心知识']
-    const focus = topics.slice(0, 3).join('、') || subjectName
-
-    template.id = id
-    template.relatedProjectId = input.projectId
-    template.title = draftPlan?.title || `${subjectName}${input.targetType}计划`
-    template.goal = input.supplementalRequirement
-      ? `${input.prompt}（补充要求：${input.supplementalRequirement}）`
-      : input.prompt
-    template.updatedAt = '刚刚'
-    template.libraryId = input.libraryId || library?.id || 0
-    template.status = '进行中'
-    template.period = input.period
-    template.targetType = input.targetType
-    template.progress = 0
-    template.taskDone = 0
-    template.exerciseDone = 0
-    template.correctRate = 0
-    template.weeklyHours = '0h'
-    template.profile = [
-      { label: '学习目标', value: input.targetType },
-      { label: '当前基础', value: input.foundation },
-      { label: '重点知识', value: input.weakPoints || focus },
-      { label: '时间安排', value: `${input.period}，${input.dailyTime}` },
-      { label: '学习方式', value: input.preferences.join(' + ') || input.studyDepth },
-      { label: '资料来源', value: libraryName },
-      { label: '输出深度', value: input.studyDepth },
-    ]
-    if (input.supplementalRequirement) {
-      template.profile.push({ label: '补充要求', value: input.supplementalRequirement })
+  async function createPlan(input: CreateLearningPlanInput) {
+    let job = await learningRepository.startPlanGeneration(input)
+    for (let attempt = 0; ['pending', 'running'].includes(job.status) && attempt < 120; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1000))
+      job = await learningRepository.getGenerationJob<{ projectId: number }>(job.jobId)
     }
-    const stageTitles = ['基础认知', '核心强化', '综合测验']
-    template.stages.forEach((stage, stageIndex) => {
-      const topic = topics[stageIndex % topics.length]!
-      stage.title = `${topic}${stageTitles[stageIndex] ?? '巩固提升'}`
-      stage.desc = stageIndex === 0
-        ? `建立${topic}知识框架并完成基础理解检查`
-        : stageIndex === 1
-          ? `通过案例和专项训练强化${topic}`
-          : `通过综合测验检测${topic}掌握情况`
-      stage.scheduleLabel = `建议第 ${stageIndex + 1} 个学习时段完成`
-      stage.tasks.forEach((task) => {
-        task.done = false
-        task.status = '未开始'
-        task.completionSource = undefined
-        task.readProgress = 0
-        task.validStudySeconds = 0
-        task.completedActions = []
-        const actionMap = {
-          讲解: `学习${topic}核心概念`,
-          资料: `阅读${topic}个性化学习手册`,
-          练习: `完成${topic}专项练习`,
-          测验: `完成${topic}综合测验`,
-          案例: `分析${topic}典型案例`,
-        }
-        task.title = actionMap[task.type]
+    if (job.status !== 'succeeded' || !job.result) {
+      throw new Error(job.errorMessage || '学习方案生成失败')
+    }
+    const plan = await learningRepository.getPlan(job.result.projectId)
+    const draftIndex = plans.value.findIndex((item) => item.id === input.draftPlanId)
+    if (draftIndex >= 0) plans.value.splice(draftIndex, 1, plan)
+    else plans.value.unshift(plan)
+    if (!isApiDataSource) {
+      plan.resources.forEach((resource) => {
+        libraryResourceStore.addGeneratedResource(
+          resource,
+          '智能学习生成',
+          plan.id,
+          input.projectId,
+          plan.libraryId,
+        )
       })
-    })
-    template.totalTasks = template.stages.reduce((total, stage) => total + stage.tasks.length, 0)
-    const difficultyStrategy = inferDifficultyStrategy(input.foundation, input.studyDepth)
-    const questionCount = Math.max(10, Math.min(200, Math.round(input.questionCount || 60)))
-    const difficultyCounts = getDifficultyCounts(questionCount, difficultyStrategy)
-    template.exercises = createQuestionBatch(questionCount, topics, difficultyStrategy, 1, 'initial')
-    const typeCounts = template.exercises.reduce<Partial<Record<Exercise['type'], number>>>((counts, exercise) => {
-      counts[exercise.type] = (counts[exercise.type] ?? 0) + 1
-      return counts
-    }, {})
-    template.questionBank = {
-      targetCount: questionCount,
-      initialCount: questionCount,
-      generatedCount: questionCount,
-      difficultyStrategy,
-      difficultyCounts,
-      typeCounts,
-      generatedAt: '刚刚',
     }
-    template.totalExercises = questionCount
-    template.wrongQuestions = []
-    template.trainingSets = []
-    template.dashboard = topics.slice(0, 3).map((label) => ({ label, value: 0 }))
-    template.resources = template.resources.filter((resource) => input.resourceGroups.includes(resource.group))
-    template.resources.forEach((resource) => {
-      resource.title = `${subjectName}${resource.group}`
-      resource.desc = `基于${libraryName}生成的${resource.group}学习资源。`
-      resource.fileName = `${subjectName}-${resource.group}`
-      resource.status = '已生成'
-      resource.action = '查看'
-    })
-    template.resources.unshift({
-      id: Math.max(0, ...template.resources.map((resource) => resource.id)) + 1,
-      group: '学习方案',
-      title: `${template.title}学习方案`,
-      desc: '最终确认的学习目标、学习画像与阶段安排。',
-      status: '已生成',
-      action: '查看',
-      fileName: `${template.title}-学习方案.md`,
-      content: input.prompt,
-    })
-    const resourcePreferences: Partial<Record<LearningPlan['stages'][number]['tasks'][number]['type'], LearningResource['group'][]>> = {
-      讲解: ['个性化学习手册', '思维导图', 'PPT'],
-      资料: ['个性化学习手册'],
-      案例: ['代码案例'],
-    }
-    template.stages.forEach((stage) => {
-      stage.tasks.forEach((task) => {
-        const groups = resourcePreferences[task.type] ?? []
-        task.resourceId = template.resources.find((resource) => groups.includes(resource.group))?.id
-        task.completionMode = task.type === '讲解' ? 'content'
-          : task.type === '资料' ? 'resource'
-            : task.type === '练习' ? 'exercise'
-              : task.type === '测验' ? 'assessment'
-                : task.type === '案例' ? 'case' : 'manual'
-      })
-    })
-    assignQuestionBankToTasks(template)
-
-    const draftIndex = plans.value.findIndex((plan) => plan.id === draftPlan?.id)
-    if (draftIndex >= 0) plans.value.splice(draftIndex, 1, template)
-    else plans.value.unshift(template)
-    template.resources.forEach((resource) => {
-      libraryResourceStore.addGeneratedResource(
-        resource,
-        '智能学习生成',
-        template.id,
-        input.projectId,
-        template.libraryId,
-      )
-    })
     persist()
-    return template
+    return plan
   }
 
-  function createDraftPlan(input: CreateLearningDraftInput) {
-    const template = structuredClone(mockPlans[0]!)
-    const id = Math.max(0, ...plans.value.map((plan) => plan.id)) + 1
-    const library = courseLibraries.find((item) => item.id === input.libraryId)
-    const title = input.title.trim() || '未命名智能学习'
-
-    template.id = id
-    template.relatedProjectId = null
-    template.title = title
-    template.icon = input.icon || 'folder'
-    template.iconColor = input.iconColor || '#000'
-    template.goal = '待通过对话确认学习目标、学习约束和学习路径。'
-    template.updatedAt = '刚刚'
-    template.libraryId = input.libraryId ?? 0
-    template.status = '待开启'
-    template.period = '待确认'
-    template.targetType = '待确认'
-    template.progress = 0
-    template.taskDone = 0
-    template.exerciseDone = 0
-    template.correctRate = 0
-    template.weeklyHours = '0h'
-    template.profile = [
-      { label: '资料来源', value: input.libraryName || library?.name || '无' },
-      { label: '学习约束', value: '待确认' },
-      { label: '重点知识', value: '待确认' },
-      { label: '节奏', value: '待确认' },
-    ]
-    template.stages = []
-    template.resources = []
-    template.exercises = []
-    template.questionBank = undefined
-    template.trainingSets = []
-    template.wrongQuestions = []
-    template.wrongReviewSets = []
-    template.dashboard = []
-    template.totalTasks = 0
-    template.totalExercises = 0
-    template.agents = template.agents.map((agent) => ({ ...agent, status: 'pending' }))
-
-    plans.value.unshift(template)
+  async function createDraftPlan(input: CreateLearningDraftInput) {
+    const plan = await learningRepository.createDraft(input)
+    const existingIndex = plans.value.findIndex((item) => item.id === plan.id)
+    if (existingIndex >= 0) plans.value.splice(existingIndex, 1, plan)
+    else plans.value.unshift(plan)
     persist()
-    return template
+    return plan
   }
 
   function setProfileValue(plan: LearningPlan, label: string, value: string) {
@@ -515,6 +303,7 @@ export const useLearningStore = defineStore('learning', () => {
     task.completionSource = done ? '手动标记完成' : undefined
     updateProgress(plan)
     persist()
+    syncLearningActivity({ projectId: planId, taskId, eventType: 'complete', action: done ? 'complete' : 'reopen' })
   }
 
   function getTask(plan: LearningPlan, taskId: number) {
@@ -556,6 +345,7 @@ export const useLearningStore = defineStore('learning', () => {
     task.status = '进行中'
     plan.updatedAt = '刚刚'
     persist()
+    syncLearningActivity({ projectId: planId, taskId, eventType: 'start' })
   }
 
   function recordTaskReading(planId: number, taskId: number, progress: number, secondsDelta = 0) {
@@ -567,6 +357,7 @@ export const useLearningStore = defineStore('learning', () => {
     task.validStudySeconds = (task.validStudySeconds ?? 0) + Math.max(0, secondsDelta)
     const completed = evaluateTaskCompletion(plan, taskId)
     persist()
+    syncLearningActivity({ projectId: planId, taskId, eventType: 'reading', progress, secondsDelta })
     return completed
   }
 
@@ -578,6 +369,7 @@ export const useLearningStore = defineStore('learning', () => {
     task.completedActions = Array.from(new Set([...(task.completedActions ?? []), action]))
     const completed = evaluateTaskCompletion(plan, taskId)
     persist()
+    syncLearningActivity({ projectId: planId, taskId, eventType: 'action', action })
     return completed
   }
 
@@ -661,7 +453,7 @@ export const useLearningStore = defineStore('learning', () => {
     return true
   }
 
-  function submitExerciseGroup(planId: number, exerciseIds: number[], trainingSetId?: number): TrainingSetResult | undefined {
+  async function submitExerciseGroup(planId: number, exerciseIds: number[], trainingSetId?: number): Promise<TrainingSetResult | undefined> {
     const plan = getPlan(planId)
     if (!plan) return
     const exercises = exerciseIds
@@ -669,9 +461,26 @@ export const useLearningStore = defineStore('learning', () => {
       .filter((exercise): exercise is Exercise => Boolean(exercise))
     if (!exercises.length || exercises.some((exercise) => !exercise.draftAnswer)) return
 
-    exercises.forEach((exercise) => {
-      submitExercise(planId, exercise.id, exercise.draftAnswer!)
-    })
+    if (isApiDataSource) {
+      const results = await Promise.all(exercises.map((exercise) => learningRepository.submitAnswer({
+        projectId: planId,
+        exerciseId: exercise.id,
+        answer: exercise.draftAnswer!,
+        language: exercise.selectedLanguage,
+        clientRequestId: crypto.randomUUID(),
+      })))
+      replacePlanFromServer(await learningRepository.getPlan(planId))
+      const correctCount = results.filter((result) => result.correct).length
+      return {
+        total: results.length,
+        correctCount,
+        wrongCount: results.length - correctCount,
+        correctRate: Math.round((correctCount / results.length) * 100),
+        wrongExerciseIds: exercises.filter((_, index) => !results[index]?.correct).map((exercise) => exercise.id),
+      }
+    }
+
+    for (const exercise of exercises) await submitExercise(planId, exercise.id, exercise.draftAnswer!)
     const correctCount = exercises.filter((exercise) => exercise.gradingCorrect).length
     const wrongExerciseIds = exercises.filter((exercise) => !exercise.gradingCorrect).map((exercise) => exercise.id)
     const set = plan.trainingSets?.find((item) => item.id === trainingSetId)
@@ -729,7 +538,7 @@ export const useLearningStore = defineStore('learning', () => {
     return set
   }
 
-  function createAdaptivePracticeTask(
+  async function createAdaptivePracticeTask(
     planId: number,
     sourceTaskId: number,
     input: { mode: 'repeat' | 'reinforce'; count: number; difficultyMode: '保持难度' | '逐步提升' },
@@ -738,6 +547,21 @@ export const useLearningStore = defineStore('learning', () => {
     const stage = plan?.stages.find((item) => item.tasks.some((task) => task.id === sourceTaskId))
     const sourceTask = stage?.tasks.find((task) => task.id === sourceTaskId)
     if (!plan || !stage || !sourceTask) return
+    if (isApiDataSource) {
+      let job = await learningRepository.startAdaptivePracticeGeneration(planId, sourceTaskId, input)
+      for (let attempt = 0; ['pending', 'running'].includes(job.status) && attempt < 120; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1000))
+        job = await learningRepository.getGenerationJob<{ projectId: number }>(job.jobId)
+      }
+      if (job.status !== 'succeeded') throw new Error(job.errorMessage || '自适应练习生成失败')
+      const updated = await learningRepository.getPlan(planId)
+      replacePlanFromServer(updated)
+      const updatedStage = updated.stages.find((item) => item.tasks.some((task) => task.id === sourceTaskId))
+      const sourceIndex = updatedStage?.tasks.findIndex((task) => task.id === sourceTaskId) ?? -1
+      const task = sourceIndex >= 0 ? updatedStage?.tasks[sourceIndex + 1] : undefined
+      if (!updatedStage || !task) return
+      return { stage: updatedStage, task, generatedCount: task.exerciseIds?.length ?? 0 }
+    }
     const sourceExercises = (sourceTask.exerciseIds ?? [])
       .map((id) => plan.exercises.find((item) => item.id === id))
       .filter((item): item is Exercise => Boolean(item))
@@ -759,7 +583,7 @@ export const useLearningStore = defineStore('learning', () => {
       if (deficit > 0) {
         const topics = [...sourceKnowledge]
         const strategy: DifficultyStrategy = input.difficultyMode === '逐步提升' ? '强化提高' : plan.questionBank?.difficultyStrategy ?? '均衡'
-        generated = createQuestionBatch(deficit, topics, strategy, nextExerciseId, `additional-${Date.now()}`, '追加练习')
+        generated = createMockQuestionBatch(deficit, topics, strategy, nextExerciseId, `additional-${Date.now()}`, '追加练习')
         generated.forEach((item) => { item.sourceTaskId = sourceTaskId })
         taskExercises.push(...generated)
       }
@@ -822,10 +646,22 @@ export const useLearningStore = defineStore('learning', () => {
     return { stage, task, generatedCount: generated.length }
   }
 
-  function submitExercise(planId: number, exerciseId: number, userAnswer: string): ExerciseResult | undefined {
+  async function submitExercise(planId: number, exerciseId: number, userAnswer: string): Promise<ExerciseResult | undefined> {
     const plan = getPlan(planId)
     const exercise = plan?.exercises.find((item) => item.id === exerciseId)
     if (!plan || !exercise || !userAnswer) return
+
+    if (isApiDataSource) {
+      const result = await learningRepository.submitAnswer({
+        projectId: planId,
+        exerciseId,
+        answer: userAnswer,
+        language: exercise.selectedLanguage,
+        clientRequestId: crypto.randomUUID(),
+      })
+      replacePlanFromServer(await learningRepository.getPlan(planId))
+      return result
+    }
 
     const wasSubmitted = Boolean(exercise.submitted)
     const result = evaluateExerciseAnswer(exercise, userAnswer)
@@ -888,11 +724,22 @@ export const useLearningStore = defineStore('learning', () => {
     return result
   }
 
-  function reviewWrongQuestion(planId: number, wrongId: number, answer: string): ExerciseResult | undefined {
+  async function reviewWrongQuestion(planId: number, wrongId: number, answer: string): Promise<ExerciseResult | undefined> {
     const plan = getPlan(planId)
     const wrong = plan?.wrongQuestions.find((item) => item.id === wrongId)
     const exercise = plan?.exercises.find((item) => item.id === wrongId)
     if (!plan || !wrong || !exercise || !answer) return
+    if (isApiDataSource) {
+      const result = await learningRepository.submitAnswer({
+        projectId: planId,
+        exerciseId: exercise.id,
+        answer,
+        language: exercise.selectedLanguage,
+        clientRequestId: crypto.randomUUID(),
+      })
+      replacePlanFromServer(await learningRepository.getPlan(planId))
+      return result
+    }
     const result = evaluateExerciseAnswer(exercise, answer)
     const correct = result.correct
     wrong.reviewCount = (wrong.reviewCount ?? 0) + 1
@@ -911,12 +758,23 @@ export const useLearningStore = defineStore('learning', () => {
     return result
   }
 
-  function createWrongReviewSet(
+  async function createWrongReviewSet(
     planId: number,
     wrongIds: number[],
     input: { count: number; difficultyMode: '保持难度' | '逐步提升' },
   ) {
     const plan = getPlan(planId)
+    if (isApiDataSource) {
+      let job = await learningRepository.startWrongReviewGeneration(planId, wrongIds, input)
+      for (let attempt = 0; ['pending', 'running'].includes(job.status) && attempt < 120; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1000))
+        job = await learningRepository.getGenerationJob<{ projectId: number }>(job.jobId)
+      }
+      if (job.status !== 'succeeded') throw new Error(job.errorMessage || '错题巩固生成失败')
+      const updated = await learningRepository.getPlan(planId)
+      replacePlanFromServer(updated)
+      return updated.wrongReviewSets?.[0]
+    }
     const sources = wrongIds
       .map((id) => plan?.exercises.find((item) => item.id === id))
       .filter((item): item is Exercise => Boolean(item))
@@ -982,13 +840,31 @@ export const useLearningStore = defineStore('learning', () => {
     return true
   }
 
-  function submitWrongReviewSet(planId: number, setId: number): TrainingSetResult | undefined {
+  async function submitWrongReviewSet(planId: number, setId: number): Promise<TrainingSetResult | undefined> {
     const plan = getPlan(planId)
     const set = plan?.wrongReviewSets?.find((item) => item.id === setId)
     const exercises = set?.exerciseIds
       .map((id) => plan?.exercises.find((item) => item.id === id))
       .filter((item): item is Exercise => Boolean(item)) ?? []
     if (!plan || !set || !exercises.length || exercises.some((item) => !item.draftAnswer)) return
+    if (isApiDataSource) {
+      const results = await Promise.all(exercises.map((item) => learningRepository.submitAnswer({
+        projectId: planId,
+        exerciseId: item.id,
+        answer: item.draftAnswer!,
+        language: item.selectedLanguage,
+        clientRequestId: crypto.randomUUID(),
+      })))
+      replacePlanFromServer(await learningRepository.getPlan(planId))
+      const correctCount = results.filter((item) => item.correct).length
+      return {
+        total: results.length,
+        correctCount,
+        wrongCount: results.length - correctCount,
+        correctRate: Math.round((correctCount / results.length) * 100),
+        wrongExerciseIds: exercises.filter((_, index) => !results[index]?.correct).map((item) => item.id),
+      }
+    }
     exercises.forEach((item) => {
       item.userAnswer = item.draftAnswer
       item.submitted = true
@@ -1050,6 +926,22 @@ export const useLearningStore = defineStore('learning', () => {
     const resource = plan?.resources.find((item) => item.id === resourceId)
     if (!plan || !resource || generatingResourceIds.value.includes(resourceId)) return
 
+    if (isApiDataSource) {
+      generatingResourceIds.value.push(resourceId)
+      try {
+        let job = await learningRepository.startResourceGeneration(planId, resourceId)
+        for (let attempt = 0; ['pending', 'running'].includes(job.status) && attempt < 120; attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 1000))
+          job = await learningRepository.getGenerationJob<{ projectId: number }>(job.jobId)
+        }
+        if (job.status !== 'succeeded') throw new Error(job.errorMessage || '学习资源生成失败')
+        replacePlanFromServer(await learningRepository.getPlan(planId))
+      } finally {
+        generatingResourceIds.value = generatingResourceIds.value.filter((id) => id !== resourceId)
+      }
+      return
+    }
+
     generatingResourceIds.value.push(resourceId)
     resource.status = '生成中'
     libraryResourceStore.addGeneratedResource(
@@ -1084,9 +976,20 @@ export const useLearningStore = defineStore('learning', () => {
     }
   }
 
+  function downloadResource(planId: number, resourceId: number) {
+    return learningRepository.downloadResource(planId, resourceId)
+  }
+
   return {
     plans,
+    isLoading,
+    errorMessage,
     projectCount,
+    fetchPlans,
+    fetchPlan,
+    clearError,
+    generateLearningProfile,
+    generateLearningConfirmation,
     getPlan,
     renamePlan,
     createPlan,
@@ -1110,5 +1013,6 @@ export const useLearningStore = defineStore('learning', () => {
     submitWrongReviewSet,
     generateSimilarExercise,
     generateResource,
+    downloadResource,
   }
 })

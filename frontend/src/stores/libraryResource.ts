@@ -1,24 +1,21 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
-import { getLibraryResources, saveLibraryResources } from '@/api/libraryResource'
+import {
+  deleteLibraryResource,
+  downloadLibraryResource,
+  getLibraryResources,
+  listLibraryResources,
+  moveLibraryResource,
+  renameLibraryResource,
+  retryLibraryResource,
+  saveLibraryResources,
+  uploadLibraryResource,
+} from '@/api/libraryResource'
 import type { LearningResource } from '@/mock'
+import type { LibraryResourceDto, LibraryResourceSource, LibraryResourceCategory } from '@/types/contracts/library'
 
-export type LibraryResourceSource = '资料库上传' | '智能学习上传' | '聊天上传' | '智能学习生成' | '聊天生成'
-export type LibraryResourceCategory = 'file' | 'image' | 'mindmap'
-
-export type LibraryResource = {
-  id: string
-  name: string
-  type: string
-  size: string
-  status: '解析完成' | '向量化中' | '等待解析'
-  updatedAt: string
-  category: LibraryResourceCategory
-  source: LibraryResourceSource
-  projectId: number | null
-  libraryId: number | null
-  externalKey?: string
-}
+export type { LibraryResourceSource, LibraryResourceCategory }
+export type LibraryResource = LibraryResourceDto
 
 function fileType(file: File) {
   const extension = file.name.split('.').pop()?.toLowerCase()
@@ -47,10 +44,144 @@ function generatedType(group: LearningResource['group']) {
 
 export const useLibraryResourceStore = defineStore('libraryResource', () => {
   const resources = ref<LibraryResource[]>(getLibraryResources())
+  const isLoading = ref(false)
+  const isMutating = ref(false)
+  const errorMessage = ref<string | null>(null)
   let sequence = 0
 
   function persist() {
     saveLibraryResources(resources.value)
+  }
+
+  function upsert(item: LibraryResource) {
+    const index = resources.value.findIndex((resource) => resource.id === item.id)
+    if (index === -1) resources.value.unshift(item)
+    else resources.value[index] = item
+  }
+
+  async function fetchList(libraryId?: number) {
+    if (isLoading.value) return
+    isLoading.value = true
+    errorMessage.value = null
+    try {
+      const items = await listLibraryResources(libraryId)
+      if (libraryId === undefined) resources.value = items
+      else {
+        resources.value = [
+          ...resources.value.filter((item) => item.libraryId !== libraryId),
+          ...items,
+        ]
+      }
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : '获取资料失败'
+      throw error
+    } finally {
+      isLoading.value = false
+    }
+  }
+
+  async function uploadFiles(
+    files: File[],
+    source: LibraryResourceSource,
+    projectId: number | null = null,
+    libraryId: number | null = null,
+  ) {
+    if (isMutating.value) return []
+    isMutating.value = true
+    errorMessage.value = null
+    const uploaded: LibraryResource[] = []
+    try {
+      for (const file of files) {
+        const item = await uploadLibraryResource(file, libraryId, projectId)
+        item.source = source
+        upsert(item)
+        uploaded.push(item)
+      }
+      persist()
+      return uploaded
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : '上传资料失败'
+      throw error
+    } finally {
+      isMutating.value = false
+    }
+  }
+
+  async function remove(id: string) {
+    isMutating.value = true
+    errorMessage.value = null
+    try {
+      await deleteLibraryResource(id)
+      resources.value = resources.value.filter((item) => item.id !== id)
+      persist()
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : '删除资料失败'
+      throw error
+    } finally {
+      isMutating.value = false
+    }
+  }
+
+  async function retry(id: string) {
+    isMutating.value = true
+    errorMessage.value = null
+    try {
+      upsert(await retryLibraryResource(id))
+      persist()
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : '重试解析失败'
+      throw error
+    } finally {
+      isMutating.value = false
+    }
+  }
+
+  async function rename(id: string, name: string) {
+    if (!name.trim()) return
+    isMutating.value = true
+    errorMessage.value = null
+    try {
+      upsert(await renameLibraryResource(id, name.trim()))
+      persist()
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : '重命名失败'
+      throw error
+    } finally {
+      isMutating.value = false
+    }
+  }
+
+  async function move(id: string, libraryId: number | null) {
+    isMutating.value = true
+    errorMessage.value = null
+    try {
+      upsert(await moveLibraryResource(id, libraryId))
+      persist()
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : '移动资料失败'
+      throw error
+    } finally {
+      isMutating.value = false
+    }
+  }
+
+  async function download(id: string, name: string) {
+    isMutating.value = true
+    errorMessage.value = null
+    try {
+      const blob = await downloadLibraryResource(id)
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = name
+      anchor.click()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : '下载资料失败'
+      throw error
+    } finally {
+      isMutating.value = false
+    }
   }
 
   function addFile(
@@ -74,7 +205,7 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
       name: file.name,
       type: fileType(file),
       size: fileSize(file.size),
-      status: '解析完成',
+      status: 'ready',
       updatedAt: '刚刚',
       category: file.type.startsWith('image/') ? 'image' : 'file',
       source,
@@ -108,7 +239,7 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
     if (existing) {
       existing.name = resource.fileName ?? resource.title
       existing.updatedAt = '刚刚'
-      existing.status = resource.status === '生成中' ? '向量化中' : '解析完成'
+      existing.status = resource.status === '生成中' ? 'processing' : 'ready'
       persist()
       return existing
     }
@@ -118,7 +249,7 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
       name: resource.fileName ?? resource.title,
       type: generatedType(resource.group),
       size: 'AI 生成',
-      status: resource.status === '生成中' ? '向量化中' : '解析完成',
+      status: resource.status === '生成中' ? 'processing' : 'ready',
       updatedAt: '刚刚',
       category: resource.group === '思维导图' ? 'mindmap' : resource.group === '图片' ? 'image' : 'file',
       source,
@@ -137,7 +268,7 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
       name,
       type: '思维导图',
       size: 'AI 生成',
-      status: '解析完成',
+      status: 'ready',
       updatedAt: '刚刚',
       category: 'mindmap',
       source: '聊天生成',
@@ -160,7 +291,7 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
     if (existing) {
       existing.name = name
       existing.updatedAt = '刚刚'
-      existing.status = '解析完成'
+      existing.status = 'ready'
       existing.projectId = projectId
       existing.libraryId = libraryId
       persist()
@@ -172,7 +303,7 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
       name,
       type: 'Markdown',
       size: 'AI 生成',
-      status: '解析完成',
+      status: 'ready',
       updatedAt: '刚刚',
       category: 'file',
       source: '智能学习生成',
@@ -185,5 +316,35 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
     return item
   }
 
-  return { resources, addFile, addFiles, addGeneratedResource, addChatGenerated, addPlanExportMarkdown }
+  function clearError() {
+    errorMessage.value = null
+  }
+
+  function clearAll() {
+    resources.value = getLibraryResources()
+    isLoading.value = false
+    isMutating.value = false
+    errorMessage.value = null
+  }
+
+  return {
+    resources,
+    isLoading,
+    isMutating,
+    errorMessage,
+    fetchList,
+    uploadFiles,
+    remove,
+    retry,
+    rename,
+    move,
+    download,
+    clearError,
+    clearAll,
+    addFile,
+    addFiles,
+    addGeneratedResource,
+    addChatGenerated,
+    addPlanExportMarkdown,
+  }
 })

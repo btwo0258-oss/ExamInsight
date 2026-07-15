@@ -1,35 +1,38 @@
-import { recentUploads } from '@/mock'
-import type { LibraryResource } from '@/stores/libraryResource'
+import { libraryResourceRepository } from '@/repositories/libraryResource'
+import type { LibraryResourceDto } from '@/types/contracts/library'
 
-const STORAGE_KEY = 'examinsight.library.resources'
-
-function initialResources(): LibraryResource[] {
-  return recentUploads.map((file) => ({
-    id: `mock-${file.id}`,
-    name: file.name,
-    type: file.type,
-    size: '128 KB',
-    status: file.status,
-    updatedAt: file.updatedAt,
-    category: 'file',
-    source: '资料库上传',
-    projectId: null,
-    libraryId: null,
-  }))
+export function getLibraryResources(): LibraryResourceDto[] {
+  return libraryResourceRepository.initial()
 }
 
-export function getLibraryResources(): LibraryResource[] {
-  const stored = sessionStorage.getItem(STORAGE_KEY)
-  if (!stored) return initialResources()
-
-  try {
-    return JSON.parse(stored) as LibraryResource[]
-  } catch {
-    return initialResources()
-  }
+export function saveLibraryResources(resources: LibraryResourceDto[]) {
+  libraryResourceRepository.saveMock(resources)
 }
 
-export function saveLibraryResources(resources: LibraryResource[]) {
-  sessionStorage.setItem(STORAGE_KEY, JSON.stringify(resources))
+export function listLibraryResources(libraryId?: number): Promise<LibraryResourceDto[]> {
+  return libraryResourceRepository.list(libraryId)
 }
 
+export function uploadLibraryResource(file: File, libraryId: number | null, projectId?: number | null) {
+  return libraryResourceRepository.upload(file, libraryId, projectId)
+}
+
+export function deleteLibraryResource(id: string) {
+  return libraryResourceRepository.remove(id)
+}
+
+export function retryLibraryResource(id: string) {
+  return libraryResourceRepository.retry(id)
+}
+
+export function renameLibraryResource(id: string, name: string) {
+  return libraryResourceRepository.rename(id, name)
+}
+
+export function moveLibraryResource(id: string, libraryId: number | null) {
+  return libraryResourceRepository.move(id, libraryId)
+}
+
+export function downloadLibraryResource(id: string) {
+  return libraryResourceRepository.download(id)
+}

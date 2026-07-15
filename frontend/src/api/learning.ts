@@ -1,7 +1,9 @@
 import { createCodeLanguageOptions, learningPlans } from '@/mock'
 import type { LearningPlan } from '@/mock'
+import { isMockDataSource } from '@/config/dataSource'
+import { mockSession } from '@/mock/storage'
 
-const STORAGE_KEY = 'examinsight.learning.plans'
+const STORAGE_DOMAIN = 'learning-plans'
 
 function clonePlans(plans: LearningPlan[]) {
   return normalizePlans(structuredClone(plans))
@@ -135,16 +137,10 @@ function normalizePlans(input: LegacyLearningPlan[]): LearningPlan[] {
 }
 
 export function getLearningPlans(): LearningPlan[] {
-  const stored = sessionStorage.getItem(STORAGE_KEY)
-  if (!stored) return clonePlans(learningPlans)
-
-  try {
-    return normalizePlans(JSON.parse(stored) as LegacyLearningPlan[])
-  } catch {
-    return clonePlans(learningPlans)
-  }
+  if (!isMockDataSource) return []
+  return normalizePlans(mockSession.get<LegacyLearningPlan[]>(STORAGE_DOMAIN, clonePlans(learningPlans)))
 }
 
 export function saveLearningPlans(plans: LearningPlan[]) {
-  sessionStorage.setItem(STORAGE_KEY, JSON.stringify(plans))
+  if (isMockDataSource) mockSession.set(STORAGE_DOMAIN, plans)
 }

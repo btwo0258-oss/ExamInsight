@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref } from 'vue'
 import ModelSwitch from './ModelSwitch.vue'
-import AttachmentCard from '@/components/main-area/mode3-chat/input/AttachmentCard.vue'
+import AttachmentCard from '@/components/chat/input/AttachmentCard.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 
 interface AppInputProps {
@@ -10,7 +10,7 @@ interface AppInputProps {
   placeholder?: string
 }
 
-withDefaults(defineProps<AppInputProps>(), {
+const props = withDefaults(defineProps<AppInputProps>(), {
   disabled: false,
   isStreaming: false,
   placeholder: '给“助手”发送消息'
@@ -18,7 +18,8 @@ withDefaults(defineProps<AppInputProps>(), {
 
 const emit = defineEmits<{ 
   send: [text: string, files: File[]],
-  upload: [file: File]
+  upload: [file: File],
+  stop: []
 }>()
 
 const text = ref('')
@@ -31,6 +32,7 @@ const showError = ref(false)
 const errorMessage = ref('')
 
 function onFileChange(e: Event) {
+  if (props.disabled || props.isStreaming) return
   const input = e.target as HTMLInputElement
   if (input.files) {
     const selectedFiles = Array.from(input.files)
@@ -69,6 +71,7 @@ function onFileChange(e: Event) {
 }
 
 function triggerUpload() {
+  if (props.disabled || props.isStreaming) return
   fileEl.value?.click()
 }
 
@@ -86,6 +89,7 @@ function removeFile(index: number) {
 }
 
 function send() {
+  if (props.disabled || props.isStreaming) return
   const trimmedText = text.value.trim()
   if (!trimmedText && files.value.length === 0) return
   
@@ -121,7 +125,13 @@ function send() {
       <div class="toolbar-wrapper">
         <div class="toolbar">
           <div class="toolbar-left">
-            <button class="icon-action-btn" @click="triggerUpload" type="button">
+            <button
+              class="icon-action-btn"
+              type="button"
+              title="上传附件"
+              :disabled="disabled || isStreaming"
+              @click="triggerUpload"
+            >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
               </svg>
@@ -130,7 +140,7 @@ function send() {
           </div>
 
           <div class="toolbar-right">
-            <button class="icon-action-btn" type="button" title="语音输入">
+            <button class="icon-action-btn" type="button" title="语音输入暂未开放" disabled>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
                 <path d="M19 10v1a7 7 0 0 1-14 0v-1" />
@@ -138,7 +148,26 @@ function send() {
                 <path d="M8 22h8" />
               </svg>
             </button>
-            <button class="circle-send-btn" :disabled="(!text.trim() && files.length === 0) || isStreaming" @click="send">
+            <button
+              v-if="isStreaming"
+              class="circle-send-btn circle-stop-btn"
+              type="button"
+              title="停止生成"
+              aria-label="停止生成"
+              @click="emit('stop')"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <rect x="6" y="6" width="12" height="12" rx="1"></rect>
+              </svg>
+            </button>
+            <button
+              v-else
+              class="circle-send-btn"
+              type="button"
+              title="发送"
+              :disabled="disabled || (!text.trim() && files.length === 0)"
+              @click="send"
+            >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
                 <line x1="12" y1="19" x2="12" y2="5"></line>
                 <polyline points="5 12 12 5 19 12"></polyline>
@@ -289,6 +318,16 @@ function send() {
   color: var(--color-text);
 }
 
+.icon-action-btn:disabled {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.icon-action-btn:disabled:hover {
+  background: transparent;
+}
+
 .circle-send-btn {
   width: 32px;
   height: 32px;
@@ -307,6 +346,10 @@ function send() {
   background: var(--color-hover-strong);
   color: var(--color-text-muted);
   cursor: not-allowed;
+}
+
+.circle-stop-btn {
+  background: var(--color-text);
 }
 
 .footer-hint {

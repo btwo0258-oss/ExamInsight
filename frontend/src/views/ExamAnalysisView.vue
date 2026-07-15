@@ -536,7 +536,7 @@ async function goToChat() {
             if (status.status === "failed") {
               hasFailed = true;
               console.error(`Document ${docId} processing failed:`, status.errorMsg);
-            } else if (status.status !== "completed") {
+            } else if (status.status !== "ready") {
               allCompleted = false;
             }
           } catch (e) {
@@ -652,7 +652,7 @@ async function goToChat() {
             if (status.status === "failed") {
               hasFailed = true;
               console.error(`Document ${docId} processing failed:`, status.errorMsg);
-            } else if (status.status !== "completed") {
+            } else if (status.status !== "ready") {
               allCompleted = false;
             }
           } catch (e) {

@@ -36,7 +36,7 @@ export type UploadedFile = {
   updatedAt: string
 }
 
-export type LearningResourceStatus = '已生成' | '未选择' | '生成中'
+export type LearningResourceStatus = '已生成' | '未选择' | '生成中' | '生成失败'
 export type LearningProjectStatus = '待开启' | '进行中' | '已生成' | '已完成' | '待完善'
 
 export type LearningTask = {
@@ -75,6 +75,7 @@ export type LearningResource = {
   previewUrl?: string
   mindMapId?: number
   mindMapTreeData?: unknown
+  errorMessage?: string
 }
 
 export type ExerciseType = '单选题' | '多选题' | '判断题' | '填空题' | '简答题' | '代码题'

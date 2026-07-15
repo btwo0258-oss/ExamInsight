@@ -1,155 +1,90 @@
-import { ref } from "vue";
-import { defineStore } from "pinia";
-import type { KnowledgeBase } from "@/api/knowledgeBase";
-import { USER_KEY } from "@/api/request";
-import { courseLibraries } from "@/mock";
+import { ref } from 'vue'
+import { defineStore } from 'pinia'
+import {
+  createKnowledgeBase,
+  deleteKnowledgeBase,
+  getKnowledgeBase,
+  getKnowledgeBases,
+  updateKnowledgeBase,
+} from '@/api/knowledgeBase'
+import type { KnowledgeBase } from '@/api/knowledgeBase'
 
-export const useKnowledgeBaseStore = defineStore("knowledgeBase", () => {
-  const SHARED_LIBRARY_KEY = "examinsight.library.catalog";
-  const list = ref<KnowledgeBase[]>([]);
-  const current = ref<KnowledgeBase | null>(null);
-  const editingKnowledgeBase = ref<KnowledgeBase | null>(null);
-  const isInitialized = ref(false);
+export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
+  const list = ref<KnowledgeBase[]>([])
+  const current = ref<KnowledgeBase | null>(null)
+  const editingKnowledgeBase = ref<KnowledgeBase | null>(null)
+  const isInitialized = ref(false)
+  const isLoading = ref(false)
+  const errorMessage = ref<string | null>(null)
 
-  function getUserPrefix(): string {
-    const userStr = sessionStorage.getItem(USER_KEY) || localStorage.getItem(USER_KEY);
-    if (userStr) {
-      try {
-        const user = JSON.parse(userStr);
-        if (user && user.id) return String(user.id);
-      } catch { }
-    }
-    return "guest";
-  }
-
-  function getStorageKey(): string {
-    return `llm.knowledgeBases.${getUserPrefix()}`;
-  }
-
-  function defaultKnowledgeBases(): KnowledgeBase[] {
-    return courseLibraries.map((library) => ({
-      id: library.id,
-      name: library.name,
-      description: library.description,
-      icon: "folder",
-      color: "#71717a",
-      documentCount: library.fileCount,
-      mindMapCount: 0,
-      createTime: new Date().toISOString(),
-      updateTime: library.updatedAt,
-    }));
-  }
-
-  function mergeKnowledgeBases(items: KnowledgeBase[]) {
-    const merged = items.filter((item, index) => items.findIndex((candidate) => candidate.id === item.id) === index);
-    for (const fallback of defaultKnowledgeBases()) {
-      if (!merged.some((item) => item.id === fallback.id)) merged.push(fallback);
-    }
-    return merged;
-  }
-
-  function readSharedCatalog(): KnowledgeBase[] {
+  async function fetchList() {
+    if (isLoading.value) return
+    isLoading.value = true
+    errorMessage.value = null
     try {
-      return JSON.parse(localStorage.getItem(SHARED_LIBRARY_KEY) || "[]") as KnowledgeBase[];
-    } catch {
-      return [];
+      list.value = await getKnowledgeBases()
+      isInitialized.value = true
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : '获取资料库失败'
+      throw error
+    } finally {
+      isLoading.value = false
     }
-  }
-
-  function init() {
-    if (isInitialized.value) return;
-    const stored = sessionStorage.getItem(getStorageKey());
-    if (stored) {
-      try {
-        list.value = mergeKnowledgeBases([...(JSON.parse(stored) as KnowledgeBase[]), ...readSharedCatalog()]);
-      } catch {
-        list.value = defaultKnowledgeBases();
-      }
-    } else {
-      list.value = mergeKnowledgeBases(readSharedCatalog());
-    }
-    isInitialized.value = true;
-  }
-
-  function saveToStorage() {
-    sessionStorage.setItem(getStorageKey(), JSON.stringify(list.value));
-    localStorage.setItem(SHARED_LIBRARY_KEY, JSON.stringify(list.value));
   }
 
   async function fetchAll() {
-    init();
-    // 当前阶段使用纯前端 Mock，后续在此处替换为真实列表接口。
-    list.value = mergeKnowledgeBases([...list.value, ...readSharedCatalog()]);
-    saveToStorage();
-  }
-
-  async function fetchList() {
-    init();
-    // 当前阶段使用纯前端 Mock，后续在此处替换为真实列表接口。
-    list.value = mergeKnowledgeBases([...list.value, ...readSharedCatalog()]);
-    saveToStorage();
+    await fetchList()
   }
 
   async function getDetail(id: number) {
-    init();
-    current.value = list.value.find((item) => item.id === id) || null;
-    if (!current.value) throw new Error("知识库不存在");
+    current.value = await getKnowledgeBase(id)
+    const index = list.value.findIndex((item) => item.id === current.value?.id)
+    if (index === -1) list.value.push(current.value)
+    else list.value[index] = current.value
+    return current.value
   }
 
   async function create(data: Partial<KnowledgeBase>) {
-    init();
-    // 纯前端 Mock 创建：立即写入共享资料库，不发起网络请求。
-    const now = new Date().toISOString();
-    const item: KnowledgeBase = {
-      id: Date.now(),
-      name: data.name || "未命名知识库",
-      description: data.description,
-      icon: data.icon || "folder",
-      color: data.color || "#71717a",
-      documentCount: 0,
-      mindMapCount: 0,
-      createTime: now,
-      updateTime: now,
-    };
-    list.value = list.value.filter((existing) => existing.id !== item.id);
-    list.value.unshift(item);
-    saveToStorage();
-    return item;
+    const item = await createKnowledgeBase(data)
+    list.value = list.value.filter((existing) => existing.id !== item.id)
+    list.value.unshift(item)
+    return item
   }
 
   async function update(data: KnowledgeBase) {
-    init();
-    const item = { ...data, updateTime: new Date().toISOString() };
-    const index = list.value.findIndex((x) => x.id === data.id);
-    if (index !== -1) {
-      list.value[index] = item;
-    }
-    saveToStorage();
-    return item;
+    const item = await updateKnowledgeBase(data)
+    const index = list.value.findIndex((existing) => existing.id === item.id)
+    if (index !== -1) list.value[index] = item
+    if (current.value?.id === item.id) current.value = item
+    return item
   }
 
   async function remove(id: number) {
-    init();
-    list.value = list.value.filter((x) => x.id !== id);
-    saveToStorage();
+    await deleteKnowledgeBase(id)
+    list.value = list.value.filter((item) => item.id !== id)
+    if (current.value?.id === id) current.value = null
   }
 
-  function setEditingKnowledgeBase(kb: KnowledgeBase | null) {
-    editingKnowledgeBase.value = kb;
+  function setEditingKnowledgeBase(knowledgeBase: KnowledgeBase | null) {
+    editingKnowledgeBase.value = knowledgeBase
   }
 
   function clearAll() {
-    list.value = [];
-    current.value = null;
-    editingKnowledgeBase.value = null;
-    isInitialized.value = false;
-    sessionStorage.removeItem(getStorageKey());
+    list.value = []
+    current.value = null
+    editingKnowledgeBase.value = null
+    isInitialized.value = false
+    isLoading.value = false
+    errorMessage.value = null
   }
 
   return {
     list,
     current,
     editingKnowledgeBase,
+    isInitialized,
+    isLoading,
+    errorMessage,
     fetchAll,
     fetchList,
     getDetail,
@@ -158,5 +93,5 @@ export const useKnowledgeBaseStore = defineStore("knowledgeBase", () => {
     remove,
     setEditingKnowledgeBase,
     clearAll,
-  };
-});
+  }
+})
