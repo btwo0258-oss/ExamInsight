@@ -48,6 +48,19 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
 
     private static final List<String> ALLOWED_TYPES = Arrays.asList("pdf", "docx", "md", "txt");
 
+    /**
+     * 解析文件路径，支持相对路径和绝对路径
+     */
+    private File resolveFile(String filePath) {
+        File file = new File(filePath);
+        if (file.isAbsolute()) {
+            return file;
+        }
+        // 相对路径，基于应用根目录解析
+        String basePath = System.getProperty("user.dir");
+        return new File(basePath, filePath);
+    }
+
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Document uploadDocument(Long userId, Long kbId, MultipartFile file) {
@@ -128,13 +141,23 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
     public void deleteDocument(Long userId, Long docId) {
         Document doc = getDocumentDetail(userId, docId);
         
-        // 1. 删除 ES 中的分块向量数据
-        esService.deleteByDocId("knowledge_chunks", docId);
+        // 1. 删除 ES 中的分块向量数据（容错处理，ES 可能未启动）
+        try {
+            esService.deleteByDocId("knowledge_chunks", docId);
+        } catch (Exception e) {
+            // ES 删除失败不影响整体删除流程，仅记录日志
+            System.err.println("删除 ES 数据失败: " + e.getMessage());
+        }
+        
         // 2. 删除 MySQL 中的 DocumentChunk
-        documentChunkMapper.delete(new LambdaQueryWrapper<com.example.llm.entity.DocumentChunk>().eq(com.example.llm.entity.DocumentChunk::getDocId, docId));
+        try {
+            documentChunkMapper.delete(new LambdaQueryWrapper<com.example.llm.entity.DocumentChunk>().eq(com.example.llm.entity.DocumentChunk::getDocId, docId));
+        } catch (Exception e) {
+            System.err.println("删除 DocumentChunk 失败: " + e.getMessage());
+        }
         
         // 3. 删除本地文件
-        File file = new File(doc.getFilePath());
+        File file = resolveFile(doc.getFilePath());
         if (file.exists()) {
             file.delete();
         }
@@ -163,7 +186,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
     @Override
     public void downloadDocument(Long userId, Long docId, HttpServletResponse response) {
         Document doc = getDocumentDetail(userId, docId);
-        File file = new File(doc.getFilePath());
+        File file = resolveFile(doc.getFilePath());
         
         if (!file.exists()) {
             throw new IllegalArgumentException("文件不存在于服务器");
@@ -172,7 +195,6 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
         try (InputStream inputStream = new FileInputStream(file);
              OutputStream outputStream = response.getOutputStream()) {
 
-            // 根据文件类型设置 contentType，如果是 pdf 等可以直接在浏览器预览
             String contentType = "application/octet-stream";
             String ext = doc.getFileType().toLowerCase();
             if ("pdf".equals(ext)) {
@@ -182,7 +204,42 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
             }
             
             response.setContentType(contentType);
-            // inline 表示尝试在浏览器中预览，attachment 表示下载
+            response.setHeader("Content-Disposition", "attachment; filename=\"" + URLEncoder.encode(doc.getFileName(), "UTF-8") + "\"");
+            
+            byte[] buffer = new byte[1024];
+            int len;
+            while ((len = inputStream.read(buffer)) > 0) {
+                outputStream.write(buffer, 0, len);
+            }
+            outputStream.flush();
+        } catch (IOException e) {
+            throw new RuntimeException("文件读取失败", e);
+        }
+    }
+
+    @Override
+    public void previewDocument(Long userId, Long docId, HttpServletResponse response) {
+        Document doc = getDocumentDetail(userId, docId);
+        File file = resolveFile(doc.getFilePath());
+        
+        if (!file.exists()) {
+            throw new IllegalArgumentException("文件不存在于服务器");
+        }
+
+        try (InputStream inputStream = new FileInputStream(file);
+             OutputStream outputStream = response.getOutputStream()) {
+
+            String contentType = "application/octet-stream";
+            String ext = doc.getFileType().toLowerCase();
+            if ("pdf".equals(ext)) {
+                contentType = "application/pdf";
+            } else if ("txt".equals(ext) || "md".equals(ext)) {
+                contentType = "text/plain;charset=UTF-8";
+            } else if ("docx".equals(ext)) {
+                contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+            }
+            
+            response.setContentType(contentType);
             response.setHeader("Content-Disposition", "inline; filename=\"" + URLEncoder.encode(doc.getFileName(), "UTF-8") + "\"");
             
             byte[] buffer = new byte[1024];
@@ -194,5 +251,67 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
         } catch (IOException e) {
             throw new RuntimeException("文件读取失败", e);
         }
+    }
+
+    @Override
+    public List<Document> getUserDocuments(Long userId) {
+        return this.list(new LambdaQueryWrapper<Document>()
+                .eq(Document::getUserId, userId)
+                .orderByDesc(Document::getCreateTime));
+    }
+
+    @Override
+    public Long getOrCreateUncategorizedLibrary(Long userId) {
+        // 查找用户是否已有"未分类"知识库
+        KnowledgeBase uncategorized = knowledgeBaseService.getOne(
+            new LambdaQueryWrapper<KnowledgeBase>()
+                .eq(KnowledgeBase::getUserId, userId)
+                .eq(KnowledgeBase::getName, "未分类")
+                .eq(KnowledgeBase::getStatus, 0)
+        );
+        
+        if (uncategorized != null) {
+            return uncategorized.getId();
+        }
+        
+        // 创建新的"未分类"知识库
+        KnowledgeBase newKb = new KnowledgeBase();
+        newKb.setUserId(userId);
+        newKb.setName("未分类");
+        newKb.setDescription("默认未分类知识库");
+        newKb.setDocCount(0);
+        newKb.setChunkCount(0);
+        newKb.setMindMapCount(0);
+        newKb.setStatus(0);
+        newKb.setCreateTime(java.time.LocalDateTime.now());
+        newKb.setUpdateTime(java.time.LocalDateTime.now());
+        knowledgeBaseService.save(newKb);
+        
+        return newKb.getId();
+    }
+
+    @Override
+    public void updateDocument(Document document) {
+        document.setUpdateTime(java.time.LocalDateTime.now());
+        this.updateById(document);
+    }
+
+    @Override
+    public void retryDocument(Long userId, Long docId) {
+        Document doc = getDocumentDetail(userId, docId);
+        
+        // 只有失败的文档才能重试
+        if (doc.getStatus() != 4) {
+            throw new IllegalArgumentException("只有解析失败的文档才能重试");
+        }
+        
+        // 重置状态为处理中
+        doc.setStatus(0);
+        doc.setErrorMsg(null);
+        doc.setUpdateTime(java.time.LocalDateTime.now());
+        this.updateById(doc);
+        
+        // 重新触发解析流程
+        asyncDocumentService.processDocument(doc);
     }
 }

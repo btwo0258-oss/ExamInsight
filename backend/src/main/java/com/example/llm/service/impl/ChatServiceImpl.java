@@ -84,7 +84,43 @@ public class ChatServiceImpl implements ChatService {
             throw new IllegalArgumentException("无权访问该对话");
         }
 
-        SseEmitter emitter = new SseEmitter(0L); // no timeout
+        // 设置SSE超时时间为120秒
+        int sseTimeout = systemConfigService.getIntConfig("sse.timeout.seconds", 120) * 1000;
+        SseEmitter emitter = new SseEmitter((long)sseTimeout);
+        
+        // 用于保存Flowable订阅,以便在客户端断开时取消上游任务
+        final io.reactivex.disposables.Disposable[] resultSubscription = new io.reactivex.disposables.Disposable[1];
+        
+        // 设置回调函数处理客户端断开和超时
+        emitter.onCompletion(() -> {
+            log.info("SSE connection completed for conversationId: {}", req.getConversationId());
+            // 取消上游AI任务
+            if (resultSubscription[0] != null && !resultSubscription[0].isDisposed()) {
+                resultSubscription[0].dispose();
+            }
+        });
+        
+        emitter.onTimeout(() -> {
+            log.warn("SSE connection timeout for conversationId: {}", req.getConversationId());
+            try {
+                emitter.send(SseEmitter.event().name("error").data("请求超时,请重试"));
+            } catch (Exception e) {
+                log.error("Failed to send timeout error", e);
+            }
+            emitter.complete();
+            // 取消上游AI任务
+            if (resultSubscription[0] != null && !resultSubscription[0].isDisposed()) {
+                resultSubscription[0].dispose();
+            }
+        });
+        
+        emitter.onError((ex) -> {
+            log.error("SSE connection error for conversationId: {}", req.getConversationId(), ex);
+            // 取消上游AI任务
+            if (resultSubscription[0] != null && !resultSubscription[0].isDisposed()) {
+                resultSubscription[0].dispose();
+            }
+        });
         
         executorService.submit(() -> {
             try {
@@ -290,14 +326,42 @@ public class ChatServiceImpl implements ChatService {
                 
                 StringBuilder fullResponse = new StringBuilder();
                 long startTime = System.currentTimeMillis();
+                final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+                final Exception[] streamError = new Exception[1];
 
-                resultFlowable.blockingForEach(message -> {
-                    String delta = message.getOutput().getChoices().get(0).getMessage().getContent();
-                    if (delta != null) {
-                        fullResponse.append(delta);
-                        emitter.send(SseEmitter.event().data(delta));
+                // 使用subscribe替代blockingForEach，以便获取Disposable对象
+                resultSubscription[0] = resultFlowable.subscribe(
+                    message -> {
+                        try {
+                            String delta = message.getOutput().getChoices().get(0).getMessage().getContent();
+                            if (delta != null) {
+                                fullResponse.append(delta);
+                                emitter.send(SseEmitter.event().data(delta));
+                            }
+                        } catch (Exception e) {
+                            log.error("Error processing message", e);
+                            streamError[0] = e;
+                            latch.countDown();
+                        }
+                    },
+                    error -> {
+                        log.error("Error in stream", error);
+                        streamError[0] = error instanceof Exception ? (Exception) error : new RuntimeException(error);
+                        latch.countDown();
+                    },
+                    () -> {
+                        // 流式输出完成
+                        latch.countDown();
                     }
-                });
+                );
+
+                // 等待流式输出完成
+                latch.await();
+
+                // 如果有错误，抛出异常
+                if (streamError[0] != null) {
+                    throw streamError[0];
+                }
 
                 long responseTime = System.currentTimeMillis() - startTime;
 

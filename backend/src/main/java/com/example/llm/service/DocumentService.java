@@ -9,10 +9,12 @@ import org.springframework.web.multipart.MultipartFile;
 import java.util.List;
 
 public interface DocumentService extends IService<Document> {
-    
+
     Document uploadDocument(Long userId, Long kbId, MultipartFile file);
 
     List<Document> getDocumentList(Long userId, Long kbId);
+
+    List<Document> getUserDocuments(Long userId);
 
     Document getDocumentDetail(Long userId, Long docId);
 
@@ -21,4 +23,12 @@ public interface DocumentService extends IService<Document> {
     DocStatusVO getDocumentStatus(Long userId, Long docId);
 
     void downloadDocument(Long userId, Long docId, jakarta.servlet.http.HttpServletResponse response);
+
+    void previewDocument(Long userId, Long docId, jakarta.servlet.http.HttpServletResponse response);
+
+    Long getOrCreateUncategorizedLibrary(Long userId);
+
+    void updateDocument(Document document);
+
+    void retryDocument(Long userId, Long docId);
 }

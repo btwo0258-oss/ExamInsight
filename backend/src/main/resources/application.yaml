@@ -44,7 +44,7 @@ mybatis-plus:
 
 # 文档上传路径
 upload:
-  path: D:/KnowledgeQA/uploads
+  path: ./data/uploads
 
 # RAG 配置
 rag:

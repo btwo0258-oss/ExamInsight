@@ -23,10 +23,10 @@ public class WebConfig implements WebMvcConfigurer {
     @Override
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/**")// 所有接口都支持跨域
-                .allowedOriginPatterns("*")// 所有域名都支持跨域
-                .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+                .allowedOriginPatterns("http://localhost:5173", "http://localhost:5174")// 环境化来源白名单
+                .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")// 添加PATCH方法
                 .allowedHeaders("*")// 所有请求头都支持跨域
-                .allowCredentials(true)
+                .allowCredentials(false)// 使用Bearer Token，不依赖Cookie
                 .maxAge(3600);
     }
 }

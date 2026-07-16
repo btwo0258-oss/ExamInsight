@@ -2,6 +2,7 @@ package com.example.llm.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.example.llm.dto.ConversationCreateReq;
+import com.example.llm.dto.ConversationDto;
 import com.example.llm.dto.ConversationUpdateReq;
 import com.example.llm.entity.Conversation;
 import com.example.llm.entity.KnowledgeBase;
@@ -36,7 +37,7 @@ public class ConversationServiceImpl implements ConversationService {
     private KnowledgeBaseMapper knowledgeBaseMapper;
 
     @Override
-    public Conversation createConversation(Long userId, ConversationCreateReq req) {
+    public ConversationDto createConversation(Long userId, ConversationCreateReq req) {
         if (req.getKbId() != null) {
             KnowledgeBase kb = knowledgeBaseMapper.selectById(req.getKbId());
             if (kb == null || !kb.getUserId().equals(userId)) {
@@ -47,22 +48,26 @@ public class ConversationServiceImpl implements ConversationService {
         Conversation conversation = new Conversation();
         conversation.setUserId(userId);
         conversation.setKbId(req.getKbId());
-        conversation.setTitle(req.getTitle());
+        conversation.setTitle(req.getTitle() != null && !req.getTitle().trim().isEmpty() ? req.getTitle() : "新对话");
         conversation.setMessageCount(0);
         conversation.setTotalTokens(0);
+        conversation.setIsPinned(0);
+        conversation.setLearningProjectId(req.getLearningProjectId());
+        conversation.setConversationType(req.getConversationType() != null ? req.getConversationType() : "general");
         conversation.setStatus(1);
         conversation.setCreateTime(LocalDateTime.now());
         conversation.setUpdateTime(LocalDateTime.now());
         
         conversationMapper.insert(conversation);
-        return conversation;
+        return convertToDto(conversation);
     }
 
     @Override
-    public List<ConversationListVO> getConversationList(Long userId) {
+    public List<ConversationDto> getConversationList(Long userId) {
         LambdaQueryWrapper<Conversation> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(Conversation::getUserId, userId)
                .eq(Conversation::getStatus, 1)
+               .orderByDesc(Conversation::getIsPinned)
                .orderByDesc(Conversation::getUpdateTime);
         
         List<Conversation> conversations = conversationMapper.selectList(wrapper);
@@ -82,14 +87,23 @@ public class ConversationServiceImpl implements ConversationService {
             kbNameMap = kbs.stream().collect(Collectors.toMap(KnowledgeBase::getId, KnowledgeBase::getName));
         }
 
-        List<ConversationListVO> result = new ArrayList<>();
+        List<ConversationDto> result = new ArrayList<>();
         for (Conversation c : conversations) {
-            ConversationListVO vo = new ConversationListVO();
-            BeanUtils.copyProperties(c, vo);
+            ConversationDto dto = new ConversationDto();
+            dto.setId(c.getId());
+            dto.setTitle(c.getTitle());
+            dto.setKbId(c.getKbId());
+            dto.setIsPinned(c.getIsPinned() != null && c.getIsPinned() == 1);
+            dto.setMessageCount(c.getMessageCount());
+            dto.setTotalTokens(c.getTotalTokens());
+            dto.setLearningProjectId(c.getLearningProjectId());
+            dto.setConversationType(c.getConversationType());
+            dto.setUpdateTime(c.getUpdateTime());
+            dto.setCreateTime(c.getCreateTime());
             if (c.getKbId() != null) {
-                vo.setKbName(kbNameMap.get(c.getKbId()));
+                dto.setKbName(kbNameMap.get(c.getKbId()));
             }
-            result.add(vo);
+            result.add(dto);
         }
 
         return result;
@@ -128,15 +142,61 @@ public class ConversationServiceImpl implements ConversationService {
     }
 
     @Override
-    public void updateConversationTitle(Long userId, Long conversationId, ConversationUpdateReq req) {
+    public ConversationDto updateConversation(Long userId, Long conversationId, ConversationUpdateReq req) {
         Conversation c = conversationMapper.selectById(conversationId);
         if (c == null || !c.getUserId().equals(userId) || c.getStatus() == 0) {
             throw new IllegalArgumentException("对话不存在或无权限");
         }
 
-        c.setTitle(req.getTitle());
+        if (req.getTitle() != null) {
+            c.setTitle(req.getTitle());
+        }
+        if (req.getIsPinned() != null) {
+            c.setIsPinned(req.getIsPinned());
+        }
+        if (req.getKnowledgeBaseId() != null) {
+            c.setKbId(req.getKnowledgeBaseId());
+        }
+        if (req.getLearningProjectId() != null) {
+            c.setLearningProjectId(req.getLearningProjectId());
+        }
+        if (req.getConversationType() != null) {
+            c.setConversationType(req.getConversationType());
+        }
         c.setUpdateTime(LocalDateTime.now());
         conversationMapper.updateById(c);
+
+        return convertToDto(c);
+    }
+
+    private ConversationDto convertToDto(Conversation c) {
+        ConversationDto dto = new ConversationDto();
+        dto.setId(c.getId());
+        dto.setTitle(c.getTitle());
+        dto.setKbId(c.getKbId());
+        dto.setIsPinned(c.getIsPinned() != null && c.getIsPinned() == 1);
+        dto.setMessageCount(c.getMessageCount());
+        dto.setTotalTokens(c.getTotalTokens());
+        dto.setLearningProjectId(c.getLearningProjectId());
+        dto.setConversationType(c.getConversationType());
+        dto.setUpdateTime(c.getUpdateTime());
+        dto.setCreateTime(c.getCreateTime());
+
+        // 查询知识库名称
+        if (c.getKbId() != null) {
+            KnowledgeBase kb = knowledgeBaseMapper.selectById(c.getKbId());
+            if (kb != null) {
+                dto.setKbName(kb.getName());
+            }
+        }
+
+        // 查询学习项目名称
+        if (c.getLearningProjectId() != null) {
+            // TODO: 从学习项目表查询名称,暂时使用ID作为名称
+            dto.setLearningProjectName("学习项目#" + c.getLearningProjectId());
+        }
+
+        return dto;
     }
 
     @Override
