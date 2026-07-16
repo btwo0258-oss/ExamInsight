@@ -24,6 +24,7 @@
 | --- | --- |
 | `src/components/layout` | 学生端整体布局、主侧边栏、学习详情布局 |
 | `src/components/chat` | 消息列表、消息渲染、附件、分段查看和思维导图面板 |
+| `src/components/capture` | 浏览器语音录制、拍照和图片选择；不包含正式 AI 识别算法 |
 | `src/components/library` | 资料库创建和资料上传 |
 | `src/components/learning` | 学习画像、方案文档、题目、助教、资源与导图预览 |
 | `src/components/common` | 不依赖具体业务实体的按钮、输入、弹窗、状态和图标 |
@@ -40,6 +41,23 @@
 | `src/mock/generators/*` | 仅 Mock 使用的画像、方案、题目和评分演示逻辑 |
 | `src/composables/useLearningPlanRoute.ts` | 学习详情路由统一加载、失败、无效 id 和重试 |
 | `src/components/learning/LearningRouteState.vue` | 学习详情页共用加载、错误和不存在状态 |
+| `src/types/contracts/media.ts` | 媒体资产、语音转写、图片识别任务、状态和前端限制 |
+| `src/repositories/media.ts` | MediaRepository 接口及 Mock/API 两套实现 |
+| `src/components/capture/VoiceRecorder.vue` | 麦克风权限、录音状态、停止、取消和转写回填 |
+| `src/components/capture/ImageCaptureUploader.vue` | 上传照片、后置摄像头调用、格式/大小/数量预校验 |
+| `src/utils/mediaFile.ts` | 在当前页面内存中标记图片来自上传或摄像头，并统一判断图片文件 |
+
+媒体入口对现有主线文件的影响：
+
+| 文件 | 新职责 |
+| --- | --- |
+| `src/components/common/AppInput.vue` | 组合文档附件、语音、上传照片和拍照入口；失败时保留待发送内容 |
+| `src/views/student/chat/StudentChatView.vue` | 启用聊天媒体入口并传递会话、资料库和学习项目上下文 |
+| `src/views/student/learning/LearningHomeView.vue` | 启用学习目标补充的语音和图片入口 |
+| `src/components/library/UploadMaterialModal.vue` | 增加拍照入口，图片由资料库 Store 交给 MediaRepository |
+| `src/stores/message.ts` | 图片先上传为媒体资产，再把 mediaAssetIds 交给聊天接口 |
+| `src/stores/libraryResource.ts` | 图片走媒体上传，文档继续走资料库资源上传，避免重复上传 |
+| `src/repositories/chat.ts` | 正式聊天请求增加 mediaAssetIds |
 
 主线 Store 只编排 Repository 和当前页面内存状态。正式模式不得从 `mock` 读取实体，也不得把项目、题目、答题或资源成功状态写入 Web Storage。
 

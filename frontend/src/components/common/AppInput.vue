@@ -2,28 +2,38 @@
 import { nextTick, ref } from 'vue'
 import ModelSwitch from './ModelSwitch.vue'
 import AttachmentCard from '@/components/chat/input/AttachmentCard.vue'
+import ImageCaptureUploader from '@/components/capture/ImageCaptureUploader.vue'
+import VoiceRecorder from '@/components/capture/VoiceRecorder.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
+import { MEDIA_LIMITS, type MediaContext, type MediaPurpose } from '@/types/contracts/media'
 
 interface AppInputProps {
   disabled?: boolean
   isStreaming?: boolean
   placeholder?: string
+  mediaEnabled?: boolean
+  mediaPurpose?: Extract<MediaPurpose, 'chat-attachment' | 'learning-input'>
+  mediaContext?: MediaContext
 }
 
 const props = withDefaults(defineProps<AppInputProps>(), {
   disabled: false,
   isStreaming: false,
-  placeholder: '给“助手”发送消息'
+  placeholder: '给“助手”发送消息',
+  mediaEnabled: false,
+  mediaPurpose: 'chat-attachment',
+  mediaContext: () => ({}),
 })
 
 const emit = defineEmits<{ 
-  send: [text: string, files: File[]],
+  send: [text: string, files: File[], complete?: (success?: boolean) => void],
   upload: [file: File],
   stop: []
 }>()
 
 const text = ref('')
 const files = ref<File[]>([])
+const submitting = ref(false)
 const areaEl = ref<HTMLTextAreaElement | null>(null)
 const fileEl = ref<HTMLInputElement | null>(null)
 
@@ -31,47 +41,52 @@ const fileEl = ref<HTMLInputElement | null>(null)
 const showError = ref(false)
 const errorMessage = ref('')
 
+function showInputError(message: string) {
+  errorMessage.value = message
+  showError.value = true
+}
+
+function addFiles(selectedFiles: File[], allowImages: boolean) {
+  if (files.value.length + selectedFiles.length > MEDIA_LIMITS.composerMaxFiles) {
+    showInputError(`最多只能上传 ${MEDIA_LIMITS.composerMaxFiles} 个文件`)
+    return
+  }
+
+  const allowedExtensions = ['.pdf', '.docx', '.md', '.txt']
+  for (const file of selectedFiles) {
+    const extension = file.name.substring(file.name.lastIndexOf('.')).toLowerCase()
+    const isImage = file.type.startsWith('image/') || ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif'].includes(extension)
+    const maxSize = isImage ? MEDIA_LIMITS.imageMaxBytes : 21 * 1024 * 1024
+
+    if (file.size > maxSize) {
+      showInputError(`文件 ${file.name} 超过 ${isImage ? '10MB' : '21MB'} 限制`)
+      continue
+    }
+    if ((!allowImages || !isImage) && !allowedExtensions.includes(extension)) {
+      showInputError(`文件 ${file.name} 格式不支持`)
+      continue
+    }
+    files.value.push(file)
+    emit('upload', file)
+  }
+}
+
 function onFileChange(e: Event) {
-  if (props.disabled || props.isStreaming) return
+  if (props.disabled || props.isStreaming || submitting.value) return
   const input = e.target as HTMLInputElement
   if (input.files) {
-    const selectedFiles = Array.from(input.files)
-    
-    // 检查限制
-    const maxSize = 21 * 1024 * 1024 // 21MB
-    const maxFiles = 5
-    const allowedExtensions = ['.pdf', '.docx', '.md', '.txt']
-    
-    if (files.value.length + selectedFiles.length > maxFiles) {
-      errorMessage.value = `最多只能上传 ${maxFiles} 个文件`
-      showError.value = true
-      return
-    }
-
-    for (const file of selectedFiles) {
-      const extension = file.name.substring(file.name.lastIndexOf('.')).toLowerCase()
-      
-      if (file.size > maxSize) {
-        errorMessage.value = `文件 ${file.name} 超过 21MB 限制，无法解析`
-        showError.value = true
-        continue
-      }
-      
-      if (!allowedExtensions.includes(extension)) {
-        errorMessage.value = `文件 ${file.name} 格式不支持，仅支持 PDF、Word、Markdown、TXT`
-        showError.value = true
-        continue
-      }
-      
-      files.value.push(file)
-      emit('upload', file) // 触发上传事件给父组件（如果需要立即处理）
-    }
+    addFiles(Array.from(input.files), false)
   }
   input.value = ''
 }
 
+function onImagesSelected(selectedFiles: File[]) {
+  if (props.disabled || props.isStreaming || submitting.value) return
+  addFiles(selectedFiles, true)
+}
+
 function triggerUpload() {
-  if (props.disabled || props.isStreaming) return
+  if (props.disabled || props.isStreaming || submitting.value) return
   fileEl.value?.click()
 }
 
@@ -82,6 +97,24 @@ function setText(nextText: string) {
   })
 }
 
+function appendTranscript(transcript: string) {
+  const next = transcript.trim()
+  if (!next) return
+  const area = areaEl.value
+  const start = area?.selectionStart ?? text.value.length
+  const end = area?.selectionEnd ?? text.value.length
+  const before = text.value.slice(0, start)
+  const after = text.value.slice(end)
+  const prefix = before && !/\s$/.test(before) ? ' ' : ''
+  const suffix = after && !/^\s/.test(after) ? ' ' : ''
+  text.value = `${before}${prefix}${next}${suffix}${after}`
+  nextTick(() => {
+    const cursor = start + prefix.length + next.length + suffix.length
+    area?.focus()
+    area?.setSelectionRange(cursor, cursor)
+  })
+}
+
 defineExpose({ triggerUpload, setText })
 
 function removeFile(index: number) {
@@ -89,13 +122,26 @@ function removeFile(index: number) {
 }
 
 function send() {
-  if (props.disabled || props.isStreaming) return
+  if (props.disabled || props.isStreaming || submitting.value) return
   const trimmedText = text.value.trim()
   if (!trimmedText && files.value.length === 0) return
-  
-  emit('send', trimmedText, [...files.value])
-  text.value = ''
-  files.value = []
+
+  if (!props.mediaEnabled) {
+    emit('send', trimmedText, [...files.value])
+    text.value = ''
+    files.value = []
+    return
+  }
+
+  submitting.value = true
+  emit('send', trimmedText, [...files.value], (success = true) => {
+    if (success) {
+      text.value = ''
+      files.value = []
+    }
+    submitting.value = false
+    if (!success) nextTick(() => areaEl.value?.focus())
+  })
 }
 </script>
 
@@ -116,7 +162,7 @@ function send() {
         v-model="text"
         class="main-textarea"
         :placeholder="placeholder"
-        :disabled="disabled || isStreaming"
+        :disabled="disabled || isStreaming || submitting"
         @keydown.enter.exact.prevent="send"
         rows="1"
       ></textarea>
@@ -128,26 +174,33 @@ function send() {
             <button
               class="icon-action-btn"
               type="button"
-              title="上传附件"
-              :disabled="disabled || isStreaming"
+              title="上传文档"
+              :disabled="disabled || isStreaming || submitting"
               @click="triggerUpload"
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
               </svg>
             </button>
+            <ImageCaptureUploader
+              v-if="mediaEnabled"
+              :disabled="disabled || isStreaming || submitting"
+              :remaining-count="MEDIA_LIMITS.composerMaxFiles - files.length"
+              @select="onImagesSelected"
+              @error="showInputError"
+            />
             <ModelSwitch />
           </div>
 
           <div class="toolbar-right">
-            <button class="icon-action-btn" type="button" title="语音输入暂未开放" disabled>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-                <path d="M19 10v1a7 7 0 0 1-14 0v-1" />
-                <path d="M12 18v4" />
-                <path d="M8 22h8" />
-              </svg>
-            </button>
+            <VoiceRecorder
+              v-if="mediaEnabled"
+              :disabled="disabled || isStreaming || submitting"
+              :purpose="mediaPurpose"
+              :context="mediaContext"
+              @transcribed="appendTranscript"
+              @error="showInputError"
+            />
             <button
               v-if="isStreaming"
               class="circle-send-btn circle-stop-btn"
@@ -165,7 +218,7 @@ function send() {
               class="circle-send-btn"
               type="button"
               title="发送"
-              :disabled="disabled || (!text.trim() && files.length === 0)"
+              :disabled="disabled || submitting || (!text.trim() && files.length === 0)"
               @click="send"
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">

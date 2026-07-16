@@ -116,6 +116,7 @@
 - 执行阅读、练习、评估和案例任务。
 - 展示题目、解析、错题和推荐资源。
 - 通过学习助教继续提问。
+- 在创建页输入区通过语音、拍照或上传照片补充学习目标和资料。
 
 #### 创建流程状态
 
@@ -157,6 +158,58 @@
 - 答题、追加练习、错题巩固和资源生成：阻止重复提交，失败后保留当前页面数据并允许重试。
 - 学习资源：只展示项目接口真实返回的资源；正式模式不在前端补造默认方案、思维导图或下载文件。
 
+### 4.4 语音、拍照与上传照片
+
+#### 页面入口
+
+| 页面 | 入口 | 用途 |
+| --- | --- | --- |
+| 新对话 `/chat`、`/chat/:id` | 麦克风、上传照片、拍照 | 语音转为可编辑问题；图片作为聊天多模态附件 |
+| 智能学习 `/learning/new` | 麦克风、上传照片、拍照 | 补充学习目标、题目图片或学习资料 |
+| 资料库 `/library/:id` 上传弹窗 | 文件选择、拍照 | 上传图片资料并进入后端识别/索引 |
+
+资料库文件选择本身已支持照片；拍照按钮使用 `<input type="file" accept="image/*" capture="environment">` 请求后置摄像头。桌面浏览器不支持直接摄像头时会退化为选择图片文件，这是浏览器标准行为，不自行调用不稳定的摄像头 SDK。
+
+#### 语音触发和状态
+
+| 状态 | 触发条件 | 前端行为 | 退出路径 |
+| --- | --- | --- | --- |
+| idle | 初始、成功或失败结束 | 显示麦克风按钮 | 点击后请求权限 |
+| requesting-permission | 用户点击麦克风 | 禁用重复点击 | 允许后进入 recording；拒绝后回 idle |
+| recording | 获得麦克风流 | 显示秒数和停止按钮 | 再次点击或 120 秒到时停止 |
+| transcribing | MediaRecorder 产出录音文件 | 调用 MediaRepository | 成功回填文字；失败保留原输入并回 idle |
+
+- 识别文本只插入当前光标位置，用户确认后再发送，禁止识别完成后自动提交。
+- 路由离开、组件销毁或请求取消时停止全部 MediaStream track，并中止转写请求。
+- 权限拒绝、无麦克风、设备被占用、空录音、不支持格式和识别超时分别展示错误，不清空原输入。
+- Mock 返回明确标记的模拟转写文本；正式 API 发送录音文件和 metadata，由后端语音模型返回文字。
+
+#### 图片触发和状态
+
+| 状态 | 触发条件 | 前端行为 | 退出路径 |
+| --- | --- | --- | --- |
+| selected | 选择照片或拍照完成 | 校验格式、10MB 和总数 5 张，显示缩略图 | 可删除、发送或取消 |
+| uploading | 用户发送消息或确认资料上传 | 禁止重复提交，调用 MediaRepository | 成功取得 assetId；失败保留待发送内容 |
+| uploaded/processing | 后端已保存，正在识别或索引 | 聊天可携 assetId 发送；资料库显示处理中 | 查询状态 |
+| ready | 后端识别/索引完成 | 可作为聊天、资料库或学习上下文 | 正常使用 |
+| failed | 上传、解码、识别或索引失败 | 显示原因和重试 | 重试或删除 |
+
+- 支持 JPEG、PNG、WEBP、HEIC、HEIF，单图最大 10MB；服务端仍必须重新校验文件签名。
+- Mock 只在 sessionStorage 保存资产元数据，缩略图只使用当前页面内存中的 Object URL，不保存真实图片内容。
+- 正式环境先上传图片取得 `mediaAssetId`，聊天接口只发送 `mediaAssetIds`；图片二进制不转 Base64 塞进 JSON。
+- 资料库和智能学习图片通过相同 MediaRepository 上传，后端根据 purpose 和 libraryId/learningProjectId 建立关联，避免同一文件重复上传。
+
+#### 识别、意图和上下文
+
+- 前端不做正式 OCR、语音识别或题目结构化，也不通过关键词规则决定模型。
+- `purpose` 固定为 `chat-attachment`、`library-resource` 或 `learning-input`；`source` 固定为 `upload`、`camera` 或 `microphone`。
+- 用户明确要求“识别文字”时使用 `mode=ocr`；明确要求“识别题目”时使用 `mode=question`；普通图片问答使用 `mode=auto`，由后端结合当前问题、图片和会话类型判断意图。
+- 图片上下文默认只属于当前消息；跨轮引用由后端根据消息与媒体资产关联恢复，前端不能把识别文本永久拼入所有 history。
+- conversationId、libraryId 和 learningProjectId 仅用于建立上下文，正式权限由后端逐个校验。
+- 识别任务使用 pending、running、succeeded、failed、cancelled；刷新后可用 jobId 恢复查询，任务失败不删除原图。
+
+完整 multipart 字段、DTO、状态机、错误码、重试和权限规则以 `docs/backend-api-contract.md` 第 18 节为准。
+
 ## 5. AI 生成逻辑与接口边界
 
 ### 5.1 当前 Mock 实现
@@ -193,6 +246,7 @@ Mock 生成器只负责返回符合接口结构的演示数据。后端不得复
 | 主题、侧边栏折叠、视图模式、模型偏好 | `localStorage` | 无敏感信息，行为与正式环境一致 |
 | 对话和消息 | `sessionStorage`，按用户和会话隔离 | 刷新可恢复，关闭标签页后无需保留 |
 | 资料库、文件元数据 | `sessionStorage`，按用户隔离 | 不保存真实文件内容 |
+| 图片/录音资产和识别任务元数据 | `sessionStorage`，按用户隔离 | 不保存真实二进制；关闭标签页后清除 |
 | 学习项目、任务、题目、答题和错题 | `sessionStorage`，按用户隔离 | 模拟当前会话内的后端业务数据 |
 | 未提交草稿、生成任务 id | `sessionStorage` | 用于刷新恢复和继续查询任务 |
 | 弹窗、筛选、当前选中项、加载状态 | Pinia 或组件内存 | 不需要跨会话持久化 |
@@ -209,6 +263,7 @@ Mock 是否跨浏览器启动保留不属于后端接口契约。正式环境通
 | 用户、会话、消息 | 后端数据库 | 仅缓存当前页面数据 |
 | 资料库、文件元数据 | 后端数据库 | 仅缓存列表与详情 |
 | 文件原件 | 对象存储或后端文件服务 | 否 |
+| 图片、录音原件和识别结果 | 对象存储 + 后端数据库/任务表 | 否，只缓存当前交互状态 |
 | 文档解析、向量化状态 | 后端任务/状态表 | 否，只展示状态 |
 | 学习项目、阶段、任务、进度 | 后端数据库 | 否，只缓存当前项目 |
 | 题目、答案、解析、答题结果、错题 | 后端数据库 | 否 |
@@ -304,6 +359,16 @@ interface CreateConversationRequest {
 
 异步任务状态建议固定为：`pending`、`running`、`succeeded`、`failed`、`cancelled`。返回失败时应提供稳定的错误码和可展示信息。
 
+### 7.5 媒体接口
+
+- `POST /api/media/images`：上传照片或拍照文件，multipart 固定使用 `file` 和 JSON `metadata` 两个字段。
+- `POST /api/media/audio/transcriptions`：上传录音并同步返回转写文字。
+- `POST /api/media/images/:assetId/recognition-jobs`：创建 auto/OCR/question 图片识别任务。
+- `GET /api/media/jobs/:jobId`：查询图片识别任务。
+- `POST /api/chat/stream`：在原请求中增加 `mediaAssetIds: string[]`，不直接发送 Base64 图片。
+
+正式接口不得返回公开永久文件 URL；文件访问必须经过权限校验或短期签名 URL。详细字段和错误码见零猜测交接契约第 18 节。
+
 ## 8. 文件夹重构与文件清单
 
 ### 8.1 判断标准
@@ -342,6 +407,7 @@ src/
     admin/
     legacy/
   components/
+    capture/
     common/
     layout/
     chat/
@@ -363,6 +429,7 @@ src/
 | 目标分类 | 当前内容 |
 | --- | --- |
 | `components/layout` | `StudentShell.vue`、`StudentSidebar.vue`、`LearningDetailShell.vue` |
+| `components/capture` | `VoiceRecorder.vue`、`ImageCaptureUploader.vue`，封装浏览器设备与文件选择交互 |
 | `components/chat` | 消息渲染、输入附件、思维导图和分段面板 |
 | `components/library` | `LibraryKnowledgeCreateModal.vue`、`UploadMaterialModal.vue` |
 | `components/learning` | `LearningQuestionCard.vue`、`LearningTutorPanel.vue`、`LearningRouteState.vue`、`LearningPlanDocument.vue`、`LearningProfileCard.vue`、`LearningProfileMenu.vue`、`LearningProjectResourceChips.vue`、`LearningMindMapPreview.vue` |
@@ -423,6 +490,9 @@ src/
 - [x] 智能学习详情路由统一重新获取权威项目，不再回退第一个项目。
 - [x] 学习资源取消正式环境前端补造和本地伪下载，改用后端资源接口。
 - [x] 补齐主流程加载、空、失败、生成中和重复提交状态。
+- [x] 增加语音输入、拍照和上传照片入口，并使用 MediaRepository 隔离 Mock/API。
+- [x] 增加媒体共享类型、正式 API 调用、聊天 mediaAssetIds 和资料库图片关联。
+- [x] 固定语音、图片、OCR/题目识别的正式后端契约、状态机、权限和错误码。
 - [ ] 对完全无引用、无独有逻辑的文件二次确认后删除。
 
 后续每一项涉及代码或目录调整时，应单独确认范围后执行，避免一次性移动造成大量不可控变更。

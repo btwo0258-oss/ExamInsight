@@ -70,6 +70,7 @@ const emptyProfile = (): LearningProfileData => ({
   extra: '',
 })
 const learningProfile = ref<LearningProfileData>(emptyProfile())
+const learningMediaAssetIds = ref<string[]>([])
 
 async function requestLearningProfile(text: string) {
   const selectedCourse = courseLibraries.find((item) => item.id === selectedKnowledgeBaseId.value)
@@ -81,6 +82,7 @@ async function requestLearningProfile(text: string) {
     subject: selectedCourse?.course,
     knowledgeTags: selectedCourse?.tags,
     supplementalRequirement: learningProfile.value.extra,
+    mediaAssetIds: learningMediaAssetIds.value,
   })
 }
 
@@ -89,6 +91,7 @@ function requestLearningConfirmation() {
     libraryId: selectedKnowledgeBaseId.value ?? 0,
     goal: learningPrompt.value || learningProfile.value.goal,
     profile: learningProfile.value,
+    mediaAssetIds: learningMediaAssetIds.value,
   })
 }
 
@@ -393,21 +396,34 @@ function showProfile(conversationId: number, text: string) {
   }, 850)
 }
 
-async function onSend(text: string, files?: File[]) {
+async function onSend(text: string, files?: File[], complete?: (success?: boolean) => void) {
   retryAction.value = null
   messageStore.clearError()
+  let succeeded = false
   try {
-  if (files?.length && isMockDataSource) {
+  if (files?.length && isLearningSetupChat.value) {
+    const uploaded = await libraryResourceStore.uploadFiles(
+      files,
+      '智能学习上传',
+      learningProjectId.value,
+      selectedKnowledgeBaseId.value,
+    )
+    const nextMediaIds = uploaded
+      .filter((item) => item.category === 'image' && item.externalKey)
+      .map((item) => item.externalKey)
+    learningMediaAssetIds.value = [...new Set([...learningMediaAssetIds.value, ...nextMediaIds])]
+  } else if (files?.length && isMockDataSource) {
     libraryResourceStore.addFiles(
       files,
-      isLearningChat.value ? '智能学习上传' : '聊天上传',
-      isLearningChat.value ? learningProjectId.value : null,
-      isLearningChat.value ? selectedKnowledgeBaseId.value : currentConversation.value?.knowledgeBaseId ?? null,
+      '聊天上传',
+      null,
+      currentConversation.value?.knowledgeBaseId ?? null,
     )
   }
 
   if (isTutorChat.value) {
     await sendTutorQuestion(text, files)
+    succeeded = !messageStore.errorMessage
     return
   }
 
@@ -427,21 +443,27 @@ async function onSend(text: string, files?: File[]) {
         })
       }
       decisionDismissed.value = false
+      succeeded = true
       return
     }
     showProfile(conversationId, `${learningPrompt.value} ${text}`)
+    succeeded = true
     return
   }
 
   if (!activeChatId.value) {
     const newChatId = await conversationStore.create()
     await messageStore.sendMessage(newChatId, text, undefined, undefined, undefined, files)
+    succeeded = !messageStore.errorMessage
     return
   }
 
   await messageStore.sendMessage(activeChatId.value, text, undefined, undefined, undefined, files)
+  succeeded = !messageStore.errorMessage
   } catch (error) {
     reportFlowError(error, '消息发送失败', () => onSend(text, files))
+  } finally {
+    complete?.(succeeded)
   }
 }
 
@@ -781,6 +803,13 @@ watch(
         <AppInput
           ref="homeInputRef"
           :is-streaming="messageStore.isStreaming"
+          :media-enabled="true"
+          :media-purpose="isLearningChat ? 'learning-input' : 'chat-attachment'"
+          :media-context="{
+            conversationId: activeChatId,
+            libraryId: selectedKnowledgeBaseId,
+            learningProjectId,
+          }"
           placeholder="输入消息，Enter 发送，Shift+Enter 换行"
           @send="onSend"
           @stop="messageStore.stopStreaming"

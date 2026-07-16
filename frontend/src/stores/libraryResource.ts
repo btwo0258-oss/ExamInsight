@@ -1,5 +1,7 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
+import { mediaRepository } from '@/repositories/media'
+import { getMediaSource, isImageFile } from '@/utils/mediaFile'
 import {
   deleteLibraryResource,
   downloadLibraryResource,
@@ -40,6 +42,10 @@ function generatedType(group: LearningResource['group']) {
   if (group === '图片') return '图片'
   if (group === '个性化学习手册') return 'Markdown'
   return 'PDF'
+}
+
+function clientRequestId() {
+  return globalThis.crypto?.randomUUID?.() ?? `media-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
 export const useLibraryResourceStore = defineStore('libraryResource', () => {
@@ -92,8 +98,33 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
     const uploaded: LibraryResource[] = []
     try {
       for (const file of files) {
-        const item = await uploadLibraryResource(file, libraryId, projectId)
-        item.source = source
+        let item: LibraryResource
+        if (isImageFile(file)) {
+          const asset = await mediaRepository.uploadImage(file, {
+            source: getMediaSource(file),
+            purpose: source === '智能学习上传' ? 'learning-input' : 'library-resource',
+            libraryId,
+            learningProjectId: projectId,
+            clientRequestId: clientRequestId(),
+          })
+          item = {
+            id: `media:${asset.id}`,
+            name: asset.fileName,
+            type: '图片',
+            size: fileSize(asset.size),
+            status: asset.status === 'failed' ? 'failed' : asset.status === 'ready' ? 'ready' : 'processing',
+            errorMessage: asset.errorMessage,
+            updatedAt: '刚刚',
+            category: 'image',
+            source,
+            projectId,
+            libraryId,
+            externalKey: asset.id,
+          }
+        } else {
+          item = await uploadLibraryResource(file, libraryId, projectId)
+          item.source = source
+        }
         upsert(item)
         uploaded.push(item)
       }

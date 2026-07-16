@@ -1,16 +1,26 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import AppIcon from '@/components/common/AppIcon.vue'
+import { isImageFile } from '@/utils/mediaFile'
 
 type Props = { file: File }
 const props = defineProps<Props>()
 const emit = defineEmits<{ remove: [] }>()
 
-const isImage = computed(() => props.file.type.startsWith('image/'))
-const url = computed(() => {
-  if (!isImage.value) return ''
-  return URL.createObjectURL(props.file)
-})
+const isImage = computed(() => isImageFile(props.file))
+const url = ref('')
+
+function revokePreview() {
+  if (url.value) URL.revokeObjectURL(url.value)
+  url.value = ''
+}
+
+watch(() => props.file, (file) => {
+  revokePreview()
+  if (isImageFile(file)) url.value = URL.createObjectURL(file)
+}, { immediate: true })
+
+onBeforeUnmount(revokePreview)
 
 const fileExtension = computed(() => {
   const name = props.file.name
@@ -54,7 +64,7 @@ const iconColor = computed(() => {
 <template>
   <div class="card">
     <div v-if="isImage" class="card__preview">
-      <img :src="url" class="card__img" />
+      <img :src="url" :alt="file.name" class="card__img" />
     </div>
     <div v-else class="card__file">
       <AppIcon :name="iconName" class="card__icon" :color="iconColor" />

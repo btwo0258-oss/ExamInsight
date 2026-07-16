@@ -21,6 +21,7 @@ const prompt = ref('请帮我创建一个智能学习计划。')
 const selectedLibraryId = ref(0)
 const selectedProjectId = ref<number | null>(null)
 const files = ref<File[]>([])
+const mediaAssetIds = ref<string[]>([])
 const learningConstraintDraft = ref('')
 const learningConstraintTags = ref<string[]>(['考试复习'])
 const studyPeriod = ref('3 天')
@@ -155,6 +156,7 @@ async function requestGeneratedProfile(text: string) {
     subject: selectedLibrary.value?.course,
     knowledgeTags: selectedLibrary.value?.tags,
     supplementalRequirement: extraRequirement.value,
+    mediaAssetIds: mediaAssetIds.value,
   })
 }
 
@@ -177,33 +179,48 @@ async function submitPrompt() {
   }
 }
 
-async function handleSupplementInput(text: string, attachedFiles: File[] = []) {
+async function handleSupplementInput(
+  text: string,
+  attachedFiles: File[] = [],
+  complete?: (success?: boolean) => void,
+) {
   const next = text.trim()
-  if (!next && !attachedFiles.length) return
+  if (!next && !attachedFiles.length) {
+    complete?.(false)
+    return
+  }
   flowError.value = ''
   if (attachedFiles.length) {
     try {
-      await libraryResourceStore.uploadFiles(
+      const uploaded = await libraryResourceStore.uploadFiles(
         attachedFiles,
         '智能学习上传',
         selectedProjectId.value,
         selectedLibraryId.value || null,
       )
+      const nextMediaIds = uploaded
+        .filter((item) => item.category === 'image' && item.externalKey)
+        .map((item) => item.externalKey!)
+      mediaAssetIds.value = [...new Set([...mediaAssetIds.value, ...nextMediaIds])]
       files.value.push(...attachedFiles)
     } catch (error) {
       flowError.value = error instanceof Error ? error.message : '学习资料上传失败'
+      complete?.(false)
       return
     }
   }
-  if (!next) return
+  if (!next) {
+    complete?.(true)
+    return
+  }
   supplementDraft.value = next
-  await applySupplement()
+  complete?.(await applySupplement())
 }
 
 async function applySupplement() {
   const text = supplementDraft.value.trim()
   if (!text) {
-    return
+    return false
   }
   extraRequirement.value = text
   profileGenerating.value = true
@@ -212,8 +229,10 @@ async function applySupplement() {
     const result = await requestGeneratedProfile(`${prompt.value} ${text}`)
     applyGeneratedProfile(result.profile)
     if (confirmationDocument.value) await startConfirmationDocumentGeneration()
+    return true
   } catch (error) {
     flowError.value = error instanceof Error ? error.message : '补充要求分析失败'
+    return false
   } finally {
     profileGenerating.value = false
   }
@@ -234,6 +253,7 @@ async function startConfirmationDocumentGeneration() {
       goal: prompt.value.trim(),
       profile: currentLearningProfile(),
       uploadedFileNames: files.value.map((file) => file.name),
+      mediaAssetIds: mediaAssetIds.value,
       relatedProjectName: selectedProject.value?.title,
       questionCount: plannedQuestionCount.value,
       difficultyStrategy: difficultyStrategy.value,
@@ -390,6 +410,12 @@ watch(
         <div class="profile-chat-input">
           <AppInput
             :disabled="profileGenerating || documentGenerating || projectCreating || !selectedLibrary"
+            :media-enabled="true"
+            media-purpose="learning-input"
+            :media-context="{
+              libraryId: selectedLibraryId || null,
+              learningProjectId: selectedProjectId,
+            }"
             placeholder="继续补充要求"
             @send="handleSupplementInput"
           />

@@ -16,6 +16,7 @@ export type ChatStreamPayload = {
   qVersion?: number
   aVersion?: number
   files?: string
+  mediaAssetIds?: string[]
 }
 
 export interface ChatRepository {
@@ -58,6 +59,7 @@ const apiChatRepository: ChatRepository = {
         isRegenerate: payload.isRegenerate,
         editMsgId: payload.editMsgId,
         files: payload.files,
+        mediaAssetIds: payload.mediaAssetIds,
       }),
       signal: options?.signal,
     })

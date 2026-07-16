@@ -9,6 +9,9 @@ import * as conversationApi from "@/api/conversation";
 import { isMockDataSource } from '@/config/dataSource'
 import { mockSession } from '@/mock/storage'
 import { documentRepository } from '@/repositories/document'
+import { mediaRepository } from '@/repositories/media'
+import { getMediaSource, isImageFile } from '@/utils/mediaFile'
+import type { MediaAssetDto } from '@/types/contracts/media'
 
 export type ChatRole = "user" | "assistant" | "system";
 
@@ -42,7 +45,7 @@ export type ChatMessage = {
   qVersion?: number; // 问题版本 (0-based)
   aVersion?: number; // 回答版本 (0-based, 针对特定的 qVersion)
   // 附件
-  files?: { name: string; type: string; size: number }[];
+  files?: { name: string; type: string; size: number; assetId?: string; source?: 'upload' | 'camera' }[];
   kind?: "learning-profile" | "learning-document";
   learningData?: any;
   tutorContext?: string;
@@ -51,6 +54,10 @@ export type ChatMessage = {
 
 function uid() {
   return `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function clientRequestId() {
+  return globalThis.crypto?.randomUUID?.() ?? `media-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function isAbortError(error: unknown) {
@@ -467,7 +474,7 @@ export const useMessageStore = defineStore("message", () => {
     if (!text && !hasFiles && !skipUserMsg) return;
 
     if (!text && hasFiles) {
-      text = "请分析上传的文件内容";
+      text = "请分析上传的图片或文件内容";
     }
 
     await ensureLoaded(conversationId);
@@ -495,13 +502,28 @@ export const useMessageStore = defineStore("message", () => {
     // 3. 解析文件内容 (后端逻辑)
     let fileContext = "";
     let displayContent = text;
+    const mediaAssets: MediaAssetDto[] = [];
+    const mediaAssetByFile = new Map<File, MediaAssetDto>();
     if (hasFiles && !skipUserMsg) {
       isStreaming.value = true;
       try {
         const extractedTexts = [];
         for (const file of files) {
-          const extracted = await documentRepository.extract(file, nextController.signal);
-          extractedTexts.push(`[文件：${file.name}]\n${extracted}`);
+          if (isImageFile(file)) {
+            const asset = await mediaRepository.uploadImage(file, {
+              source: getMediaSource(file),
+              purpose: extraOptions?.tutorSource ? 'learning-input' : 'chat-attachment',
+              conversationId,
+              learningProjectId: extraOptions?.tutorSource?.projectId ?? null,
+              clientRequestId: clientRequestId(),
+            }, nextController.signal);
+            mediaAssets.push(asset);
+            mediaAssetByFile.set(file, asset);
+            extractedTexts.push(`[图片：${file.name}]\n媒体资源 ID：${asset.id}。图片内容由后端多模态识别或 OCR 处理。`);
+          } else {
+            const extracted = await documentRepository.extract(file, nextController.signal);
+            extractedTexts.push(`[文件：${file.name}]\n${extracted}`);
+          }
         }
         fileContext = extractedTexts.join("\n\n");
       } catch (e) {
@@ -543,7 +565,13 @@ export const useMessageStore = defineStore("message", () => {
         qVersion: currentQVersion,
         tutorContext: extraOptions?.tutorContext,
         tutorSource: extraOptions?.tutorSource,
-        files: files?.map((f) => ({ name: f.name, type: f.type, size: f.size })),
+        files: files?.map((f) => ({
+          name: f.name,
+          type: f.type,
+          size: f.size,
+          assetId: mediaAssetByFile.get(f)?.id,
+          source: isImageFile(f) ? getMediaSource(f) : undefined,
+        })),
       };
 
       const lastMsgOfTurnIdx = list.findLastIndex((m) => m.turnId === currentTurnId);
@@ -630,8 +658,15 @@ export const useMessageStore = defineStore("message", () => {
           aVersion: currentAVersion,
           files:
             files && files.length > 0
-              ? JSON.stringify(files.map((f) => ({ name: f.name, type: f.type, size: f.size })))
+              ? JSON.stringify(files.map((f) => ({
+                  name: f.name,
+                  type: f.type,
+                  size: f.size,
+                  assetId: mediaAssetByFile.get(f)?.id,
+                  source: isImageFile(f) ? getMediaSource(f) : undefined,
+                })))
               : undefined,
+          mediaAssetIds: mediaAssets.map((asset) => asset.id),
         },
         { signal: nextController.signal },
       );

@@ -35,6 +35,7 @@ export type LearningProfileRequest = {
   subject?: string
   knowledgeTags?: string[]
   supplementalRequirement?: string
+  mediaAssetIds?: string[]
 }
 
 export type LearningProfileData = {
@@ -59,6 +60,7 @@ export type LearningConfirmationRequest = {
   goal: string
   profile: LearningProfileData
   uploadedFileNames?: string[]
+  mediaAssetIds?: string[]
   relatedProjectName?: string
   questionCount?: number
   difficultyStrategy?: string

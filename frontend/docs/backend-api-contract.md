@@ -1,10 +1,10 @@
 # 学生端前后端零猜测交接契约
 
-> 版本：1.0
+> 版本：1.1
 >
 > 更新日期：2026-07-16
 >
-> 适用范围：新对话、资料库、智能学习及其关联的思维导图、登录与用户设置。
+> 适用范围：新对话、资料库、智能学习、语音输入、拍照/图片上传及其关联的思维导图、登录与用户设置。
 >
 > 本文以当前 Spring Boot 后端和当前前端 API Repository 为基线。后端不得参考 Mock Generator 设计正式算法。
 
@@ -42,14 +42,14 @@
 - 资料库聚合资源接口。
 - 学习项目、画像、确认稿、方案、任务、题目、答题、错题和资源生成。
 - 学习助教复用会话与聊天接口。
+- 语音转文字、拍照/图片上传、图片 OCR/题目识别和聊天多模态引用。
 
 首期不包含：
 
 - 文件在线预览专用接口。
 - 选中多个资料后直接创建聊天上下文。
 - 资料库高级筛选。
-- 语音识别。
-- DOC、PNG、JPG、JPEG 的 AI 解析或 OCR。当前后端正式支持 PDF、DOCX、MD、TXT。
+- DOC 的 AI 解析。当前文档解析正式支持 PDF、DOCX、MD、TXT；图片走第 18 节媒体接口。
 
 ## 1. 现有后端复用矩阵
 
@@ -65,6 +65,7 @@
 | 公共资源中心 | 已存在 | KEEP | 不等于学生资料库聚合接口，可复用文件存储逻辑 |
 | 资料库聚合资源 | 不存在 | NEW | 聚合 document、mind_map、learning_resource |
 | 智能学习 | 不存在 | NEW | 新增项目、任务、题目、答题、错题、资源与生成任务 |
+| 语音、图片与识别任务 | 不存在 | NEW | 新增 media_asset、语音转写和图片识别任务；聊天只引用媒体资产 ID |
 
 ## 2. 通用协议
 
@@ -458,6 +459,7 @@ type ChatStreamRequest = {
   isRegenerate?: boolean
   editMsgId?: number | null
   files?: string
+  mediaAssetIds?: string[]
 }
 ~~~
 
@@ -468,8 +470,10 @@ type ChatStreamRequest = {
 - kbId 只作兼容，实际 RAG 知识库以 conversation.kbId 为准；两者冲突时返回 409。
 - model 缺失时使用用户设置 defaultModel；必须校验模型白名单。
 - history 只用于补充上下文，不能覆盖后端保存的权限和项目关联。
-- fileContext 是当前兼容附件正文，最大 200000 字符。后续 attachmentIds 方案另行升级，不在本版本静默替换。
+- fileContext 只承载 PDF、DOCX、MD、TXT 的当前兼容附件正文，最大 200000 字符。
 - files 必须是合法 MessageAttachmentDto[] JSON 字符串。
+- mediaAssetIds 只承载第 18 节已上传图片资产 ID；最多 5 个，后端逐个校验所有权、状态和 conversationId 关联。
+- 同一图片同时出现在 files 元数据和 mediaAssetIds 时，以 mediaAssetIds 作为模型输入，files 只用于消息展示，禁止重复处理。
 - 学习助教必须通过 conversation.learningProjectId 加载权威项目上下文，不能只信任前端拼接的 tutorContext。
 
 ### 5.2 SSE 协议
@@ -657,6 +661,7 @@ NEW。该模块不是重新存一份文件，而是统一查询和操作：
 - document：用户上传文档。
 - mind_map：思维导图。
 - learning_resource：智能学习生成资源。
+- media_asset：图片上传、拍照及其识别/索引结果。
 
 公共资源中心 resource、user_resource 不直接混入学生私人资料库列表；用户把公共资源加入知识库时，可以生成 document 或新的资源关联。
 
@@ -693,6 +698,7 @@ id 是不可猜测的聚合路由键：
 - document:123
 - mindmap:45
 - learning-resource:78
+- media:550e8400-e29b-41d4-a716-446655440000
 
 后端必须解析前缀并分发到对应 Service。不存在的前缀返回 400，实体不存在返回 404。
 
@@ -715,6 +721,9 @@ id 是不可猜测的聚合路由键：
 | learning_resource generating | file、image 或 mindmap | processing |
 | learning_resource ready | file、image 或 mindmap | ready |
 | learning_resource failed | file、image 或 mindmap | failed |
+| media_asset uploaded/processing | image | processing |
+| media_asset ready | image | ready |
+| media_asset failed | image | failed |
 
 ### 7.3 接口
 
@@ -740,7 +749,7 @@ multipart：
 
 至少提供 libraryId 或 projectId；两者都提供时必须属于同一用户，且项目关联该知识库。
 
-首期支持 PDF、DOCX、MD、TXT。成功返回聚合后的 LibraryResourceDto。
+首期该接口支持 PDF、DOCX、MD、TXT。图片必须调用第 18 节 `POST /api/media/images`，并在 metadata 中使用 `purpose=library-resource`；成功后同一媒体资产必须出现在聚合资源列表中，不能重复上传文件。
 
 #### PATCH /api/library/resources/{id}
 
@@ -872,6 +881,7 @@ type LearningProfileRequest = {
   subject?: string
   knowledgeTags?: string[]
   supplementalRequirement?: string
+  mediaAssetIds?: string[]
 }
 
 type LearningProfileResult = {
@@ -884,6 +894,7 @@ type LearningConfirmationRequest = {
   goal: string
   profile: LearningProfileData
   uploadedFileNames?: string[]
+  mediaAssetIds?: string[]
   relatedProjectName?: string
   questionCount?: number
   difficultyStrategy?: string
@@ -928,6 +939,7 @@ type CreateLearningPlanRequest = {
 - libraryName 只用于兼容展示，权威名称由 libraryId 查询。
 - questionCount 范围 1 至 500。
 - 生成前 libraryId 必须存在、属于当前用户且 availableForAi=true。
+- mediaAssetIds 最多 5 个，只接受 purpose=learning-input 且已关联当前 libraryId/projectId 的图片；后端读取图片内容，uploadedFileNames 只用于展示，不能替代媒体引用。
 
 ### 9.3 项目聚合 DTO
 
@@ -1516,7 +1528,7 @@ mastered -> needs_review  再次答错时
 | P1 | 知识库直接返回实体，缺 availableForAi | 后端 |
 | P1 | ModelSwitch 当前没有调用 fetchList，model API 失败会返回本地固定列表 | 前端加载 /api/config/model，并取消生产 fallback |
 | P1 | 文档 status=0 在前端当前显示映射需要统一为 processing | 前端 |
-| P1 | 上传 UI 当前允许 DOC 和图片，但后端解析器不支持 | 前端先限制，或后端另行增加解析能力 |
+| P1 | 文档上传 UI 仍允许 DOC，但现有文档解析器不支持 | 前端限制 DOC 或后端补解析；图片固定走第 18 节媒体接口 |
 | P1 | 学习项目重命名、删除目前只改前端展示 | 前端接入本文 PATCH/DELETE |
 | P1 | LearningProject 前端类型暂位于 Mock 文件 | 前端迁移到正式 contracts |
 | P1 | 前端 common.ts 中 ApiResponse.code 仍声明为 string | 前端改为 number，与现有 Java Result 和本文一致 |
@@ -1535,7 +1547,8 @@ mastered -> needs_review  再次答错时
 7. 实现画像、确认稿和方案生成任务。
 8. 实现学习行为、答题、错题和进度。
 9. 实现自适应练习、错题巩固和资源生成。
-10. 前后端联调 API 模式。
+10. 新增媒体资产、语音转写、图片识别任务，并让聊天和资料库按媒体 ID 关联。
+11. 前后端联调 API 模式。
 
 ## 16. 后端验收清单
 
@@ -1550,6 +1563,9 @@ mastered -> needs_review  再次答错时
 - 未提交题目响应不包含正确答案和隐藏评分规则。
 - 生成任务成功后，result 中的实体可以立即查询。
 - 聚合资源删除、移动、重试不会留下孤立文件、分块或向量。
+- 拒绝的麦克风权限不会发起后端请求；空录音、超时和不支持格式返回固定错误码。
+- 图片资产只能被所属用户和已关联的会话、资料库或学习项目引用。
+- 图片识别任务可在刷新后通过 jobId 查询，重复 clientRequestId 不创建重复资产或任务。
 
 ## 17. 首期明确不实现
 
@@ -1558,7 +1574,280 @@ mastered -> needs_review  再次答错时
 - 资料库文件在线预览。
 - 选择多个资料直接开始聊天。
 - 高级筛选。
-- 语音输入。
-- OCR 图片学习。
 
 需要启用时另行新增契约版本，不在现有接口中偷偷扩展字段。
+
+## 18. 语音、拍照与图片识别
+
+### 18.1 前端与后端边界
+
+状态：NEW。
+
+- 前端只负责请求浏览器权限、录音、选图/拍照、格式与大小预校验、状态展示、取消和重试。
+- 正式环境的语音识别、OCR、题目结构化、图片意图判断和多模态理解全部由后端完成。
+- Mock Repository 只保存媒体元数据和模拟结果到按用户隔离的 sessionStorage，不保存真实图片或录音二进制。
+- 正式环境的原始文件存对象存储，元数据、权限关联和任务状态存后端数据库；前端不把业务媒体写入 localStorage 或 sessionStorage。
+- API 模式失败时禁止回退 Mock，也禁止仅凭文件名或扩展名伪造识别成功。
+
+### 18.2 共享类型
+
+~~~ts
+type MediaKind = "image" | "audio"
+type MediaSource = "upload" | "camera" | "microphone"
+type MediaPurpose = "chat-attachment" | "library-resource" | "learning-input"
+type MediaAssetStatus = "uploading" | "uploaded" | "processing" | "ready" | "failed"
+type ImageRecognitionMode = "auto" | "ocr" | "question"
+
+type MediaContext = {
+  conversationId?: number | null
+  libraryId?: number | null
+  learningProjectId?: number | null
+}
+
+type MediaAssetDto = MediaContext & {
+  id: string
+  kind: MediaKind
+  source: MediaSource
+  purpose: MediaPurpose
+  fileName: string
+  mimeType: string
+  size: number
+  status: MediaAssetStatus
+  createdAt: string
+  updatedAt: string
+  errorCode?: string
+  errorMessage?: string
+}
+
+type UploadImageRequest = MediaContext & {
+  source: "upload" | "camera"
+  purpose: MediaPurpose
+  clientRequestId: string
+}
+
+type TranscribeAudioRequest = MediaContext & {
+  source: "microphone"
+  purpose: "chat-attachment" | "learning-input"
+  clientRequestId: string
+  language?: string
+  durationMs?: number
+}
+
+type AudioTranscriptionDto = {
+  asset: MediaAssetDto
+  text: string
+  language: string
+  durationMs: number
+  confidence?: number
+}
+
+type CreateImageRecognitionRequest = MediaContext & {
+  mode: ImageRecognitionMode
+  prompt?: string
+  clientRequestId: string
+}
+
+type ImageRecognitionResult = {
+  assetId: string
+  mode: ImageRecognitionMode
+  text: string
+  intent: "general-image" | "document-ocr" | "question-capture"
+  confidence?: number
+  questionText?: string
+  options?: string[]
+}
+
+type ImageRecognitionJob = {
+  jobId: string
+  status: "pending" | "running" | "succeeded" | "failed" | "cancelled"
+  progress?: number
+  result?: ImageRecognitionResult
+  errorCode?: string
+  errorMessage?: string
+}
+~~~
+
+字段规则：
+
+- media asset id 和 jobId 均为 UUID 字符串，不使用可枚举自增 ID。
+- size 是原始字节数，mimeType 由后端根据文件签名重新确认，不能只信任浏览器上传值。
+- confidence 取值 0 至 1；模型不提供可信置信度时不返回，不得伪造固定值。
+- errorCode/errorMessage 只在 failed 状态返回；ready/succeeded 不返回错误字段。
+- `uploading` 是前端本地状态；后端已接收请求后从 `uploaded` 开始。
+
+### 18.3 上传图片或拍照
+
+#### POST /api/media/images
+
+状态：NEW。Content-Type 为 multipart/form-data，字段固定为：
+
+- file：必填，图片二进制。
+- metadata：必填，Content-Type 为 application/json，内容是 UploadImageRequest。
+
+限制：
+
+- 支持 JPEG、PNG、WEBP、HEIC、HEIF；后端必须同时校验扩展名、MIME 和文件签名。
+- 单图最大 10 MB；单次请求只传 1 张；输入框最多引用 5 个媒体资产。
+- 去除 EXIF GPS 等敏感元数据，并根据 EXIF orientation 规范化方向。
+- `purpose=chat-attachment` 时 conversationId 必填。
+- `purpose=library-resource` 时 libraryId 必填，成功后创建资料库媒体关联并启动 OCR/索引任务。
+- `purpose=learning-input` 时 libraryId 或 learningProjectId 至少一个有效；未创建项目时允许只关联 libraryId。
+- source 仅说明入口来自上传或摄像头，不影响权限和识别算法。
+- 以 userId + operation + clientRequestId 保证幂等；相同请求返回原资产，不重复保存文件。
+
+成功：HTTP 201，ApiResult<MediaAssetDto>。
+
+示例 metadata：
+
+~~~json
+{
+  "source": "camera",
+  "purpose": "chat-attachment",
+  "conversationId": 42,
+  "libraryId": null,
+  "learningProjectId": null,
+  "clientRequestId": "d682cf5f-5037-4cc5-841f-9280dc16ac51"
+}
+~~~
+
+成功响应：
+
+~~~json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "kind": "image",
+    "source": "camera",
+    "purpose": "chat-attachment",
+    "fileName": "photo-20260716.jpg",
+    "mimeType": "image/jpeg",
+    "size": 1842201,
+    "status": "uploaded",
+    "conversationId": 42,
+    "libraryId": null,
+    "learningProjectId": null,
+    "createdAt": "2026-07-16T16:30:00+08:00",
+    "updatedAt": "2026-07-16T16:30:00+08:00"
+  }
+}
+~~~
+
+### 18.4 语音转文字
+
+#### POST /api/media/audio/transcriptions
+
+状态：NEW。Content-Type 为 multipart/form-data，字段固定为：
+
+- file：必填，录音二进制。
+- metadata：必填，Content-Type 为 application/json，内容是 TranscribeAudioRequest。
+
+限制与行为：
+
+- 支持 WebM/Opus、Ogg/Opus、M4A/MP4、WAV、MP3。
+- 单文件最大 25 MB，后端探测的真实时长最大 120 秒；durationMs 仅用于前端展示，不能作为服务端校验依据。
+- 默认语言 zh-CN；后端可以自动检测并返回实际 language。
+- 本接口首期同步返回，后端处理超时 90 秒，前端请求超时 120 秒。
+- 无有效人声返回 HTTP 422 + NO_SPEECH_DETECTED，不返回空字符串成功。
+- 转写文字只回填输入框，前端不得在识别完成后自动发送。
+- 原始录音默认 24 小时后清理；需要长期保存时必须另行增加用户可见的保存语义和隐私说明。
+
+成功：HTTP 200，ApiResult<AudioTranscriptionDto>。
+
+### 18.5 图片识别任务
+
+#### POST /api/media/images/{assetId}/recognition-jobs
+
+状态：NEW。请求体为 CreateImageRecognitionRequest，成功返回 HTTP 202 + ApiResult<ImageRecognitionJob>。
+
+- mode=auto：结合用户 prompt 与图片内容判断 general-image、document-ocr 或 question-capture。
+- mode=ocr：强制做文字版面识别，保留自然阅读顺序。
+- mode=question：提取题干、选项和可见公式；不根据图片猜测用户答案。
+- prompt 最大 2000 字符，只作为识别意图补充，不能覆盖权限、purpose 或实体关联。
+- asset 必须属于当前用户且状态不是 failed；重复 clientRequestId 返回原任务。
+
+#### GET /api/media/jobs/{jobId}
+
+状态：NEW。成功返回 ApiResult<ImageRecognitionJob>。
+
+- 前端初次 1 秒后查询；运行中采用 1、2、3、5、5 秒间隔，最长等待 120 秒。
+- 页面刷新后可使用 jobId 继续查询；jobId 只能查询当前用户任务。
+- 任务失败保留原图片资产，允许用户重试；取消任务不删除图片。
+- succeeded 必须包含 result，failed 必须包含稳定 errorCode 和可展示 errorMessage。
+
+### 18.6 状态机与数据流
+
+语音前端状态：
+
+~~~text
+idle -> requesting-permission -> recording -> transcribing -> idle
+  ^              |                |              |
+  |              +-- denied -----+-- failed ----+
+  +---------------- cancel / unsupported --------+
+~~~
+
+- 拒绝权限、取消授权、没有设备或浏览器不支持时回到 idle，保留原输入文字。
+- 录音达到 120 秒自动停止并转写；转写失败保留原输入文字并提供重试。
+- 组件卸载、路由离开或用户中止时停止所有 MediaStream track，并取消尚未完成的 HTTP 请求。
+
+图片资产状态：
+
+~~~text
+frontend selected -> uploading -> uploaded -> processing -> ready
+                         |             |            |
+                         +---------- failed <-------+
+~~~
+
+识别任务状态：
+
+~~~text
+pending -> running -> succeeded
+   |         |
+   +---------+-> failed
+   +---------+-> cancelled
+~~~
+
+聊天数据流：
+
+1. 前端选择图片或调用后置摄像头，完成格式、大小和数量预校验。
+2. 前端调用 POST /api/media/images，取得 MediaAssetDto.id。
+3. 用户点击发送后，前端调用 POST /api/chat/stream，并传 mediaAssetIds。
+4. 后端校验媒体资产、会话和用户关系，再根据用户问题与图片内容决定直接多模态理解、OCR 或题目识别。
+5. 后端把媒体资产引用写入用户消息，SSE 只传回答文本和完成/错误事件。
+6. 上传或发送失败时不得创建伪成功消息；前端保留待发送文字和附件以便重试。
+
+资料库/智能学习数据流：
+
+1. purpose=library-resource 或 learning-input 上传图片。
+2. 后端保存私有原件和媒体元数据，创建资料库关联并启动识别/索引。
+3. GET /api/library/resources 返回 media:{assetId} 聚合项及 processing/ready/failed 状态。
+4. 只有 ready 图片可以进入 RAG 或正式学习生成上下文；failed 可通过聚合资源 retry 接口重试。
+
+### 18.7 意图、上下文与权限
+
+- 前端只发送显式 mode、purpose、用户 prompt 和实体 ID，不在浏览器用关键词规则决定 OCR、题目类型或模型。
+- 后端 auto 意图至少使用用户当前问题、媒体 purpose、图片内容和会话/学习项目类型；低置信度时按 general-image 处理或向用户追问，不能静默执行高风险动作。
+- 图片识别结果加入当前消息上下文，不默认污染后续所有会话；需要跨轮引用时由后端已保存的消息媒体关联恢复。
+- learningProjectId、libraryId 和 conversationId 必须逐个反查当前用户；三者同时存在时必须属于同一用户且关联关系一致，否则返回 409 CONTEXT_MISMATCH。
+- 任何前端传入的 OCR 文本、durationMs、mimeType、source 和 confidence 都不是权限或业务真值。
+
+### 18.8 错误码
+
+| HTTP | errorCode | 触发条件 |
+| --- | --- | --- |
+| 400 | MEDIA_CONTEXT_REQUIRED | purpose 缺少要求的 conversationId、libraryId 或 learningProjectId |
+| 400 | CONTEXT_MISMATCH | 会话、资料库和学习项目关联冲突 |
+| 403 | MEDIA_FORBIDDEN | 当前用户无权访问媒体或上下文实体 |
+| 404 | MEDIA_NOT_FOUND | 媒体资产不存在 |
+| 409 | MEDIA_NOT_READY | 资产状态不允许当前操作 |
+| 409 | IDEMPOTENCY_CONFLICT | 相同 clientRequestId 对应不同文件或请求 |
+| 413 | FILE_TOO_LARGE | 图片超过 10 MB 或音频超过 25 MB |
+| 415 | UNSUPPORTED_MEDIA_TYPE | 扩展名、MIME 或文件签名不支持/不一致 |
+| 422 | NO_SPEECH_DETECTED | 录音中没有可识别人声 |
+| 422 | AUDIO_DURATION_EXCEEDED | 音频真实时长超过 120 秒 |
+| 422 | IMAGE_RECOGNITION_REJECTED | 图片损坏、不可解码或无法识别 |
+| 429 | MEDIA_RATE_LIMITED | 上传、转写或识别频率超限 |
+| 503 | MEDIA_AI_UNAVAILABLE | 语音或视觉模型服务不可用 |
+
+浏览器的 MIC_PERMISSION_DENIED、CAMERA_PERMISSION_DENIED、DEVICE_NOT_FOUND 和 MEDIA_RECORDER_UNSUPPORTED 属于前端本地错误，不请求后端，也不伪装成 HTTP 错误。
