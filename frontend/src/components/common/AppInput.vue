@@ -22,6 +22,8 @@ interface AppInputProps {
   mediaEnabled?: boolean
   mediaPurpose?: Extract<MediaPurpose, 'chat-attachment' | 'learning-input'>
   mediaContext?: MediaContext
+  variant?: 'default' | 'compact'
+  showFooterHint?: boolean
 }
 
 const props = withDefaults(defineProps<AppInputProps>(), {
@@ -31,6 +33,8 @@ const props = withDefaults(defineProps<AppInputProps>(), {
   mediaEnabled: false,
   mediaPurpose: 'chat-attachment',
   mediaContext: () => ({}),
+  variant: 'default',
+  showFooterHint: true,
 })
 
 const emit = defineEmits<{ 
@@ -176,7 +180,7 @@ function send() {
 </script>
 
 <template>
-  <div class="chat-composer">
+  <div :class="['chat-composer', `chat-composer--${variant}`]">
     <div v-if="$slots.context" class="composer-context">
       <slot name="context" />
     </div>
@@ -298,7 +302,7 @@ function send() {
       :accept="ATTACHMENT_ACCEPT"
       @change="onFileChange" 
     />
-    <div class="footer-hint">内容由 AI 生成，请核实重要信息。</div>
+    <div v-if="showFooterHint" class="footer-hint">内容由 AI 生成，请核实重要信息。</div>
 
     <ConfirmDialog
       :open="showError"
@@ -568,6 +572,48 @@ function send() {
   font-size: 12px;
   color: var(--color-text-muted);
   margin-top: 14px;
+}
+
+.chat-composer--compact {
+  max-width: none;
+  padding: 0;
+}
+
+.chat-composer--compact .input-container,
+.chat-composer--compact .main-textarea {
+  border-radius: 12px;
+}
+
+.chat-composer--compact .main-textarea {
+  height: 88px;
+  min-height: 88px;
+  max-height: 88px;
+  padding: 12px 12px 48px 13px;
+  font-size: 14px;
+}
+
+.chat-composer--compact .toolbar-wrapper {
+  padding: 6px 8px;
+  border-bottom-right-radius: 12px;
+  border-bottom-left-radius: 12px;
+}
+
+.chat-composer--compact .icon-action-btn,
+.chat-composer--compact .circle-send-btn {
+  width: 30px;
+  height: 30px;
+}
+
+.chat-composer--compact :deep(.model-trigger) {
+  max-width: 132px;
+  padding: 5px 7px;
+  font-size: 12px;
+}
+
+.chat-composer--compact :deep(.model-trigger span) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (max-width: 767px) {

@@ -192,7 +192,7 @@ async function onGenerateMindmap(_messageId?: string, content?: string) {
 <template>
   <div :id="`msg-${message.id}`" class="bubble-wrap" :class="{ 'bubble-wrap--user': isUser }">
     <div v-if="!isUser" class="avatar avatar--ai">
-      <AppIcon name="robot" />
+      <AppIcon name="robot-black" />
     </div>
 
     <div class="bubble-content-wrap">

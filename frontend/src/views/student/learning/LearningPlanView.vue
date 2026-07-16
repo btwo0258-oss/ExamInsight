@@ -2,11 +2,12 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
+import AppInput from '@/components/common/AppInput.vue'
 import LearningTutorPanel from '@/components/learning/LearningTutorPanel.vue'
 import LearningRouteState from '@/components/learning/LearningRouteState.vue'
 import StudentShell from '@/components/layout/StudentShell.vue'
 import { courseLibraries } from '@/mock'
-import type { LearningResource } from '@/mock'
+import type { LearningResource, LearningTask } from '@/mock'
 import { useLearningStore } from '@/stores/learning'
 import { useLibraryResourceStore } from '@/stores/libraryResource'
 import { useLearningPlanRoute } from '@/composables/useLearningPlanRoute'
@@ -17,9 +18,10 @@ const libraryResourceStore = useLibraryResourceStore()
 const { plan, hasPlan, isLoading, loadError, loadPlan } = useLearningPlanRoute()
 const library = computed(() => courseLibraries.find((item) => item.id === plan.value.libraryId))
 const adjustOpen = ref(false)
-const tutorQuestion = ref('')
 const tutorDrawerOpen = ref(false)
 const tutorInitialQuestion = ref('')
+const tutorInitialFiles = ref<File[]>([])
+const tutorRequestId = ref(0)
 const adjustForm = ref({
   targetType: '',
   period: '',
@@ -50,21 +52,61 @@ function openResourcePackage() {
   router.push(`/learning/${plan.value.id}/resources`)
 }
 
-function askTutor(question: string) {
+function askTutor(
+  question: string,
+  files: File[] = [],
+  complete?: (success?: boolean) => void,
+) {
   const nextQuestion = question.trim()
-  if (!nextQuestion) return
-  tutorQuestion.value = ''
+  if (!nextQuestion && files.length === 0) {
+    complete?.(false)
+    return
+  }
   tutorInitialQuestion.value = nextQuestion
+  tutorInitialFiles.value = files
+  tutorRequestId.value += 1
   tutorDrawerOpen.value = true
+  complete?.(true)
 }
 
-function resourceIcon(group: string) {
+const resourceColors: Record<LearningResource['group'], string> = {
+  学习方案: '#6366f1',
+  个性化学习手册: '#10b981',
+  PPT: '#d4552d',
+  思维导图: '#8b5cf6',
+  代码案例: '#2563eb',
+  图片: '#ec4899',
+}
+
+function resourceIcon(group: LearningResource['group']) {
   if (group === '思维导图') return 'mind-topic'
   if (group === 'PPT') return 'presentation'
   if (group === '代码案例') return 'code'
   if (group === '图片') return 'image'
   if (group === '学习方案') return 'notebook'
-  return 'file'
+  return 'book'
+}
+
+function resourceStyle(group: LearningResource['group']): Record<string, string> {
+  return { '--resource-color': resourceColors[group] }
+}
+
+const taskTypeAppearance: Record<LearningTask['type'], { icon: string; color: string }> = {
+  讲解: { icon: 'book', color: '#6366f1' },
+  资料: { icon: 'file', color: '#10b981' },
+  练习: { icon: 'edit', color: '#2563eb' },
+  测验: { icon: 'check', color: '#d4552d' },
+  案例: { icon: 'code', color: '#2563eb' },
+}
+
+function taskAppearance(task: LearningTask) {
+  const resource = task.resourceId ? plan.value.resources.find((item) => item.id === task.resourceId) : undefined
+  if (resource) return { icon: resourceIcon(resource.group), color: resourceColors[resource.group] }
+  return taskTypeAppearance[task.type]
+}
+
+function taskStyle(task: LearningTask): Record<string, string> {
+  return { '--task-color': taskAppearance(task).color }
 }
 
 const profileItems = computed(() => [
@@ -222,7 +264,10 @@ function applyAdjustPlan() {
               </header>
               <button v-for="task in stage.tasks" :key="task.id" class="task-row" type="button" @click="router.push(`/learning/${plan.id}/study?stage=${stage.id}&task=${task.id}`)">
                 <i :class="{ done: task.done, active: task.status === '进行中' }" />
-                <span>{{ task.title }}</span>
+                <span class="task-main">
+                  <b class="task-type-icon" :style="taskStyle(task)"><AppIcon :name="taskAppearance(task).icon" :size="13" /></b>
+                  <span class="task-title">{{ task.title }}</span>
+                </span>
                 <small>{{ task.done ? '已完成' : task.status ?? '未开始' }}</small>
               </button>
               <button class="day-study-btn" type="button" @click="openStage(stage.id)">
@@ -244,7 +289,7 @@ function applyAdjustPlan() {
             <p class="panel-description">最终学习方案和生成内容统一收纳在这里，进入详情后可预览。</p>
             <div class="resource-list">
               <article v-for="resource in displayedResources" :key="resource.id" class="resource-entry">
-                <span class="resource-entry-icon"><AppIcon :name="resourceIcon(resource.group)" :size="21" /></span>
+                <span class="resource-entry-icon" :style="resourceStyle(resource.group)"><AppIcon :name="resourceIcon(resource.group)" :size="21" /></span>
                 <span>
                   <strong>{{ resource.group }}</strong>
                   <small>{{ resource.title }}</small>
@@ -302,12 +347,19 @@ function applyAdjustPlan() {
             <button type="button" @click="askTutor('继承和组合的区别是什么？')">继承和组合的区别是什么？</button>
             <button type="button" @click="askTutor('多态的实现原理是什么？')">多态的实现原理是什么？</button>
             <button type="button" @click="askTutor('如何理解向上转型？')">如何理解向上转型？</button>
-            <form @submit.prevent="askTutor(tutorQuestion)">
-              <input v-model="tutorQuestion" placeholder="问问当前项目..." />
-              <button type="submit" aria-label="发送问题" :disabled="!tutorQuestion.trim()">
-                <AppIcon name="arrow-up" :size="18" />
-              </button>
-            </form>
+            <AppInput
+              class="tutor-card-input"
+              variant="compact"
+              :show-footer-hint="false"
+              placeholder="问问当前项目..."
+              :media-enabled="true"
+              media-purpose="learning-input"
+              :media-context="{
+                libraryId: plan.libraryId || null,
+                learningProjectId: plan.id,
+              }"
+              @send="askTutor"
+            />
           </section>
         </div>
       </main>
@@ -379,10 +431,12 @@ function applyAdjustPlan() {
         </section>
       </div>
       <LearningTutorPanel
-        v-if="tutorDrawerOpen"
         :plan="plan"
         mode="drawer"
+        :open="tutorDrawerOpen"
         :initial-question="tutorInitialQuestion"
+        :initial-files="tutorInitialFiles"
+        :initial-request-id="tutorRequestId"
         @close="tutorDrawerOpen = false"
       />
     </div>
@@ -578,8 +632,8 @@ h2 {
   height: 32px;
   border: 1px solid var(--color-primary);
   border-radius: 8px;
-  background: color-mix(in srgb, #2563eb 11%, var(--color-surface));
-  color: var(--color-info);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -675,7 +729,7 @@ h2 {
 
 .task-row {
   width: 100%;
-  min-height: 26px;
+  min-height: 30px;
   display: grid;
   grid-template-columns: 10px minmax(0, 1fr) 62px;
   gap: 8px;
@@ -708,7 +762,26 @@ h2 {
   background: #22c55e;
 }
 
-.task-row span {
+.task-main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.task-type-icon {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--task-color) 12%, var(--color-surface));
+  color: var(--task-color);
+}
+
+.task-title {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -726,8 +799,8 @@ h2 {
   margin-top: 8px;
   border: 1px solid var(--color-primary);
   border-radius: 8px;
-  background: color-mix(in srgb, #2563eb 11%, var(--color-surface));
-  color: var(--color-info);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
   cursor: pointer;
   font-weight: 800;
   display: inline-flex;
@@ -755,7 +828,7 @@ h2 {
   grid-template-columns: 36px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  color: var(--color-info);
+  color: var(--color-text);
   text-align: left;
   padding: 9px 10px;
 }
@@ -766,7 +839,8 @@ h2 {
   display: grid !important;
   place-items: center;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--color-info) 10%, var(--color-surface));
+  background: color-mix(in srgb, var(--resource-color) 12%, var(--color-surface));
+  color: var(--resource-color);
 }
 
 .resource-entry > span:nth-child(2) {
@@ -964,38 +1038,8 @@ h2 {
   font-weight: 600;
 }
 
-.tutor-card form {
-  height: 38px;
-  margin-top: 12px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  display: grid;
-  grid-template-columns: 1fr 28px;
-  align-items: center;
-  padding: 0 10px;
-}
-
-.tutor-card input {
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-}
-
-.tutor-card form button {
-  width: 28px;
-  height: 28px;
-  margin: 0;
-  display: grid;
-  place-items: center;
-  border: 0;
-  padding: 0;
-  color: var(--color-text);
-}
-
-.tutor-card form button:disabled {
-  cursor: not-allowed;
-  opacity: .45;
+.tutor-card-input {
+  margin-top: 18px;
 }
 
 .modal-backdrop {

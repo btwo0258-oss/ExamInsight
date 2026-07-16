@@ -1,10 +1,13 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import StudentSidebar from './StudentSidebar.vue'
+
+const sidebarWidth = ref(276)
 </script>
 
 <template>
-  <div class="student-shell">
-    <StudentSidebar />
+  <div class="student-shell" :style="{ '--sidebar-width': `${sidebarWidth}px` }">
+    <StudentSidebar @width-change="sidebarWidth = $event" />
     <main class="student-main">
       <slot />
     </main>

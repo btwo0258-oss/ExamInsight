@@ -105,7 +105,7 @@ export const useLearningTutorStore = defineStore('learningTutor', () => {
     return conversationId
   }
 
-  async function send(plan: LearningPlan, question: string, context: TutorContext = {}) {
+  async function send(plan: LearningPlan, question: string, context: TutorContext = {}, files: File[] = []) {
     const conversationId = await ensureConversation(plan)
     await messageStore.sendMessage(
       conversationId,
@@ -113,7 +113,7 @@ export const useLearningTutorStore = defineStore('learningTutor', () => {
       undefined,
       undefined,
       undefined,
-      undefined,
+      files,
       false,
       { tutorContext: buildContext(plan, context), tutorSource: buildSource(plan, context) },
     )

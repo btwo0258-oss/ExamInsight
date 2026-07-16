@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Activity,
@@ -61,6 +61,19 @@ type SidebarProject = (typeof learningPlans)[number] & {
 
 const PINNED_PROJECTS_STORAGE_KEY = 'examinsight.ui.sidebar.pinned-learning-projects'
 const PROJECT_LINK_MIGRATION_KEY = 'examinsight.student.conversation-project-links.v1'
+const SIDEBAR_WIDTH_STORAGE_KEY = 'examinsight.ui.student-sidebar-width'
+const DEFAULT_SIDEBAR_WIDTH = 276
+const MIN_SIDEBAR_WIDTH = 232
+const MAX_SIDEBAR_WIDTH = 420
+
+const emit = defineEmits<{ widthChange: [width: number] }>()
+
+function readSidebarWidth() {
+  const raw = localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)
+  if (!raw) return DEFAULT_SIDEBAR_WIDTH
+  const stored = Number(raw)
+  return Number.isFinite(stored) ? stored : DEFAULT_SIDEBAR_WIDTH
+}
 
 function readPinnedProjectIds(): number[] {
   try {
@@ -85,7 +98,11 @@ const sidebarProjects = ref<SidebarProject[]>(learningPlans.map((plan) => ({
   ...plan,
   pinned: initialPinnedProjectIds.has(plan.id),
 })))
+const sidebarWidth = ref(readSidebarWidth())
 const sidebarCollapsed = ref(false)
+const isResizing = ref(false)
+let resizeStartX = 0
+let resizeStartWidth = DEFAULT_SIDEBAR_WIDTH
 const learningExpanded = ref(true)
 const pinnedExpanded = ref(true)
 const recentExpanded = ref(true)
@@ -193,6 +210,12 @@ watch(
   () => syncSidebarProjects(),
 )
 
+watch(
+  [sidebarWidth, sidebarCollapsed],
+  ([width, collapsed]) => emit('widthChange', collapsed ? 0 : width),
+  { immediate: true },
+)
+
 function go(path: string) {
   router.push(path)
 }
@@ -268,6 +291,44 @@ function openLearningProject(project: SidebarProject) {
 
 async function createNewChat() {
   go('/chat')
+}
+
+function clampSidebarWidth(width: number) {
+  const responsiveMaximum = Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, window.innerWidth * .42))
+  return Math.max(MIN_SIDEBAR_WIDTH, Math.min(responsiveMaximum, width))
+}
+
+function resizeSidebar(event: PointerEvent) {
+  sidebarWidth.value = clampSidebarWidth(resizeStartWidth + event.clientX - resizeStartX)
+}
+
+function stopSidebarResize() {
+  if (!isResizing.value) return
+  isResizing.value = false
+  localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(Math.round(sidebarWidth.value)))
+  document.removeEventListener('pointermove', resizeSidebar)
+  document.removeEventListener('pointerup', stopSidebarResize)
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+}
+
+function startSidebarResize(event: PointerEvent) {
+  if (sidebarCollapsed.value) return
+  event.preventDefault()
+  resizeStartX = event.clientX
+  resizeStartWidth = (event.currentTarget as HTMLElement).parentElement?.getBoundingClientRect().width ?? sidebarWidth.value
+  isResizing.value = true
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  document.addEventListener('pointermove', resizeSidebar)
+  document.addEventListener('pointerup', stopSidebarResize)
+}
+
+function resizeSidebarByKeyboard(event: KeyboardEvent) {
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+  event.preventDefault()
+  sidebarWidth.value = clampSidebarWidth(sidebarWidth.value + (event.key === 'ArrowRight' ? 16 : -16))
+  localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(Math.round(sidebarWidth.value)))
 }
 
 function toggleSidebar() {
@@ -473,12 +534,22 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
     { label: '删除', icon: 'trash', danger: true, divided: true, action: () => deleteRecent(item) },
   ])
 }
+
+onBeforeUnmount(stopSidebarResize)
 </script>
 
 <template>
-  <aside class="student-sidebar" :class="{ 'student-sidebar--collapsed': sidebarCollapsed }">
-    <Transition name="collapsed-pill">
-      <div v-if="sidebarCollapsed" class="collapsed-pill">
+  <aside
+    class="student-sidebar"
+    :class="{
+      'student-sidebar--collapsed': sidebarCollapsed,
+      'student-sidebar--resizing': isResizing,
+    }"
+    :style="{ '--student-sidebar-width': `${sidebarWidth}px` }"
+  >
+    <Teleport to="body">
+      <Transition name="collapsed-pill">
+        <div v-if="sidebarCollapsed" class="collapsed-pill">
         <button class="ui-icon-action" type="button" aria-label="展开侧边栏" @click="toggleSidebar">
           <AppIcon name="sidebar-left" :size="17" />
         </button>
@@ -512,13 +583,35 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
         >
           <AppIcon name="graduation" :size="17" />
         </button>
-      </div>
-    </Transition>
+        </div>
+      </Transition>
+    </Teleport>
 
-    <template v-if="!sidebarCollapsed">
+    <div
+      v-if="!sidebarCollapsed"
+      class="sidebar-resize-handle"
+      role="separator"
+      aria-label="调整侧边栏宽度"
+      aria-orientation="vertical"
+      tabindex="0"
+      @pointerdown="startSidebarResize"
+      @keydown="resizeSidebarByKeyboard"
+    />
+
+    <div
+      class="sidebar-content"
+      :class="{ 'sidebar-content--hidden': sidebarCollapsed }"
+      :aria-hidden="sidebarCollapsed"
+    >
     <div class="brand-row">
       <button class="brand" type="button" @click="go('/learning')">
-        <span class="brand-logo"><img :src="logoUrl" alt="" /></span>
+        <span class="brand-logo">
+          <img
+            :src="logoUrl"
+            :class="{ 'brand-logo-image--inverted': themeStore.isDark }"
+            alt=""
+          />
+        </span>
         <span>ExamInsight</span>
       </button>
       <button class="sidebar-toggle ui-icon-action" type="button" aria-label="收起侧边栏" @click="toggleSidebar">
@@ -584,41 +677,45 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
         </button>
       </div>
 
-      <div v-if="learningExpanded" class="learning-tree">
-        <div
-          v-for="plan in orderedProjects"
-          :key="plan.id"
-          class="tree-row tree-row--project"
-          @mouseleave="closeMenuSoon"
-        >
-          <button
-            class="tree-item"
-            :class="{ 'tree-item--active': activeLearningId === plan.id }"
-            type="button"
-            @click="openLearningProject(plan)"
-          >
-            <component
-              :is="projectIconComponent(plan.icon)"
-              :size="15"
-              :style="{ color: projectIconColor(plan.iconColor) }"
-            />
-            <span>{{ plan.title.replace('方案', '') }}</span>
-            <small v-if="plan.status === '待开启'">待开启</small>
-          </button>
-          <button
-            class="tree-more ui-icon-action"
-            type="button"
-            @mouseenter="menuHovering = true"
-            @click="openProjectMenu($event, plan)"
-          >
-            <AppIcon name="more-horizontal" :size="15" />
-          </button>
+      <Transition name="learning-list">
+        <div v-if="learningExpanded" class="learning-tree-viewport">
+          <div class="learning-tree">
+            <div
+              v-for="plan in orderedProjects"
+              :key="plan.id"
+              class="tree-row tree-row--project"
+              @mouseleave="closeMenuSoon"
+            >
+              <button
+                class="tree-item"
+                :class="{ 'tree-item--active': activeLearningId === plan.id }"
+                type="button"
+                @click="openLearningProject(plan)"
+              >
+                <component
+                  :is="projectIconComponent(plan.icon)"
+                  :size="15"
+                  :style="{ color: projectIconColor(plan.iconColor) }"
+                />
+                <span>{{ plan.title.replace('方案', '') }}</span>
+                <small v-if="plan.status === '待开启'">待开启</small>
+              </button>
+              <button
+                class="tree-more ui-icon-action"
+                type="button"
+                @mouseenter="menuHovering = true"
+                @click="openProjectMenu($event, plan)"
+              >
+                <AppIcon name="more-horizontal" :size="15" />
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
+      </Transition>
     </nav>
 
     <section class="recent">
-      <div v-if="pinnedRecent.length" class="recent-section">
+      <div v-if="pinnedRecent.length" class="recent-section recent-section--pinned">
         <button class="recent-title" type="button" @click="pinnedExpanded = !pinnedExpanded">
           <span>已置顶</span>
           <AppIcon
@@ -627,40 +724,49 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
             :size="12"
           />
         </button>
-        <div
-          v-for="item in pinnedRecent"
-          v-if="pinnedExpanded"
-          :key="item.id"
-          class="recent-row recent-row--pinned"
-          @mouseleave="closeMenuSoon"
-        >
-          <button
-            class="recent-item"
-            type="button"
-            :aria-label="conversationTitle(item)"
-            @click="go(conversationPath(item))"
+        <Transition name="pinned-list">
+          <div
+            v-if="pinnedExpanded"
+            class="pinned-list-viewport"
+            :style="{ '--pinned-list-rows': Math.min(pinnedRecent.length, 3) }"
           >
-            <AppIcon name="message-square" :size="15" />
-            <span class="recent-label-line">
-              <span class="recent-conversation-title">{{ conversationTitle(item) }}</span>
-              <small v-if="conversationProjectName(item)">{{ conversationProjectName(item) }}</small>
-            </span>
-          </button>
-          <button class="recent-pin ui-icon-action" type="button" aria-label="取消置顶" @click.stop="toggleRecentPinned(item)">
-            <AppIcon name="pin-off" :size="15" />
-          </button>
-          <button
-            class="recent-more ui-icon-action"
-            type="button"
-            @mouseenter="menuHovering = true"
-            @click="openRecentMenu($event, item)"
-          >
-            <AppIcon name="more-horizontal" :size="15" />
-          </button>
-        </div>
+            <div class="pinned-list">
+              <div
+                v-for="item in pinnedRecent"
+                :key="item.id"
+                class="recent-row recent-row--pinned"
+                @mouseleave="closeMenuSoon"
+              >
+                <button
+                  class="recent-item"
+                  type="button"
+                  :aria-label="conversationTitle(item)"
+                  @click="go(conversationPath(item))"
+                >
+                  <AppIcon name="message-square" :size="15" />
+                  <span class="recent-label-line">
+                    <span class="recent-conversation-title">{{ conversationTitle(item) }}</span>
+                    <small v-if="conversationProjectName(item)">{{ conversationProjectName(item) }}</small>
+                  </span>
+                </button>
+                <button class="recent-pin ui-icon-action" type="button" aria-label="取消置顶" @click.stop="toggleRecentPinned(item)">
+                  <AppIcon name="pin-off" :size="15" />
+                </button>
+                <button
+                  class="recent-more ui-icon-action"
+                  type="button"
+                  @mouseenter="menuHovering = true"
+                  @click="openRecentMenu($event, item)"
+                >
+                  <AppIcon name="more-horizontal" :size="15" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </Transition>
       </div>
 
-      <div class="recent-section">
+      <div class="recent-section recent-section--normal">
         <button class="recent-title" type="button" @click="recentExpanded = !recentExpanded">
           <span>最近</span>
           <AppIcon
@@ -669,36 +775,41 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
             :size="12"
           />
         </button>
-        <div
-          v-for="item in normalRecent"
-          v-if="recentExpanded"
-          :key="item.id"
-          class="recent-row"
-          @mouseleave="closeMenuSoon"
-        >
-          <button
-            class="recent-item"
-            type="button"
-            :aria-label="conversationTitle(item)"
-            @click="go(conversationPath(item))"
-          >
-            <span class="recent-label-line">
-              <span class="recent-conversation-title">{{ conversationTitle(item) }}</span>
-              <small v-if="conversationProjectName(item)">{{ conversationProjectName(item) }}</small>
-            </span>
-          </button>
-          <button class="recent-pin ui-icon-action" type="button" aria-label="置顶" @click.stop="toggleRecentPinned(item)">
-            <AppIcon name="pin" :size="15" />
-          </button>
-          <button
-            class="recent-more ui-icon-action"
-            type="button"
-            @mouseenter="menuHovering = true"
-            @click="openRecentMenu($event, item)"
-          >
-            <AppIcon name="more-horizontal" :size="15" />
-          </button>
-        </div>
+        <Transition name="recent-list">
+          <div v-if="recentExpanded" class="recent-list-viewport">
+            <div class="recent-list">
+              <div
+                v-for="item in normalRecent"
+                :key="item.id"
+                class="recent-row"
+                @mouseleave="closeMenuSoon"
+              >
+                <button
+                  class="recent-item"
+                  type="button"
+                  :aria-label="conversationTitle(item)"
+                  @click="go(conversationPath(item))"
+                >
+                  <span class="recent-label-line">
+                    <span class="recent-conversation-title">{{ conversationTitle(item) }}</span>
+                    <small v-if="conversationProjectName(item)">{{ conversationProjectName(item) }}</small>
+                  </span>
+                </button>
+                <button class="recent-pin ui-icon-action" type="button" aria-label="置顶" @click.stop="toggleRecentPinned(item)">
+                  <AppIcon name="pin" :size="15" />
+                </button>
+                <button
+                  class="recent-more ui-icon-action"
+                  type="button"
+                  @mouseenter="menuHovering = true"
+                  @click="openRecentMenu($event, item)"
+                >
+                  <AppIcon name="more-horizontal" :size="15" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </Transition>
       </div>
     </section>
 
@@ -740,7 +851,7 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
         @close="profileOpen = false"
       />
     </footer>
-    </template>
+    </div>
 
     <div
       v-if="menuOpen"
@@ -921,7 +1032,9 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
 
 <style scoped>
 .student-sidebar {
-  width: 276px;
+  position: relative;
+  width: var(--student-sidebar-width, 276px);
+  flex: 0 0 var(--student-sidebar-width, 276px);
   height: 100%;
   box-sizing: border-box;
   margin: 0;
@@ -932,19 +1045,79 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
   display: flex;
   flex-direction: column;
   padding: 14px 12px 12px;
-  gap: 12px;
-  transition: width 0.26s cubic-bezier(0.22, 1, 0.36, 1), padding 0.26s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.2s ease, height 0.2s ease;
+  gap: 0;
+  transition: width .36s cubic-bezier(.4, 0, .2, 1), flex-basis .36s cubic-bezier(.4, 0, .2, 1), padding .36s cubic-bezier(.4, 0, .2, 1), border-color .2s ease, height .2s ease;
   overflow: hidden;
+}
+
+.sidebar-content {
+  width: calc(var(--student-sidebar-width, 276px) - 24px);
+  min-width: calc(var(--student-sidebar-width, 276px) - 24px);
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  opacity: 1;
+  transform: translateX(0);
+  visibility: visible;
+  transition: opacity .2s ease .07s, transform .3s cubic-bezier(.4, 0, .2, 1), visibility 0s;
+}
+
+.sidebar-content--hidden {
+  opacity: 0;
+  transform: translateX(-10px);
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity .14s ease, transform .2s ease, visibility 0s linear .18s;
+}
+
+.student-sidebar--resizing {
+  transition: border-color 0.2s ease, height 0.2s ease;
 }
 
 .student-sidebar--collapsed {
   width: 0;
+  flex-basis: 0;
   min-width: 0;
   padding: 0;
   margin: 0;
   border-right-color: transparent;
   background: transparent;
-  overflow: visible;
+  overflow: hidden;
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  z-index: 10;
+  top: 14px;
+  right: 0;
+  bottom: 14px;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: 0;
+}
+
+.sidebar-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  width: 3px;
+  height: 44px;
+  border-radius: 999px;
+  background: var(--color-border);
+  opacity: 0;
+  transform: translateY(-50%);
+  transition: opacity .18s ease, background .18s ease;
+}
+
+.sidebar-resize-handle:hover::after,
+.sidebar-resize-handle:focus-visible::after,
+.student-sidebar--resizing .sidebar-resize-handle::after {
+  opacity: 1;
+  background: var(--color-text-muted);
 }
 
 .collapsed-pill {
@@ -963,9 +1136,12 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
   gap: 12px;
 }
 
-.collapsed-pill-enter-active,
+.collapsed-pill-enter-active {
+  transition: opacity .2s ease .14s, transform .3s cubic-bezier(.4, 0, .2, 1) .14s;
+}
+
 .collapsed-pill-leave-active {
-  transition: opacity 0.2s ease, transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity .12s ease, transform .18s ease;
 }
 
 .collapsed-pill-enter-from,
@@ -1022,9 +1198,16 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
 
 @media (prefers-reduced-motion: reduce) {
   .student-sidebar,
+  .sidebar-content,
   .collapsed-pill-enter-active,
   .collapsed-pill-leave-active,
-  .collapsed-pill button {
+  .collapsed-pill button,
+  .learning-list-enter-active,
+  .learning-list-leave-active,
+  .pinned-list-enter-active,
+  .pinned-list-leave-active,
+  .recent-list-enter-active,
+  .recent-list-leave-active {
     transition-duration: 0.01ms !important;
   }
 }
@@ -1083,6 +1266,11 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
   width: 100%;
   height: 100%;
   object-fit: contain;
+  transition: filter .2s ease;
+}
+
+.brand-logo-image--inverted {
+  filter: brightness(0) invert(1);
 }
 
 .sidebar-toggle {
@@ -1264,10 +1452,37 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
   stroke-width: 2;
 }
 
+.learning-tree-viewport {
+  height: 190px;
+  min-height: 190px;
+  overflow: hidden;
+}
+
 .learning-tree {
+  height: 100%;
+  box-sizing: border-box;
   display: grid;
+  align-content: start;
   gap: 3px;
   padding: 2px 0 6px 30px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.learning-list-enter-active,
+.learning-list-leave-active {
+  overflow: hidden;
+  transition: height .32s cubic-bezier(.4, 0, .2, 1), min-height .32s cubic-bezier(.4, 0, .2, 1), opacity .2s ease, transform .3s cubic-bezier(.4, 0, .2, 1);
+}
+
+.learning-list-enter-from,
+.learning-list-leave-to {
+  height: 0;
+  min-height: 0;
+  opacity: 0;
+  transform: translateY(-6px);
 }
 
 .tree-row--section {
@@ -1342,17 +1557,108 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
 .recent {
   min-height: 0;
   flex: 1;
-  max-height: none;
-  overflow-y: auto;
-  display: grid;
-  align-content: start;
-  gap: 18px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   padding-right: 2px;
 }
 
 .recent-section {
-  display: grid;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   gap: 3px;
+}
+
+.recent-section--pinned {
+  flex: 0 0 auto;
+}
+
+.recent-section--normal {
+  flex: 1;
+  overflow: hidden;
+}
+
+.pinned-list-viewport {
+  height: calc(var(--pinned-list-rows, 3) * 36px);
+  min-height: calc(var(--pinned-list-rows, 3) * 36px);
+  overflow: hidden;
+}
+
+.pinned-list,
+.recent-list {
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.recent-list-viewport {
+  min-height: 0;
+  max-height: 1000px;
+  flex: 1;
+  overflow: hidden;
+}
+
+.pinned-list-enter-active,
+.pinned-list-leave-active {
+  overflow: hidden;
+  transition: height .3s cubic-bezier(.4, 0, .2, 1), min-height .3s cubic-bezier(.4, 0, .2, 1), opacity .2s ease, transform .28s cubic-bezier(.4, 0, .2, 1);
+}
+
+.pinned-list-enter-from,
+.pinned-list-leave-to {
+  height: 0;
+  min-height: 0;
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+.recent-list-enter-active,
+.recent-list-leave-active {
+  overflow: hidden;
+  transition: flex-grow .32s cubic-bezier(.4, 0, .2, 1), max-height .32s cubic-bezier(.4, 0, .2, 1), opacity .2s ease, transform .28s cubic-bezier(.4, 0, .2, 1);
+}
+
+.recent-list-enter-from,
+.recent-list-leave-to {
+  max-height: 0;
+  flex-grow: 0;
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+.learning-tree,
+.pinned-list,
+.recent-list {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.learning-tree:hover,
+.pinned-list:hover,
+.recent-list:hover {
+  scrollbar-color: var(--color-border) transparent;
+}
+
+.learning-tree::-webkit-scrollbar,
+.pinned-list::-webkit-scrollbar,
+.recent-list::-webkit-scrollbar {
+  width: 5px;
+}
+
+.learning-tree::-webkit-scrollbar-thumb,
+.pinned-list::-webkit-scrollbar-thumb,
+.recent-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: transparent;
+}
+
+.learning-tree:hover::-webkit-scrollbar-thumb,
+.pinned-list:hover::-webkit-scrollbar-thumb,
+.recent-list:hover::-webkit-scrollbar-thumb {
+  background: var(--color-border);
 }
 
 .recent-title {
@@ -1390,7 +1696,8 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
 
 .recent-item {
   width: 100%;
-  min-height: 30px;
+  height: 36px;
+  min-height: 36px;
   border-radius: 8px;
   display: grid;
   grid-template-columns: minmax(0, 1fr);

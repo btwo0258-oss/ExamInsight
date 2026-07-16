@@ -55,8 +55,8 @@
 }
 
 :root[data-theme='dark'] {
-  --color-primary: #fffffc;
-  --color-on-primary: #0f0f10;
+  --color-primary: #c9c9c5;
+  --color-on-primary: #151518;
   --color-bg: #0f0f10;
   --color-surface: #151518;
   --color-surface-subtle: #111114;
