@@ -1,0 +1,42 @@
+# ==================== Java 后端 ====================
+backend/target/
+backend/.idea/
+backend/*.iml
+backend/.settings/
+backend/.project
+backend/.classpath
+backend/.factorypath
+backend/logs/
+*.log
+hs_err_pid*.log
+replay_pid*.log
+
+# ==================== Maven ====================
+backend/.mvn/
+backend/mvnw
+backend/mvnw.cmd
+
+# ==================== Vue 前端 ====================
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+frontend/.env.*.local
+
+
+# ==================== 系统文件 ====================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ==================== 编辑器 ====================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ==================== 其他 ====================
+*.class
+*.jar
+!backend/libs/*.jar
+out/
