@@ -161,7 +161,7 @@
 
 ### 5.1 当前 Mock 实现
 
-- 学习画像和确认稿：现有页面仍保留演示交互，后续统一接画像生成任务接口。
+- 学习画像和确认稿：Mock Repository 调用 `mock/generators`；API Repository 已固定调用画像生成任务和确认稿接口。
 - 学习方案、题目和原型评分：集中在 `mock/generators`，不再作为正式业务实现。
 - Mock 业务实体：通过 Repository 写入按用户隔离的 `sessionStorage`。
 - 正式数据源：通过 API Repository 请求后端，不读取 Mock Storage。
@@ -215,7 +215,7 @@ Mock 是否跨浏览器启动保留不属于后端接口契约。正式环境通
 | AI 生成任务 | 后端任务表 | 否，只保存当前 `jobId` 到内存；必要时短期保存 |
 | UI 偏好 | `localStorage` | 是 |
 | 未提交草稿、返回路由、生成 `jobId` | `sessionStorage` | 只用于临时恢复，不作为业务权威数据 |
-| 访问令牌 | 优先 `HttpOnly + Secure + SameSite` Cookie | 当前 Bearer Token 方案属于兼容实现，需和后端认证方案统一 |
+| 访问令牌 | 后端签发的 Bearer JWT | 当前契约沿用现有后端 JWT；Cookie 方案如需启用必须另开契约版本同步迁移 |
 
 正式环境前端只做体验兜底：保存草稿、恢复路由、恢复生成任务查询、展示错误和重试。接口失败时不得在本地伪造创建成功、评分结果、学习进度或资料解析完成。
 
@@ -238,23 +238,26 @@ Repository 接口与共享 TypeScript 契约
 - 学习助教会话 id 仅在 Mock 模式写 `sessionStorage`；正式模式从后端会话列表及项目关联字段恢复。
 - 详细接口见 `docs/backend-api-contract.md`。
 
-## 7. 后端接口约束建议
+## 7. 后端接口约束摘要
+
+> 本节仅保留页面侧摘要。字段、路径、状态、错误、权限和兼容要求以 `docs/backend-api-contract.md` 为唯一权威来源。
 
 ### 7.1 通用返回结构
 
 ```ts
 interface ApiResponse<T> {
-  code: string
+  code: number
   message: string
-  data: T
+  data: T | null
   requestId?: string
+  errorCode?: string
 }
 ```
 
 - 当前前端实体 id 使用 `number`。后端需要返回不超过 JavaScript 安全整数范围的整数；若后端决定使用字符串 id，应另行统一迁移，不能混用。
 - 时间统一返回 ISO 8601 字符串。
 - 枚举值由接口文档固定，前端不得依赖中文展示文案作为状态值。
-- 列表接口统一分页字段：`items`、`page`、`pageSize`、`total`。
+- 当前主流程列表接口直接返回数组；未来需要分页时，前后端统一升级为 `items`、`page`、`pageSize`、`total`，不能只改单侧。
 - 错误至少区分：参数错误、未登录、无权限、资源不存在、状态冲突、生成失败和服务异常。
 
 ### 7.2 对话接口
@@ -264,15 +267,16 @@ interface ApiResponse<T> {
 ```ts
 interface CreateConversationRequest {
   title?: string
-  kbId?: string
-  conversationType: 'normal' | 'learning_tutor'
-  learningProjectId?: string
+  kbId?: number | null
+  conversationType?: 'general' | 'learning-setup' | 'learning-tutor'
+  learningProjectId?: number | null
+  learningProjectName?: string
 }
 ```
 
-当前真实创建请求只发送 `kbId` 和 `title`，而 Mock 会话还包含学习项目字段。正式对接前必须统一，否则学习助教关系只存在于前端，刷新或换设备后会丢失。
+当前 API Repository 已发送学习项目关联字段。现有后端 `ConversationCreateReq` 仍只有 `kbId` 和 `title`，需要按正式契约扩展并持久化，否则学习助教关系在刷新或换设备后会丢失。
 
-消息流接口需要稳定支持：`conversationId`、`question`、`model`、`kbId`、`history`、`parentId`、`turnId`、问题/答案版本、重新生成标识、被编辑消息 id 和附件引用。后端返回事件类型应固定，例如 `start`、`delta`、`sources`、`done`、`error`。
+消息流接口需要稳定支持：`conversationId`、`question`、`model`、`kbId`、`history`、`parentId`、`turnId`、问题/答案版本、重新生成标识、被编辑消息 id 和附件引用。为兼容当前前后端，SSE 固定为未命名 `message` 文本增量、`finish` 引用数组和 `error` 错误事件，详细格式以 `docs/backend-api-contract.md` 为准。
 
 ### 7.3 资料库接口
 
