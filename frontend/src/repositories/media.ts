@@ -98,7 +98,7 @@ const mockMediaRepository: MediaRepository = {
     const asset: MediaAssetDto = {
       id: mediaId('mock-audio'),
       kind: 'audio',
-      source: 'microphone',
+      source: input.source,
       purpose: input.purpose,
       fileName: file.name,
       mimeType: file.type || 'audio/webm',

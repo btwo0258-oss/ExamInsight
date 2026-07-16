@@ -1,7 +1,7 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
 import { mediaRepository } from '@/repositories/media'
-import { getMediaSource, isImageFile } from '@/utils/mediaFile'
+import { getMediaSource, isAudioFile, isImageFile } from '@/utils/file'
 import {
   deleteLibraryResource,
   downloadLibraryResource,
@@ -26,6 +26,7 @@ function fileType(file: File) {
   if (extension === 'md') return 'Markdown'
   if (extension === 'txt') return 'TXT'
   if (file.type.startsWith('image/')) return '图片'
+  if (isAudioFile(file)) return '音频'
   return extension?.toUpperCase() || '文件'
 }
 
@@ -116,6 +117,30 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
             errorMessage: asset.errorMessage,
             updatedAt: '刚刚',
             category: 'image',
+            source,
+            projectId,
+            libraryId,
+            externalKey: asset.id,
+          }
+        } else if (isAudioFile(file)) {
+          const transcription = await mediaRepository.transcribeAudio(file, {
+            source: 'upload',
+            purpose: source === '智能学习上传' ? 'learning-input' : 'library-resource',
+            libraryId,
+            learningProjectId: projectId,
+            clientRequestId: clientRequestId(),
+            language: 'zh-CN',
+          })
+          const asset = transcription.asset
+          item = {
+            id: `media:${asset.id}`,
+            name: asset.fileName,
+            type: '音频',
+            size: fileSize(asset.size),
+            status: asset.status === 'failed' ? 'failed' : asset.status === 'ready' ? 'ready' : 'processing',
+            errorMessage: asset.errorMessage,
+            updatedAt: '刚刚',
+            category: 'file',
             source,
             projectId,
             libraryId,
@@ -311,6 +336,43 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
     return item
   }
 
+  function addPresentation(
+    presentationId: string,
+    name: string,
+    source: Extract<LibraryResourceSource, '聊天生成' | '智能学习生成'>,
+    libraryId: number,
+    projectId: number | null = null,
+  ) {
+    const externalKey = `presentation:${presentationId}`
+    const existing = resources.value.find((item) => item.externalKey === externalKey)
+    if (existing) {
+      existing.name = name
+      existing.libraryId = libraryId
+      existing.projectId = projectId
+      existing.status = 'ready'
+      existing.updatedAt = '刚刚'
+      persist()
+      return existing
+    }
+
+    const item: LibraryResource = {
+      id: externalKey,
+      name,
+      type: 'PPT',
+      size: 'AI 生成',
+      status: 'ready',
+      updatedAt: '刚刚',
+      category: 'file',
+      source,
+      projectId,
+      libraryId,
+      externalKey,
+    }
+    resources.value.unshift(item)
+    persist()
+    return item
+  }
+
   function addPlanExportMarkdown(
     name: string,
     planId: number,
@@ -376,6 +438,7 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
     addFiles,
     addGeneratedResource,
     addChatGenerated,
+    addPresentation,
     addPlanExportMarkdown,
   }
 })

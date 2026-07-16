@@ -9,6 +9,8 @@ const router = createRouter({
     { path: '/', redirect: '/learning/projects' },
     { path: '/chat', name: 'chat', component: () => import('@/views/student/chat/StudentChatView.vue') },
     { path: '/chat/:id', name: 'chat-detail', component: () => import('@/views/student/chat/StudentChatView.vue'), props: true },
+    { path: '/presentations/new', name: 'presentation-new', component: () => import('@/views/student/presentation/PresentationWorkspaceView.vue') },
+    { path: '/presentations/:id', name: 'presentation-detail', component: () => import('@/views/student/presentation/PresentationWorkspaceView.vue'), props: true },
     { path: '/learning', redirect: '/learning/projects' },
     { path: '/learning/new', name: 'learning-new', component: () => import('@/views/student/learning/LearningHomeView.vue') },
     { path: '/learning/projects', name: 'learning-projects', component: () => import('@/views/student/learning/LearningProjectsView.vue') },
@@ -84,6 +86,7 @@ router.beforeEach((to, from, next) => {
   const publicStudentPath =
     to.path === '/learning' ||
     to.path.startsWith('/learning/') ||
+    to.path.startsWith('/presentations/') ||
     to.path === '/library' ||
     to.path.startsWith('/library/')
 

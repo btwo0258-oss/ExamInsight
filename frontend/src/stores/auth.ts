@@ -31,8 +31,8 @@ export const useAuthStore = defineStore('auth', () => {
     const rawUser = sessionStorage.getItem(USER_KEY) || localStorage.getItem(USER_KEY)
     user.value = rawUser ? (JSON.parse(rawUser) as User) : null
 
-    // 如果未登录，清除所有 guest 相关的数据
-    if (!token.value) {
+    // Mock guest data must survive refresh within the current tab.
+    if (!token.value && !isMockDataSource) {
       const guestKeys = Object.keys(sessionStorage).filter(key => key.includes('.guest'))
       guestKeys.forEach(key => sessionStorage.removeItem(key))
     }

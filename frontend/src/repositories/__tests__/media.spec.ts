@@ -43,5 +43,18 @@ describe('MockMediaRepository', () => {
     expect(result.text).toContain('Mock')
     expect(result.durationMs).toBe(1500)
   })
-})
 
+  it('keeps uploaded audio source and library context', async () => {
+    const file = new File(['audio'], 'lesson.mp3', { type: 'audio/mpeg' })
+    const result = await mediaRepository.transcribeAudio(file, {
+      source: 'upload',
+      purpose: 'library-resource',
+      libraryId: 7,
+      clientRequestId: 'audio-upload-request-1',
+    })
+
+    expect(result.asset.source).toBe('upload')
+    expect(result.asset.purpose).toBe('library-resource')
+    expect(result.asset.libraryId).toBe(7)
+  })
+})

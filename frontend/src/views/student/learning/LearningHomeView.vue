@@ -199,7 +199,7 @@ async function handleSupplementInput(
         selectedLibraryId.value || null,
       )
       const nextMediaIds = uploaded
-        .filter((item) => item.category === 'image' && item.externalKey)
+        .filter((item) => item.id.startsWith('media:') && item.externalKey)
         .map((item) => item.externalKey!)
       mediaAssetIds.value = [...new Set([...mediaAssetIds.value, ...nextMediaIds])]
       files.value.push(...attachedFiles)

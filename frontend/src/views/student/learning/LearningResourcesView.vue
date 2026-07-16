@@ -6,6 +6,7 @@ import LearningMindMapPreview from '@/components/learning/LearningMindMapPreview
 import LearningRouteState from '@/components/learning/LearningRouteState.vue'
 import StudentShell from '@/components/layout/StudentShell.vue'
 import type { LearningResource } from '@/mock'
+import { presentationRepository } from '@/repositories/presentation'
 import { useLearningStore } from '@/stores/learning'
 import { useLearningTutorStore } from '@/stores/learningTutor'
 import { renderMarkdownToHtml } from '@/utils/markdown'
@@ -31,7 +32,7 @@ const sourceStageId = computed(() => plan.value.stages.find((stage) => stage.tas
 let readingTimer: number | undefined
 
 const resources = computed<ResourceWithMeta[]>(() => {
-  return (plan.value.resources as ResourceWithMeta[]).filter((resource) => resource.status !== '未选择')
+  return (plan.value.resources as ResourceWithMeta[]).filter((resource) => resource.status !== '未选择' || resource.group === 'PPT')
 })
 
 const filteredResources = computed(() => {
@@ -93,7 +94,33 @@ function setToast(message: string) {
   }, 1800)
 }
 
+function openPresentationResource(resource: ResourceWithMeta) {
+  if (resource.presentationId) {
+    void router.push({
+      path: `/presentations/${resource.presentationId}`,
+      query: { returnTo: route.fullPath },
+    })
+    return
+  }
+
+  void router.push({
+    path: '/presentations/new',
+    query: {
+      topic: resource.title || plan.value.title,
+      title: resource.fileName?.replace(/\.pptx$/i, '') || resource.title,
+      libraryId: String(plan.value.libraryId),
+      learningProjectId: String(plan.value.id),
+      learningResourceId: String(resource.id),
+      returnTo: route.fullPath,
+    },
+  })
+}
+
 function openResource(resource: ResourceWithMeta) {
+  if (resource.group === 'PPT') {
+    openPresentationResource(resource)
+    return
+  }
   if (resource.status !== '已生成') return
   if (resource.group === '思维导图' && resource.mindMapId) {
     void router.push(`/mindmap/${resource.mindMapId}`)
@@ -115,7 +142,9 @@ async function exportResource(resource: ResourceWithMeta) {
   operationPendingId.value = resource.id
   actionError.value = ''
   try {
-    const blob = await learningStore.downloadResource(plan.value.id, resource.id)
+    const blob = resource.group === 'PPT' && resource.presentationId
+      ? await presentationRepository.download(resource.presentationId)
+      : await learningStore.downloadResource(plan.value.id, resource.id)
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
@@ -131,6 +160,10 @@ async function exportResource(resource: ResourceWithMeta) {
 }
 
 async function retryResource(resource: ResourceWithMeta) {
+  if (resource.group === 'PPT') {
+    openPresentationResource(resource)
+    return
+  }
   if (operationPendingId.value !== null) return
   operationPendingId.value = resource.id
   actionError.value = ''
@@ -232,7 +265,7 @@ onBeforeUnmount(() => {
       <div class="content-grid">
         <section class="panel files-panel">
           <div class="section-head">
-            <div><h2>资源文件</h2><small>仅展示已生成内容</small></div>
+            <div><h2>资源文件</h2><small>已生成内容可查看，PPT 可从这里创建</small></div>
             <label>
               <AppIcon name="search" :size="18" />
               <input v-model="query" placeholder="搜索资源" />
@@ -242,16 +275,17 @@ onBeforeUnmount(() => {
             <table>
               <thead><tr><th>文件名</th><th>类型</th><th>状态</th><th>来源</th><th>更新时间</th><th>操作</th></tr></thead>
               <tbody>
-                <tr v-for="resource in filteredResources" :key="resource.id" :class="{ disabled: resource.status !== '已生成' }" @click="openResource(resource)">
+                <tr v-for="resource in filteredResources" :key="resource.id" :class="{ disabled: resource.status !== '已生成' && resource.group !== 'PPT' }" @click="openResource(resource)">
                   <td><AppIcon :name="iconName(resource.group)" :size="18" /><span>{{ resource.fileName || resource.title }}</span></td>
                   <td>{{ typeLabel(resource) }}</td>
                   <td><span class="status" :class="{ active: resource.status === '生成中', failed: resource.status === '生成失败' }">{{ resource.status }}</span></td>
                   <td>{{ sourceLabel(resource) }}</td>
                   <td>{{ resource.updatedAt || '刚刚' }}</td>
                   <td class="row-actions" @click.stop>
+                    <button v-if="resource.group === 'PPT' && !resource.presentationId" class="text-btn" type="button" @click="openPresentationResource(resource)">生成</button>
                     <button v-if="resource.status === '生成失败'" class="text-btn" type="button" :disabled="operationPendingId !== null" @click="retryResource(resource)">重试</button>
-                    <button class="icon-btn" type="button" title="查看" :disabled="resource.status !== '已生成'" @click="openResource(resource)"><AppIcon name="eye" :size="17" /></button>
-                    <button class="icon-btn" type="button" title="下载" :disabled="resource.status !== '已生成' || operationPendingId !== null" @click="exportResource(resource)"><AppIcon name="download" :size="17" /></button>
+                    <button class="icon-btn" type="button" title="查看" :disabled="resource.status !== '已生成' && resource.group !== 'PPT'" @click="openResource(resource)"><AppIcon name="eye" :size="17" /></button>
+                    <button class="icon-btn" type="button" title="下载" :disabled="resource.status !== '已生成' || (resource.group === 'PPT' && !resource.presentationId) || operationPendingId !== null" @click="exportResource(resource)"><AppIcon name="download" :size="17" /></button>
                   </td>
                 </tr>
                 <tr v-if="!filteredResources.length" class="empty-row"><td colspan="6">没有匹配的资源</td></tr>

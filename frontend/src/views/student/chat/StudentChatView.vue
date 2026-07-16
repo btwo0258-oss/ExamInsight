@@ -228,11 +228,18 @@ const homeInputRef = ref<InstanceType<typeof AppInput> | null>(null)
 
 const messageListContainer = computed(() => messageListRef.value?.scrollContainer ?? null)
 
-const homePromptActions = [
+type HomePromptAction = {
+  icon: string
+  label: string
+  prompt?: string
+  action?: 'presentation'
+}
+
+const homePromptActions: HomePromptAction[] = [
   { icon: 'image', label: '生成图片', prompt: '帮我生成一张适合学习资料使用的图片，主题是：' },
   { icon: 'edit', label: '撰写或编辑', prompt: '帮我撰写或润色这段内容：' },
   { icon: 'search', label: '查找资料', prompt: '帮我查找并整理关于这个主题的资料：' },
-  { icon: 'sparkle', label: '生成 PPT', prompt: '帮我生成一份 PPT 大纲，主题是：' },
+  { icon: 'sparkle', label: '生成 PPT', action: 'presentation' },
   { icon: 'mindmap', label: '生成思维导图', prompt: '帮我生成一个思维导图，主题是：' },
 ]
 
@@ -409,7 +416,7 @@ async function onSend(text: string, files?: File[], complete?: (success?: boolea
       selectedKnowledgeBaseId.value,
     )
     const nextMediaIds = uploaded
-      .filter((item) => item.category === 'image' && item.externalKey)
+      .filter((item) => item.id.startsWith('media:') && item.externalKey)
       .map((item) => item.externalKey)
     learningMediaAssetIds.value = [...new Set([...learningMediaAssetIds.value, ...nextMediaIds])]
   } else if (files?.length && isMockDataSource) {
@@ -613,6 +620,19 @@ function fillHomePrompt(prompt: string) {
   homeInputRef.value?.setText(prompt)
 }
 
+function runHomePromptAction(action: HomePromptAction) {
+  if (action.action !== 'presentation') {
+    if (action.prompt) fillHomePrompt(action.prompt)
+    return
+  }
+
+  const query: Record<string, string> = { returnTo: route.fullPath }
+  if (activeChatId.value) query.conversationId = String(activeChatId.value)
+  if (selectedKnowledgeBaseId.value) query.libraryId = String(selectedKnowledgeBaseId.value)
+  if (learningProjectId.value) query.learningProjectId = String(learningProjectId.value)
+  void router.push({ path: '/presentations/new', query })
+}
+
 function handleKeyDown(e: KeyboardEvent) {
   if (!e.ctrlKey || !e.shiftKey) return
 
@@ -764,7 +784,7 @@ watch(
                 :key="action.label"
                 class="home-action-chip ui-hover-row"
                 type="button"
-                @click="fillHomePrompt(action.prompt)"
+                @click="runHomePromptAction(action)"
               >
                 <AppIcon :name="action.icon" :size="18" />
                 <span>{{ action.label }}</span>

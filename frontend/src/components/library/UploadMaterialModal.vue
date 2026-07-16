@@ -2,11 +2,14 @@
 import { ref, watch } from 'vue'
 import AppButton from '@/components/common/AppButton.vue'
 import AttachmentCard from '@/components/chat/input/AttachmentCard.vue'
-import ImageCaptureUploader from '@/components/capture/ImageCaptureUploader.vue'
 import { useLibraryResourceStore } from '@/stores/libraryResource'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
-import { MEDIA_LIMITS } from '@/types/contracts/media'
-import { isImageFile } from '@/utils/mediaFile'
+import {
+  ATTACHMENT_ACCEPT,
+  attachmentMaxBytes,
+  attachmentSizeLimitLabel,
+  isSupportedAttachment,
+} from '@/utils/file'
 
 const props = defineProps<{ open: boolean; libraryId?: number | null }>()
 const emit = defineEmits<{ close: [] }>()
@@ -23,21 +26,18 @@ function triggerUpload() {
 }
 
 function addSelectedFiles(selectedFiles: File[]) {
-  const allowedExtensions = ['.pdf', '.doc', '.docx', '.md', '.txt', '.png', '.jpg', '.jpeg', '.webp', '.heic', '.heif']
   errorMessage.value = ''
   if (files.value.length + selectedFiles.length > 5) {
     errorMessage.value = '最多只能上传 5 个文件'
     return
   }
   for (const file of selectedFiles) {
-    const extension = file.name.slice(file.name.lastIndexOf('.')).toLowerCase()
-    if (!allowedExtensions.includes(extension)) {
+    if (!isSupportedAttachment(file)) {
       errorMessage.value = `文件 ${file.name} 格式不支持`
       continue
     }
-    const maxSize = isImageFile(file) ? MEDIA_LIMITS.imageMaxBytes : 21 * 1024 * 1024
-    if (file.size > maxSize) {
-      errorMessage.value = `文件 ${file.name} 超过 ${isImageFile(file) ? '10MB' : '21MB'} 限制`
+    if (file.size > attachmentMaxBytes(file)) {
+      errorMessage.value = `文件 ${file.name} 超过 ${attachmentSizeLimitLabel(file)} 限制`
       continue
     }
     files.value.push(file)
@@ -108,20 +108,9 @@ watch(() => props.open, async (open) => {
 
       <button class="drop-zone" type="button" @click="triggerUpload" @dragover.prevent @drop.prevent="onDrop">
         <strong>拖拽文件到这里，或点击选择文件</strong>
-        <span>支持 PDF / Word / TXT / Markdown / 图片</span>
+        <span>支持 PDF / Word / Excel / PPT / TXT / Markdown / ZIP / 图片 / 音频</span>
       </button>
-      <input ref="fileEl" hidden multiple type="file" accept=".pdf,.doc,.docx,.md,.txt,.png,.jpg,.jpeg,.webp,.heic,.heif" @change="onFileChange" />
-
-      <div class="capture-row">
-        <span>使用设备摄像头添加照片</span>
-        <ImageCaptureUploader
-          :disabled="uploading"
-          :remaining-count="5 - files.length"
-          :show-upload="false"
-          @select="addSelectedFiles"
-          @error="errorMessage = $event"
-        />
-      </div>
+      <input ref="fileEl" hidden multiple type="file" :accept="ATTACHMENT_ACCEPT" @change="onFileChange" />
 
       <div v-if="files.length" class="attachment-previews">
         <AttachmentCard v-for="(file, index) in files" :key="`${file.name}-${file.lastModified}`" :file="file" @remove="removeFile(index)" />
@@ -218,16 +207,6 @@ header button:hover {
 
 .attachment-previews { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
 .upload-error { margin: -4px 0 14px; color: var(--color-danger); font-size: 13px; }
-
-.capture-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin: -8px 0 14px;
-  color: var(--color-text-muted);
-  font-size: 13px;
-}
 
 .drop-zone span,
 .field span,

@@ -34,8 +34,8 @@ export type UploadImageRequest = MediaContext & {
 }
 
 export type TranscribeAudioRequest = MediaContext & {
-  source: 'microphone'
-  purpose: Extract<MediaPurpose, 'chat-attachment' | 'learning-input'>
+  source: Extract<MediaSource, 'upload' | 'microphone'>
+  purpose: MediaPurpose
   clientRequestId: string
   language?: string
   durationMs?: number
@@ -75,4 +75,3 @@ export const MEDIA_LIMITS = {
 } as const
 
 export const IMAGE_ACCEPT = 'image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif'
-

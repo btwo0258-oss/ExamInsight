@@ -3,6 +3,8 @@
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useModelStore } from '@/stores/model'
 
+const props = withDefaults(defineProps<{ align?: 'left' | 'right' }>(), { align: 'left' })
+
 const modelStore = useModelStore()
 const isOpen = ref(false)
 
@@ -48,7 +50,7 @@ onUnmounted(() => document.removeEventListener('click', closeDropdown))
     </button>
 
     <transition name="slide-up">
-      <div v-if="isOpen" class="dropdown-menu ui-menu-panel">
+      <div v-if="isOpen" class="dropdown-menu ui-menu-panel" :class="{ 'dropdown-menu--right': props.align === 'right' }">
         <div 
           v-for="(model, index) in models" 
           :key="model.name" 
@@ -109,6 +111,17 @@ onUnmounted(() => document.removeEventListener('click', closeDropdown))
   width: 260px;
   /* 确保 z-index 足够大，能够遮盖对话框/输入框容器 */
   z-index: 2000; 
+}
+
+.dropdown-menu--right {
+  right: 0;
+  left: auto;
+}
+
+@media (max-width: 767px) {
+  .dropdown-menu {
+    width: min(260px, calc(100vw - 32px));
+  }
 }
 
 .menu-item {

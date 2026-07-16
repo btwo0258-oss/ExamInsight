@@ -477,22 +477,45 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
 
 <template>
   <aside class="student-sidebar" :class="{ 'student-sidebar--collapsed': sidebarCollapsed }">
-    <div v-if="sidebarCollapsed" class="collapsed-pill">
-      <button class="ui-icon-action" type="button" aria-label="展开侧边栏" @click="toggleSidebar">
-        <AppIcon name="sidebar-left" :size="17" />
-      </button>
-      <button class="ui-icon-action" type="button" aria-label="新对话" @click="createNewChat">
-        <AppIcon name="edit" :size="17" />
-      </button>
-      <button class="ui-icon-action" type="button" aria-label="资料库" @click="go('/library')">
-        <AppIcon name="folder" :size="17" />
-      </button>
-      <button class="ui-icon-action" type="button" aria-label="智能学习" @click="openLearningHome">
-        <AppIcon name="graduation" :size="17" />
-      </button>
-    </div>
+    <Transition name="collapsed-pill">
+      <div v-if="sidebarCollapsed" class="collapsed-pill">
+        <button class="ui-icon-action" type="button" aria-label="展开侧边栏" @click="toggleSidebar">
+          <AppIcon name="sidebar-left" :size="17" />
+        </button>
+        <button
+          class="ui-icon-action"
+          :class="{ 'collapsed-pill__button--active': activeSection === 'chat' }"
+          type="button"
+          aria-label="新对话"
+          :aria-current="activeSection === 'chat' ? 'page' : undefined"
+          @click="createNewChat"
+        >
+          <AppIcon name="edit" :size="17" />
+        </button>
+        <button
+          class="ui-icon-action"
+          :class="{ 'collapsed-pill__button--active': activeSection === 'library' }"
+          type="button"
+          aria-label="资料库"
+          :aria-current="activeSection === 'library' ? 'page' : undefined"
+          @click="go('/library')"
+        >
+          <AppIcon name="folder" :size="17" />
+        </button>
+        <button
+          class="ui-icon-action"
+          :class="{ 'collapsed-pill__button--active': activeSection === 'learning' }"
+          type="button"
+          aria-label="智能学习"
+          :aria-current="activeSection === 'learning' ? 'page' : undefined"
+          @click="openLearningHome"
+        >
+          <AppIcon name="graduation" :size="17" />
+        </button>
+      </div>
+    </Transition>
 
-    <template v-else>
+    <template v-if="!sidebarCollapsed">
     <div class="brand-row">
       <button class="brand" type="button" @click="go('/learning')">
         <span class="brand-logo"><img :src="logoUrl" alt="" /></span>
@@ -904,13 +927,13 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
   margin: 0;
   background: var(--color-sidebar);
   border-right: 1px solid var(--color-border);
-  border-radius: 0;
+  border-radius: 0 14px 14px 0;
   color: var(--color-text);
   display: flex;
   flex-direction: column;
   padding: 14px 12px 12px;
   gap: 12px;
-  transition: width 0.16s ease, padding 0.16s ease, border-color 0.16s ease, height 0.16s ease;
+  transition: width 0.26s cubic-bezier(0.22, 1, 0.36, 1), padding 0.26s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.2s ease, height 0.2s ease;
   overflow: hidden;
 }
 
@@ -940,6 +963,17 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
   gap: 12px;
 }
 
+.collapsed-pill-enter-active,
+.collapsed-pill-leave-active {
+  transition: opacity 0.2s ease, transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.collapsed-pill-enter-from,
+.collapsed-pill-leave-to {
+  opacity: 0;
+  transform: translateX(-12px) scale(0.92);
+}
+
 .collapsed-pill button {
   width: 30px;
   height: 30px;
@@ -949,12 +983,26 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
   cursor: pointer;
   display: grid;
   place-items: center;
+  border-radius: 50%;
+  transition: background-color 0.2s ease, color 0.2s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.2s ease;
 }
 
-.collapsed-pill button:hover {
-  border-radius: var(--ui-hover-radius);
+.collapsed-pill button:hover,
+.collapsed-pill button:focus-visible {
   background: var(--ui-hover-strong-bg);
   color: var(--color-text);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.collapsed-pill button:active {
+  transform: scale(0.9);
+}
+
+.collapsed-pill .collapsed-pill__button--active {
+  background: var(--ui-hover-strong-bg);
+  color: var(--color-text);
+  box-shadow: inset 0 0 0 1px var(--color-border);
 }
 
 .collapsed-pill :deep(.icon) {
@@ -970,6 +1018,15 @@ function openRecentMenu(e: MouseEvent, item: Conversation) {
 .collapsed-pill :deep(.icon *),
 .sidebar-toggle :deep(.icon *) {
   stroke-width: 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .student-sidebar,
+  .collapsed-pill-enter-active,
+  .collapsed-pill-leave-active,
+  .collapsed-pill button {
+    transition-duration: 0.01ms !important;
+  }
 }
 
 .nav-item,

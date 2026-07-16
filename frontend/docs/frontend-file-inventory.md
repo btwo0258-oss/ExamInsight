@@ -1,6 +1,6 @@
 # 学生端前端文件清单
 
-> 范围：新对话、资料库、智能学习及详情页。
+> 范围：新对话、资料库、智能学习、PPT 生成及详情页。
 >
 > 本清单只描述前端文件归属，不包含后端实现。
 
@@ -9,6 +9,7 @@
 | 路由 | 页面文件 | 状态 |
 | --- | --- | --- |
 | `/chat`、`/chat/:id` | `src/views/student/chat/StudentChatView.vue` | 主线 |
+| `/presentations/new`、`/presentations/:id` | `src/views/student/presentation/PresentationWorkspaceView.vue` | 主线 |
 | `/library` | `src/views/student/library/LibraryHomeView.vue` | 主线 |
 | `/library/:id` | `src/views/student/library/LibraryDetailView.vue` | 主线 |
 | `/learning/new` | `src/views/student/learning/LearningHomeView.vue` | 主线 |
@@ -27,6 +28,7 @@
 | `src/components/capture` | 浏览器语音录制、拍照和图片选择；不包含正式 AI 识别算法 |
 | `src/components/library` | 资料库创建和资料上传 |
 | `src/components/learning` | 学习画像、方案文档、题目、助教、资源与导图预览 |
+| `src/components/presentation` | PPT 大纲编辑和统一页面预览；不直接访问后端或讯飞 |
 | `src/components/common` | 不依赖具体业务实体的按钮、输入、弹窗、状态和图标 |
 
 主线页面可以依赖上述目录。主线目录不得依赖 `src/views/legacy` 或 `src/components/legacy`。
@@ -43,21 +45,45 @@
 | `src/components/learning/LearningRouteState.vue` | 学习详情页共用加载、错误和不存在状态 |
 | `src/types/contracts/media.ts` | 媒体资产、语音转写、图片识别任务、状态和前端限制 |
 | `src/repositories/media.ts` | MediaRepository 接口及 Mock/API 两套实现 |
+| `src/types/contracts/presentation.ts` | PPT 配置、上下文、大纲、预览、状态和异步任务 DTO |
+| `src/repositories/presentation.ts` | PresentationRepository 及 Mock/API 两套实现；Mock 只在下载时生成 PPTX |
+| `src/stores/presentation.ts` | 编排 PPT 创建、大纲、轮询、取消、恢复、下载和资料库关联 |
+| `src/views/student/presentation/PresentationWorkspaceView.vue` | 路由页面；组织配置、大纲、生成进度和预览四步流程 |
+| `src/components/presentation/PresentationOutlineEditor.vue` | 编辑页面标题、要点、备注、布局和顺序 |
+| `src/components/presentation/PresentationSlidePreview.vue` | Mock 渲染结构化预览；API 有预览图时展示后端实际页面 |
+| `src/repositories/__tests__/presentation.spec.ts` | 创建、大纲、生成、资料库关联和 PPTX 下载测试 |
+| `tests/e2e/presentation-workflow.spec.ts` | 浏览器验证配置、大纲编辑、生成和预览主链路 |
 | `src/components/capture/VoiceRecorder.vue` | 麦克风权限、录音状态、停止、取消和转写回填 |
-| `src/components/capture/ImageCaptureUploader.vue` | 上传照片、后置摄像头调用、格式/大小/数量预校验 |
-| `src/utils/mediaFile.ts` | 在当前页面内存中标记图片来自上传或摄像头，并统一判断图片文件 |
+| `src/components/capture/ImageCaptureUploader.vue` | 仅供移动端 AppInput 的 `+` 菜单使用，负责上传照片、后置摄像头调用和预校验 |
+| `src/utils/file.ts` | 唯一附件规则入口：统一格式、MIME、大小、图片/音频判断和拍照来源标记；明确排除视频 |
 
 媒体入口对现有主线文件的影响：
 
 | 文件 | 新职责 |
 | --- | --- |
-| `src/components/common/AppInput.vue` | 组合文档附件、语音、上传照片和拍照入口；失败时保留待发送内容 |
+| `src/components/common/AppInput.vue` | Web 左侧通用附件支持文档、Office、ZIP、图片和音频，右侧显示模型/语音/发送；移动端最左侧 `+` 与附件、照片、拍照图标共用一个向上生长的竖向 pill |
 | `src/views/student/chat/StudentChatView.vue` | 启用聊天媒体入口并传递会话、资料库和学习项目上下文 |
 | `src/views/student/learning/LearningHomeView.vue` | 启用学习目标补充的语音和图片入口 |
-| `src/components/library/UploadMaterialModal.vue` | 增加拍照入口，图片由资料库 Store 交给 MediaRepository |
-| `src/stores/message.ts` | 图片先上传为媒体资产，再把 mediaAssetIds 交给聊天接口 |
-| `src/stores/libraryResource.ts` | 图片走媒体上传，文档继续走资料库资源上传，避免重复上传 |
+| `src/components/library/UploadMaterialModal.vue` | 仅保留通用上传/拖拽入口；支持与输入框一致的附件格式，但不显示独立照片或拍照图标 |
+| `src/stores/message.ts` | 图片先上传、音频先转写为媒体资产，再把 mediaAssetIds 交给聊天接口；Office/ZIP 走 DocumentRepository |
+| `src/stores/libraryResource.ts` | 图片和音频走 MediaRepository，其余支持附件走资料库资源上传，避免页面直接判断数据源 |
 | `src/repositories/chat.ts` | 正式聊天请求增加 mediaAssetIds |
+| `src/components/layout/StudentSidebar.vue` | 折叠 pill 增加平滑进出、hover/按压反馈和当前路由选中状态，不改变侧边栏路由结构 |
+
+PPT 对现有主线文件的影响：
+
+| 文件 | 新职责 |
+| --- | --- |
+| `src/router/index.ts` | 注册 `/presentations/new` 和 `/presentations/:id` |
+| `src/stores/auth.ts` | Mock 未登录访客数据在当前标签页刷新时保留；API 模式仍清理遗留 guest Mock 数据 |
+| `src/views/student/chat/StudentChatView.vue` | “生成 PPT”进入独立工作区，不再只填充提示词 |
+| `src/views/student/learning/LearningResourcesView.vue` | PPT 资源可创建、恢复、查看和下载 |
+| `src/stores/learning.ts` | Mock 完成后回写 presentationId；API 模式重新获取后端项目 |
+| `src/stores/libraryResource.ts` | Mock 增加 externalKey=`presentation:{id}` 的资料库聚合项 |
+| `src/views/student/library/LibraryHomeView.vue` | 从 PPT 聚合项进入 PPT 工作区，普通文件保持原选择逻辑 |
+| `src/views/student/library/LibraryDetailView.vue` | PPT 文件开放预览入口并使用 PresentationRepository 下载 |
+| `src/views/student/presentation/PresentationWorkspaceView.vue` | 用户可见术语统一显示“知识库”，内部仍复用 libraryId 和现有 Repository |
+| `package.json`、`package-lock.json` | 增加 `pptxgenjs`，仅服务 Mock 的真实 PPTX 下载 |
 
 主线 Store 只编排 Repository 和当前页面内存状态。正式模式不得从 `mock` 读取实体，也不得把项目、题目、答题或资源成功状态写入 Web Storage。
 

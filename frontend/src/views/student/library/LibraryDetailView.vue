@@ -10,6 +10,7 @@ import { isMockDataSource } from '@/config/dataSource'
 import { useLibraryResourceStore } from '@/stores/libraryResource'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import type { LibraryResource } from '@/stores/libraryResource'
+import { presentationRepository } from '@/repositories/presentation'
 
 const route = useRoute()
 const router = useRouter()
@@ -54,6 +55,15 @@ function fileStatusLabel(status: LibraryResource['status']) {
   return { waiting: '等待解析', processing: '向量化中', ready: '解析完成', failed: '解析失败' }[status]
 }
 
+function presentationId(file: LibraryResource) {
+  return file.externalKey?.startsWith('presentation:') ? file.externalKey.slice('presentation:'.length) : ''
+}
+
+function openFile(file: LibraryResource) {
+  const id = presentationId(file)
+  if (id) void router.push({ path: `/presentations/${id}`, query: { returnTo: route.fullPath } })
+}
+
 async function loadDetail() {
   detailLoading.value = true
   detailError.value = ''
@@ -85,7 +95,18 @@ async function retryFile(file: LibraryResource) {
 async function downloadFile(file: LibraryResource) {
   try {
     actionError.value = ''
-    await libraryResourceStore.download(file.id, file.name)
+    const id = presentationId(file)
+    if (!id) {
+      await libraryResourceStore.download(file.id, file.name)
+      return
+    }
+    const blob = await presentationRepository.download(id)
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = file.name
+    anchor.click()
+    URL.revokeObjectURL(url)
   } catch (error) {
     actionError.value = error instanceof Error ? error.message : '下载失败'
   }
@@ -198,7 +219,7 @@ watch(libraryId, () => void loadDetail())
             <tbody>
               <tr v-for="file in files" :key="file.id">
                 <td>
-                  <AppIcon name="file" :size="18" />
+                  <AppIcon :name="presentationId(file) ? 'presentation' : 'file'" :size="18" />
                   {{ file.name }}
                 </td>
                 <td>{{ file.type }}</td>
@@ -223,7 +244,7 @@ watch(libraryId, () => void loadDetail())
                     :disabled="libraryResourceStore.isMutating"
                     @click="retryFile(file)"
                   >重试</button>
-                  <button class="icon-btn" type="button" aria-label="预览" title="文件预览将在后端预览接口接入后开放" disabled><AppIcon name="eye" :size="17" /></button>
+                  <button class="icon-btn" type="button" aria-label="预览" :title="presentationId(file) ? '打开 PPT' : '文件预览将在后端预览接口接入后开放'" :disabled="!presentationId(file)" @click="openFile(file)"><AppIcon name="eye" :size="17" /></button>
                   <button class="icon-btn" type="button" aria-label="下载" @click="downloadFile(file)"><AppIcon name="download" :size="17" /></button>
                   <button class="icon-btn danger" type="button" aria-label="删除" @click="deleteTarget = file"><AppIcon name="trash" :size="17" /></button>
                 </td>

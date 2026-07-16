@@ -980,6 +980,30 @@ export const useLearningStore = defineStore('learning', () => {
     return learningRepository.downloadResource(planId, resourceId)
   }
 
+  async function attachPresentationResult(planId: number, resourceId: number, presentationId: string, fileName: string) {
+    if (isApiDataSource) {
+      return fetchPlan(planId)
+    }
+    const plan = getPlan(planId)
+    const resource = plan?.resources.find((item) => item.id === resourceId)
+    if (!plan || !resource || resource.group !== 'PPT') return
+    resource.presentationId = presentationId
+    resource.fileName = fileName
+    resource.status = '已生成'
+    resource.action = '查看'
+    resource.errorMessage = undefined
+    plan.updatedAt = '刚刚'
+    libraryResourceStore.addPresentation(
+      presentationId,
+      fileName,
+      '智能学习生成',
+      plan.libraryId,
+      plan.relatedProjectId ?? null,
+    )
+    persist()
+    return plan
+  }
+
   return {
     plans,
     isLoading,
@@ -1014,5 +1038,6 @@ export const useLearningStore = defineStore('learning', () => {
     generateSimilarExercise,
     generateResource,
     downloadResource,
+    attachPresentationResult,
   }
 })

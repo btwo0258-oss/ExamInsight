@@ -75,6 +75,7 @@ export type LearningResource = {
   previewUrl?: string
   mindMapId?: number
   mindMapTreeData?: unknown
+  presentationId?: string
   errorMessage?: string
 }
 

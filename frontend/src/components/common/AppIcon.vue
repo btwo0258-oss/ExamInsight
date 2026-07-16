@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // @ts-nocheck
-import { ListFilter, Pin, PinOff, SmilePlus } from 'lucide-vue-next'
+import { ListFilter, Pin, PinOff, Presentation, SmilePlus } from 'lucide-vue-next'
 
 type IconName = string;
 
@@ -2857,6 +2857,14 @@ const props = withDefaults(defineProps<Props>(), { size: 20 });
     <path d="M9 9h.01M15 9h.01" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
     <path d="M18.5 5.5v3M17 7h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
   </svg>
+
+  <Presentation
+    v-else-if="name === 'presentation'"
+    class="icon"
+    :size="props.size"
+    :color="props.color"
+    :stroke-width="1.8"
+  />
 
   <SmilePlus
     v-else-if="name === 'smile-plus'"

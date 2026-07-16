@@ -4,7 +4,7 @@
 >
 > 更新日期：2026-07-16
 >
-> 适用范围：新对话、资料库、智能学习、语音输入、拍照/图片上传及其关联的思维导图、登录与用户设置。
+> 适用范围：新对话、资料库、智能学习、PPT 生成、语音输入、拍照/图片上传及其关联的思维导图、登录与用户设置。
 >
 > 本文以当前 Spring Boot 后端和当前前端 API Repository 为基线。后端不得参考 Mock Generator 设计正式算法。
 
@@ -42,14 +42,15 @@
 - 资料库聚合资源接口。
 - 学习项目、画像、确认稿、方案、任务、题目、答题、错题和资源生成。
 - 学习助教复用会话与聊天接口。
-- 语音转文字、拍照/图片上传、图片 OCR/题目识别和聊天多模态引用。
+- 麦克风/上传音频转文字、拍照/图片上传、图片 OCR/题目识别和聊天多模态引用。
+- PPT 配置、大纲、异步生成、任务恢复、预览、下载和保存到资料库。
 
 首期不包含：
 
-- 文件在线预览专用接口。
+- 通用文档在线预览专用接口；PPT 逐页预览按第 19 节实现。
 - 选中多个资料后直接创建聊天上下文。
 - 资料库高级筛选。
-- DOC 的 AI 解析。当前文档解析正式支持 PDF、DOCX、MD、TXT；图片走第 18 节媒体接口。
+- 视频上传、识别或抽帧。
 
 ## 1. 现有后端复用矩阵
 
@@ -60,12 +61,13 @@
 | 会话创建、列表、消息、更新、删除 | 已存在 | EXTEND | 增加学习项目关联、类型和置顶字段；更新接口必须返回更新后的对象 |
 | AI 聊天 SSE | 已存在 | EXTEND | 保留当前文本事件协议，补中止、超时、错误 HTTP 状态和模型校验 |
 | 知识库 CRUD | 已存在 | EXTEND | 增加 availableForAi，响应改用 VO，不返回 userId、逻辑删除字段 |
-| 文档上传、解析、状态、下载 | 已存在 | KEEP | 保留数字状态 0/1/2；资料库聚合层映射为英文状态 |
+| 文档上传、解析、状态、下载 | 已存在 | EXTEND | 保留数字状态 0/1/2；扩展 DOC、Excel、PPT、ZIP，资料库聚合层映射为英文状态 |
 | 思维导图 CRUD 与 AI 生成 | 已存在 | KEEP | 继续复用 mind_map 表和 /api/mindmap |
 | 公共资源中心 | 已存在 | KEEP | 不等于学生资料库聚合接口，可复用文件存储逻辑 |
 | 资料库聚合资源 | 不存在 | NEW | 聚合 document、mind_map、learning_resource |
 | 智能学习 | 不存在 | NEW | 新增项目、任务、题目、答题、错题、资源与生成任务 |
-| 语音、图片与识别任务 | 不存在 | NEW | 新增 media_asset、语音转写和图片识别任务；聊天只引用媒体资产 ID |
+| 语音、图片与识别任务 | 不存在 | NEW | 新增 media_asset、麦克风/上传音频转写和图片识别任务；聊天只引用媒体资产 ID |
+| PPT 生成 | 不存在 | NEW | 新增 presentation 聚合、异步任务和文件资产；讯飞只作为后端内部 Provider，不向前端暴露 |
 
 ## 2. 通用协议
 
@@ -470,10 +472,10 @@ type ChatStreamRequest = {
 - kbId 只作兼容，实际 RAG 知识库以 conversation.kbId 为准；两者冲突时返回 409。
 - model 缺失时使用用户设置 defaultModel；必须校验模型白名单。
 - history 只用于补充上下文，不能覆盖后端保存的权限和项目关联。
-- fileContext 只承载 PDF、DOCX、MD、TXT 的当前兼容附件正文，最大 200000 字符。
+- fileContext 只承载第 6.4 节文档/Office/ZIP 的解析正文或音频转写文本，最大 200000 字符。
 - files 必须是合法 MessageAttachmentDto[] JSON 字符串。
-- mediaAssetIds 只承载第 18 节已上传图片资产 ID；最多 5 个，后端逐个校验所有权、状态和 conversationId 关联。
-- 同一图片同时出现在 files 元数据和 mediaAssetIds 时，以 mediaAssetIds 作为模型输入，files 只用于消息展示，禁止重复处理。
+- mediaAssetIds 只承载第 18 节已上传图片或已转写音频资产 ID；最多 5 个，后端逐个校验所有权、状态和 conversationId 关联。
+- 同一媒体同时出现在 files 元数据和 mediaAssetIds 时，以 mediaAssetIds 作为模型输入，files 只用于消息展示，禁止重复上传、重复识别或重复转写。
 - 学习助教必须通过 conversation.learningProjectId 加载权威项目上下文，不能只信任前端拼接的 tutorContext。
 
 ### 5.2 SSE 协议
@@ -624,7 +626,15 @@ multipart 字段：
 - kbId：number，必填。
 - file：binary，必填。
 
-支持 PDF、DOCX、MD、TXT，单文件最大 100 MB。文件名必须安全重命名，原文件名仅保存为元数据。
+支持 PDF、DOC、DOCX、XLS、XLSX、PPT、PPTX、MD、TXT、ZIP，单文件最大 21 MB。文件名必须安全重命名，原文件名仅保存为元数据。
+
+解析约束：
+
+- DOC/DOCX 提取正文、标题和表格可见文本；不执行宏、嵌入对象或外链。
+- XLS/XLSX 按工作表顺序提取非空单元格，结果包含工作表名和行列位置；公式返回服务端计算值或缓存值，不执行宏。
+- PPT/PPTX 按幻灯片顺序提取标题、正文、表格和演讲者备注；不把该接口误当作 PPT 生成功能。
+- ZIP 只解压本节支持的文件类型；最多 50 个条目、目录深度最多 3 层、解压后总大小最多 100 MB。拒绝绝对路径、`..` 路径穿越、软链接、加密包、可执行文件和嵌套压缩包。
+- 单个压缩包中部分文件解析失败时整体返回 422，不返回伪完整正文；错误中列出首个失败条目。
 
 成功：ApiResult<DocumentDto>，初始 status=0。
 
@@ -634,7 +644,7 @@ multipart 字段：
 
 multipart 字段 file。成功：ApiResult<string>。
 
-该接口只解析当前聊天附件，不写入 knowledge_base、document、ES。限制与 upload 相同，解析正文最大 200000 字符。
+该接口只解析当前聊天附件，不写入 knowledge_base、document、ES。格式、安全和 21 MB 限制与 upload 相同，解析正文最大 200000 字符。图片和音频不得调用本接口，分别走第 18 节图片上传和音频转写接口。
 
 #### 其他接口
 
@@ -661,7 +671,7 @@ NEW。该模块不是重新存一份文件，而是统一查询和操作：
 - document：用户上传文档。
 - mind_map：思维导图。
 - learning_resource：智能学习生成资源。
-- media_asset：图片上传、拍照及其识别/索引结果。
+- media_asset：图片上传/拍照、音频上传/转写及其识别或索引结果。
 
 公共资源中心 resource、user_resource 不直接混入学生私人资料库列表；用户把公共资源加入知识库时，可以生成 document 或新的资源关联。
 
@@ -706,7 +716,7 @@ id 是不可猜测的聚合路由键：
 
 - updatedAt 始终返回 ISO 8601，前端负责转为“刚刚/今天”等文案。
 - size 根据原始 byte 计算：小于 1024 显示 N B；小于 1 MB 四舍五入显示 N KB；其余保留 1 位显示 N.N MB。
-- document.type 映射为 PDF、Word、Markdown、TXT。
+- document.type 映射为 PDF、Word、Excel、PPT、Markdown、TXT、ZIP。
 - mind_map.type 固定为“思维导图”，没有物理文件时 size 为“--”。
 - externalKey 返回底层实体数字 ID 的字符串形式，主要用于排障；前端操作必须继续使用聚合 id。
 
@@ -724,6 +734,9 @@ id 是不可猜测的聚合路由键：
 | media_asset uploaded/processing | image | processing |
 | media_asset ready | image | ready |
 | media_asset failed | image | failed |
+| audio media_asset uploaded/processing | file | processing |
+| audio media_asset ready | file | ready |
+| audio media_asset failed | file | failed |
 
 ### 7.3 接口
 
@@ -749,7 +762,7 @@ multipart：
 
 至少提供 libraryId 或 projectId；两者都提供时必须属于同一用户，且项目关联该知识库。
 
-首期该接口支持 PDF、DOCX、MD、TXT。图片必须调用第 18 节 `POST /api/media/images`，并在 metadata 中使用 `purpose=library-resource`；成功后同一媒体资产必须出现在聚合资源列表中，不能重复上传文件。
+首期该接口支持 PDF、DOC、DOCX、XLS、XLSX、PPT、PPTX、MD、TXT、ZIP，格式、安全和 21 MB 限制与第 6.4 节一致。图片必须调用第 18 节 `POST /api/media/images`，音频必须调用 `POST /api/media/audio/transcriptions`，并在 metadata 中使用 `purpose=library-resource`；成功后同一媒体资产必须出现在聚合资源列表中，不能重复上传文件。
 
 #### PATCH /api/library/resources/{id}
 
@@ -939,7 +952,7 @@ type CreateLearningPlanRequest = {
 - libraryName 只用于兼容展示，权威名称由 libraryId 查询。
 - questionCount 范围 1 至 500。
 - 生成前 libraryId 必须存在、属于当前用户且 availableForAi=true。
-- mediaAssetIds 最多 5 个，只接受 purpose=learning-input 且已关联当前 libraryId/projectId 的图片；后端读取图片内容，uploadedFileNames 只用于展示，不能替代媒体引用。
+- mediaAssetIds 最多 5 个，只接受 purpose=learning-input 且已关联当前 libraryId/projectId 的 ready 图片或音频；后端读取图片内容或音频转写，uploadedFileNames 只用于展示，不能替代媒体引用。
 
 ### 9.3 项目聚合 DTO
 
@@ -1528,7 +1541,7 @@ mastered -> needs_review  再次答错时
 | P1 | 知识库直接返回实体，缺 availableForAi | 后端 |
 | P1 | ModelSwitch 当前没有调用 fetchList，model API 失败会返回本地固定列表 | 前端加载 /api/config/model，并取消生产 fallback |
 | P1 | 文档 status=0 在前端当前显示映射需要统一为 processing | 前端 |
-| P1 | 文档上传 UI 仍允许 DOC，但现有文档解析器不支持 | 前端限制 DOC 或后端补解析；图片固定走第 18 节媒体接口 |
+| P1 | 前端现已允许 DOC、Excel、PPT、ZIP，现有文档解析器尚未全部支持 | 后端按第 6.4 节扩展解析；图片和音频固定走第 18 节媒体接口 |
 | P1 | 学习项目重命名、删除目前只改前端展示 | 前端接入本文 PATCH/DELETE |
 | P1 | LearningProject 前端类型暂位于 Mock 文件 | 前端迁移到正式 contracts |
 | P1 | 前端 common.ts 中 ApiResponse.code 仍声明为 string | 前端改为 number，与现有 Java Result 和本文一致 |
@@ -1547,8 +1560,9 @@ mastered -> needs_review  再次答错时
 7. 实现画像、确认稿和方案生成任务。
 8. 实现学习行为、答题、错题和进度。
 9. 实现自适应练习、错题巩固和资源生成。
-10. 新增媒体资产、语音转写、图片识别任务，并让聊天和资料库按媒体 ID 关联。
-11. 前后端联调 API 模式。
+10. 新增媒体资产、麦克风/上传音频转写、图片识别任务，并让聊天和资料库按媒体 ID 关联。
+11. 按第 19 节新增 PPT 实体、任务、Provider Adapter、预览、下载和资料库关联。
+12. 前后端联调 API 模式。
 
 ## 16. 后端验收清单
 
@@ -1563,9 +1577,11 @@ mastered -> needs_review  再次答错时
 - 未提交题目响应不包含正确答案和隐藏评分规则。
 - 生成任务成功后，result 中的实体可以立即查询。
 - 聚合资源删除、移动、重试不会留下孤立文件、分块或向量。
-- 拒绝的麦克风权限不会发起后端请求；空录音、超时和不支持格式返回固定错误码。
-- 图片资产只能被所属用户和已关联的会话、资料库或学习项目引用。
+- 拒绝的麦克风权限不会发起后端请求；空录音、上传音频超时和不支持格式返回固定错误码。
+- 图片和音频资产只能被所属用户和已关联的会话、资料库或学习项目引用。
 - 图片识别任务可在刷新后通过 jobId 查询，重复 clientRequestId 不创建重复资产或任务。
+- PPT confirm/auto 流程使用同一状态机，刷新后可恢复任务，ready 后可预览、下载和保存资料库。
+- 讯飞密钥、任务 ID、模板 ID 和原始文件 URL 不进入前端响应或普通业务日志。
 
 ## 17. 首期明确不实现
 
@@ -1583,11 +1599,13 @@ mastered -> needs_review  再次答错时
 
 状态：NEW。
 
-- 前端只负责请求浏览器权限、录音、选图/拍照、格式与大小预校验、状态展示、取消和重试。
+- 前端只负责请求浏览器权限、录音、选择音频、选图/拍照、格式与大小预校验、状态展示、取消和重试。
 - 正式环境的语音识别、OCR、题目结构化、图片意图判断和多模态理解全部由后端完成。
 - Mock Repository 只保存媒体元数据和模拟结果到按用户隔离的 sessionStorage，不保存真实图片或录音二进制。
 - 正式环境的原始文件存对象存储，元数据、权限关联和任务状态存后端数据库；前端不把业务媒体写入 localStorage 或 sessionStorage。
 - API 模式失败时禁止回退 Mock，也禁止仅凭文件名或扩展名伪造识别成功。
+- 当前前端只有移动端 AppInput 暴露 source=camera 的拍照入口；Web 通用附件、移动端附件和资料库通用文件上传均可选择图片或音频，并使用 source=upload。该 UI 差异不改变媒体接口和后端权限规则。
+- 视频不属于本契约。后端检测到 `video/*`、视频轨道或伪装成音频的容器时必须返回 415，不能只依据扩展名放行。
 
 ### 18.2 共享类型
 
@@ -1626,8 +1644,8 @@ type UploadImageRequest = MediaContext & {
 }
 
 type TranscribeAudioRequest = MediaContext & {
-  source: "microphone"
-  purpose: "chat-attachment" | "learning-input"
+  source: "upload" | "microphone"
+  purpose: MediaPurpose
   clientRequestId: string
   language?: string
   durationMs?: number
@@ -1745,13 +1763,16 @@ type ImageRecognitionJob = {
 
 限制与行为：
 
-- 支持 WebM/Opus、Ogg/Opus、M4A/MP4、WAV、MP3。
+- 支持 WebM/Opus、Ogg/Opus、M4A/MP4、WAV、MP3、AAC、FLAC；容器中存在视频轨道时拒绝。
 - 单文件最大 25 MB，后端探测的真实时长最大 120 秒；durationMs 仅用于前端展示，不能作为服务端校验依据。
 - 默认语言 zh-CN；后端可以自动检测并返回实际 language。
 - 本接口首期同步返回，后端处理超时 90 秒，前端请求超时 120 秒。
 - 无有效人声返回 HTTP 422 + NO_SPEECH_DETECTED，不返回空字符串成功。
-- 转写文字只回填输入框，前端不得在识别完成后自动发送。
-- 原始录音默认 24 小时后清理；需要长期保存时必须另行增加用户可见的保存语义和隐私说明。
+- `source=microphone` 的转写文字只回填输入框，前端不得在识别完成后自动发送。
+- `source=upload` 在用户发送消息或确认资料上传后执行；成功资产固定为 `kind=audio`、`source=upload`、`status=ready`，聊天后端复用已返回的 text，不得再次转写同一 asset。
+- `purpose=chat-attachment` 时 conversationId 必填；`purpose=library-resource` 时 libraryId 必填；`purpose=learning-input` 时 libraryId 或 learningProjectId 至少一个有效。
+- `purpose=library-resource` 或 `learning-input` 成功后建立资源关联，并在 `GET /api/library/resources` 中返回 `media:{assetId}`、`category=file`、`type=音频`。
+- 麦克风临时录音默认 24 小时后清理；用户主动上传并关联资料库/学习项目的音频按业务资源保留策略保存。删除聚合资源时同时解除关联，只有无其他引用时才删除原件。
 
 成功：HTTP 200，ApiResult<AudioTranscriptionDto>。
 
@@ -1791,6 +1812,17 @@ idle -> requesting-permission -> recording -> transcribing -> idle
 - 录音达到 120 秒自动停止并转写；转写失败保留原输入文字并提供重试。
 - 组件卸载、路由离开或用户中止时停止所有 MediaStream track，并取消尚未完成的 HTTP 请求。
 
+上传音频状态：
+
+~~~text
+selected -> transcribing -> ready
+               |
+               +-> failed -> selected
+~~~
+
+- selected 阶段只保存在当前页面内存，用户可以删除或取消；用户发送/确认后才调用转写接口。
+- failed 保留文字和附件选择，允许重试；正式 API 失败不得使用 Mock 文本伪造 ready。
+
 图片资产状态：
 
 ~~~text
@@ -1808,7 +1840,7 @@ pending -> running -> succeeded
    +---------+-> cancelled
 ~~~
 
-聊天数据流：
+图片聊天数据流：
 
 1. 前端选择图片或调用后置摄像头，完成格式、大小和数量预校验。
 2. 前端调用 POST /api/media/images，取得 MediaAssetDto.id。
@@ -1817,12 +1849,20 @@ pending -> running -> succeeded
 5. 后端把媒体资产引用写入用户消息，SSE 只传回答文本和完成/错误事件。
 6. 上传或发送失败时不得创建伪成功消息；前端保留待发送文字和附件以便重试。
 
+音频附件聊天数据流：
+
+1. 前端选择音频并校验格式、25 MB 和附件总数，视频立即拒绝。
+2. 用户点击发送后，前端调用 `POST /api/media/audio/transcriptions`，metadata 使用 `source=upload`、`purpose=chat-attachment` 和 conversationId。
+3. 成功后前端把 `AudioTranscriptionDto.asset.id` 放入 mediaAssetIds，把转写文本加入本轮 fileContext，并调用聊天 SSE。
+4. 后端验证音频资产与会话归属，复用已保存转写文本作为当前轮上下文，不重复调用语音模型。
+5. 转写失败时前端不创建伪成功消息、不发起聊天 SSE，并保留待发送文字和附件供重试。
+
 资料库/智能学习数据流：
 
-1. purpose=library-resource 或 learning-input 上传图片。
-2. 后端保存私有原件和媒体元数据，创建资料库关联并启动识别/索引。
+1. purpose=library-resource 或 learning-input 上传图片，或提交音频转写。
+2. 后端保存私有原件和媒体元数据；图片启动识别/索引，音频保存转写并创建资料库关联。
 3. GET /api/library/resources 返回 media:{assetId} 聚合项及 processing/ready/failed 状态。
-4. 只有 ready 图片可以进入 RAG 或正式学习生成上下文；failed 可通过聚合资源 retry 接口重试。
+4. 只有 ready 图片或音频可以进入 RAG 或正式学习生成上下文；failed 可通过聚合资源 retry 接口重试。
 
 ### 18.7 意图、上下文与权限
 
@@ -1851,3 +1891,410 @@ pending -> running -> succeeded
 | 503 | MEDIA_AI_UNAVAILABLE | 语音或视觉模型服务不可用 |
 
 浏览器的 MIC_PERMISSION_DENIED、CAMERA_PERMISSION_DENIED、DEVICE_NOT_FOUND 和 MEDIA_RECORDER_UNSUPPORTED 属于前端本地错误，不请求后端，也不伪装成 HTTP 错误。
+
+## 19. PPT 生成与讯飞适配
+
+### 19.1 边界与实现原则
+
+- 前端只调用本节定义的 ExamInsight 接口，不直接调用讯飞，不保存讯飞密钥、签名、任务 ID 或文件 URL。
+- 后端负责内容生成、讯飞 Provider 适配、任务持久化、权限、文件下载、对象存储、预览图生成和资料库关联。
+- `MockPresentationRepository` 仅模拟接口返回并在下载时用 PptxGenJS 生成演示文件，不是后端内容算法或讯飞接入参考。
+- `ApiPresentationRepository` 与 Mock 使用同一请求、响应和状态类型。API 失败不得自动切换 Mock。
+- PPT 原件、预览图和 Provider 响应不写浏览器 Storage。正式页面刷新后按 presentationId 和 activeJobId 从后端恢复。
+- 后端可以更换 PPT Provider，但不得改变本节对前端的 DTO、状态、幂等和错误语义。
+- PPT 工作区面向用户统一显示“知识库”；协议为兼容现有后端继续使用 `libraryId`、`libraryResourceId` 和 `/library` 路径，后端不得另增同义字段。
+
+### 19.2 路由和前端调用顺序
+
+| 页面场景 | 前端路由 | 关联字段 |
+| --- | --- | --- |
+| 新对话创建 PPT | `/presentations/new?conversationId=:id&libraryId=:id&returnTo=:path` | conversationId、libraryId 可空 |
+| 学习资源创建 PPT | `/presentations/new?learningProjectId=:id&learningResourceId=:id&libraryId=:id&returnTo=:path` | 三个 ID 必须属于同一用户 |
+| 恢复或查看 PPT | `/presentations/:presentationId` | 页面重新获取权威 DTO 和任务 |
+
+默认确认模式调用顺序：
+
+1. `POST /api/presentations` 创建草稿。
+2. `POST /api/presentations/{id}/outline-jobs` 创建大纲任务。
+3. 轮询 `GET /api/presentations/jobs/{jobId}`，成功后重新获取 PPT。
+4. 用户编辑并调用 `PUT /api/presentations/{id}/outline`。
+5. `POST /api/presentations/{id}/generation-jobs` 创建 PPT 任务。
+6. 轮询任务，成功后重新获取 PPT 并展示预览。
+7. 用户按需下载或保存到资料库。
+
+自动模式仍使用同一组接口，只是前端在大纲任务成功后不暂停编辑，立即保存大纲并创建 PPT 任务。后端不得为自动模式另造不兼容 DTO。任何模式在大纲未成功前调用生成接口均返回 `409 PRESENTATION_OUTLINE_NOT_READY`。
+
+### 19.3 共享类型
+
+```ts
+type PresentationStatus =
+  | 'draft'
+  | 'outlining'
+  | 'outline_ready'
+  | 'generating'
+  | 'ready'
+  | 'failed'
+  | 'cancelled'
+
+type PresentationOutlineMode = 'confirm' | 'auto'
+type PresentationAspectRatio = '16:9' | '4:3'
+type PresentationStyle = 'academic' | 'minimal' | 'vibrant' | 'professional'
+type PresentationAudience = 'student' | 'teacher' | 'general' | 'business'
+type PresentationSlideLayout = 'cover' | 'section' | 'content' | 'comparison' | 'summary'
+
+interface PresentationConfig {
+  topic: string
+  title: string
+  pageCount: number
+  outlineMode: PresentationOutlineMode
+  templateId: string
+  aspectRatio: PresentationAspectRatio
+  style: PresentationStyle
+  audience: PresentationAudience
+  language: string
+  sourceText?: string
+  sourceFileNames?: string[]
+  mediaAssetIds?: string[]
+}
+
+interface PresentationSlideOutline {
+  id: string
+  order: number
+  title: string
+  points: string[]
+  speakerNotes?: string
+  layout: PresentationSlideLayout
+}
+
+interface PresentationPreviewPage extends PresentationSlideOutline {
+  backgroundColor: string
+  surfaceColor: string
+  textColor: string
+  accentColor: string
+  previewImageUrl?: string
+}
+
+interface PresentationDto {
+  id: string
+  status: PresentationStatus
+  config: PresentationConfig
+  outline: PresentationSlideOutline[]
+  previewPages: PresentationPreviewPage[]
+  activeJobId?: string
+  fileName?: string
+  fileSize?: number
+  libraryResourceId?: string
+  conversationId?: number | null
+  libraryId?: number | null
+  learningProjectId?: number | null
+  learningResourceId?: number | null
+  errorCode?: string
+  errorMessage?: string
+  createdAt: string
+  updatedAt: string
+}
+
+interface PresentationJob<T> {
+  jobId: string
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+  progress: number
+  result?: T
+  errorCode?: string
+  errorMessage?: string
+}
+```
+
+字段约束：
+
+| 字段 | 约束 |
+| --- | --- |
+| topic、title | 去首尾空格后 1 至 120 字符 |
+| pageCount | 3 至 30，必须为整数 |
+| language | 首期只接受 `zh-CN`；扩展语言时后端返回模板支持范围 |
+| sourceText | 最多 6000 字符，只是生成上下文，不作为权限依据 |
+| sourceFileNames | 最多 20 个，每项最多 255 字符，仅用于展示 |
+| mediaAssetIds | 最多 10 个，只接受当前用户有权使用且状态为 ready 的媒体资产 |
+| outline | 3 至 30 页，order 从 1 连续递增且不得重复 |
+| slide.title | 1 至 120 字符 |
+| slide.points | 1 至 8 项，每项 1 至 200 字符 |
+| speakerNotes | 每页最多 2000 字符 |
+| clientRequestId | 8 至 64 字符，同一用户内作为幂等键 |
+| progress | 0 至 100 的整数，只能整体非递减 |
+
+`previewImageUrl` 只能是当前后端受保护的相对地址或短期签名地址；不能是讯飞原始地址，过期后前端通过重新获取 PresentationDto 刷新。
+
+### 19.4 模板接口
+
+#### GET /api/presentations/templates
+
+响应 data：
+
+```json
+[
+  {
+    "id": "ink-focus",
+    "name": "清晰讲解",
+    "description": "适合课程和知识分享",
+    "style": "academic",
+    "backgroundColor": "#F8FAFC",
+    "surfaceColor": "#FFFFFF",
+    "textColor": "#172033",
+    "accentColor": "#2563EB"
+  }
+]
+```
+
+模板 ID 是后端公开业务 ID，不是讯飞模板 ID。后端内部维护业务模板到 Provider 模板的映射。已被演示文稿使用的模板不能直接删除；可标记停用并从新建列表隐藏。
+
+### 19.5 查询和创建
+
+#### GET /api/presentations
+
+返回当前用户最近更新的 PPT 列表，首期返回 `PresentationDto[]`。列表按 updatedAt 降序，最多 100 条；需要分页时必须按第 2.5 节统一分页升级，不能临时改变 data 形状。
+
+#### GET /api/presentations/{id}
+
+- 只返回当前用户拥有的 PPT。
+- status 为 outlining/generating 时 activeJobId 必填。
+- status 为 ready 时 fileName、fileSize、previewPages 必填，outline 不得为空。
+- status 为 failed 时 errorCode 和 errorMessage 必填。
+- 不存在返回 404；属于其他用户也返回 404，避免枚举资源。
+
+#### POST /api/presentations
+
+请求：
+
+```json
+{
+  "topic": "Java 多态的核心原理与应用",
+  "title": "Java 多态复习",
+  "pageCount": 8,
+  "outlineMode": "confirm",
+  "templateId": "ink-focus",
+  "aspectRatio": "16:9",
+  "style": "academic",
+  "audience": "student",
+  "language": "zh-CN",
+  "sourceText": "覆盖动态绑定、向上转型和常见误区",
+  "sourceFileNames": ["多态讲义.pdf"],
+  "mediaAssetIds": [],
+  "conversationId": 102,
+  "libraryId": 1,
+  "learningProjectId": null,
+  "learningResourceId": null,
+  "clientRequestId": "ppt-create-20260716-001"
+}
+```
+
+响应 data 为 status=`draft` 的 PresentationDto，outline 和 previewPages 为 `[]`。后端校验所有上下文实体归属；learningResourceId 存在时必须属于 learningProjectId 且 group=PPT，否则返回 `409 PRESENTATION_CONTEXT_MISMATCH`。
+
+相同用户、相同 clientRequestId、相同请求体重复提交时返回第一次创建的 DTO；请求体不同返回 `409 IDEMPOTENCY_CONFLICT`。
+
+### 19.6 大纲任务和编辑
+
+#### POST /api/presentations/{id}/outline-jobs
+
+请求：
+
+```json
+{ "clientRequestId": "ppt-outline-20260716-001" }
+```
+
+允许状态：draft、failed、cancelled。成功返回 PresentationJob，初始 status 为 pending 或 running；同时 PresentationDto 变为 outlining 并写 activeJobId。一个 PPT 同时只能有一个活动任务。
+
+任务成功 result：
+
+```json
+{
+  "presentationId": "ppt_01JZ8K0A6F",
+  "outline": [
+    {
+      "id": "slide_01",
+      "order": 1,
+      "title": "Java 多态复习",
+      "points": ["建立本次复习目标"],
+      "speakerNotes": "说明本次分享范围",
+      "layout": "cover"
+    }
+  ]
+}
+```
+
+任务成功时后端必须在同一事务中保存 outline、把 PPT 状态改为 outline_ready、清空 activeJobId，再把任务改为 succeeded。任务失败时 PPT 状态改为 failed，保存稳定错误码，清空 activeJobId。
+
+#### PUT /api/presentations/{id}/outline
+
+请求：
+
+```json
+{
+  "slides": [
+    {
+      "id": "slide_01",
+      "order": 1,
+      "title": "Java 多态复习",
+      "points": ["复习目标与内容范围"],
+      "speakerNotes": "控制在一分钟内",
+      "layout": "cover"
+    }
+  ],
+  "clientRequestId": "ppt-outline-update-20260716-001"
+}
+```
+
+允许状态：outline_ready、cancelled、failed、ready。后端按数组顺序重新写连续 order，并把 config.pageCount 更新为数组长度。ready 状态编辑大纲后，原文件仍保留为历史版本但当前 DTO 回到 outline_ready，fileName/fileSize/previewPages 清空，防止下载旧内容冒充新版本。
+
+### 19.7 PPT 生成任务
+
+#### POST /api/presentations/{id}/generation-jobs
+
+请求：
+
+```json
+{ "clientRequestId": "ppt-generate-20260716-001" }
+```
+
+允许状态：outline_ready、failed、cancelled，且 outline 已通过 19.3 校验。成功返回 PresentationJob，并把 PPT 改为 generating。相同幂等键重复提交返回同一 jobId；页面“重试”必须使用新的 clientRequestId 调用本接口，不增加独立 retry 路径。
+
+任务成功 result：
+
+```json
+{ "presentationId": "ppt_01JZ8K0A6F" }
+```
+
+成功完成前，后端必须：
+
+1. 从 Provider 获取完整 PPTX，并校验文件签名、MIME、大小和页数。
+2. 将原件复制到本系统私有对象存储，生成自己的 fileAssetId。
+3. 按页生成 PNG/WebP 预览，保存预览资产关联。
+4. 在一个最终提交事务中更新 fileName、fileSize、previewPages、status=ready，清空 activeJobId。
+5. learningProjectId 和 learningResourceId 存在时，把对应学习资源更新为已生成并保存 presentationId；前端随后重新获取学习项目。
+
+不得在 Provider 文件尚未复制、文件校验失败或预览未完成时返回 succeeded。
+
+#### GET /api/presentations/jobs/{jobId}
+
+返回 PresentationJob。jobId 只允许所属用户读取。轮询建议：前 30 秒每 1 秒一次，之后每 2 至 3 秒一次；前端当前最多轮询 120 次。后端必须允许页面刷新后继续查询，任务记录至少保留 30 天。
+
+#### POST /api/presentations/jobs/{jobId}/cancel
+
+无请求体，成功 data 为 null。pending/running 可取消；已结束任务重复取消仍返回成功。后端尽力取消 Provider 任务，并把本地任务和 PPT 都改为 cancelled。若 Provider 已完成但本地尚未提交，取消请求优先，生成文件作为无引用临时资产清理。
+
+### 19.8 预览、下载和资料库
+
+#### GET /api/presentations/{id}/preview-pages/{pageId}
+
+- 只允许 PPT 所有者或有权访问关联资料库/学习项目的用户访问。
+- 返回 `image/webp` 或 `image/png`，支持 ETag 和私有缓存；不得永久公开。
+- pageId 必须来自该 PresentationDto.previewPages，不能接受任意对象存储键。
+
+#### GET /api/presentations/{id}/download
+
+- 只允许 status=ready。
+- 返回 PPTX 二进制，Content-Type 固定为 `application/vnd.openxmlformats-officedocument.presentationml.presentation`。
+- Content-Disposition 使用经过安全处理的 UTF-8 fileName。
+- 支持流式下载，不把整个文件读入 JVM 堆；下载前再次校验权限。
+- 后端返回自己的对象存储文件，禁止 302 到讯飞长期 URL。
+
+#### POST /api/presentations/{id}/library
+
+请求：
+
+```json
+{
+  "libraryId": 1,
+  "clientRequestId": "ppt-library-20260716-001"
+}
+```
+
+只允许 ready 状态。后端校验资料库归属，创建或更新唯一的资料库聚合资源，externalKey 固定为 `presentation:{presentationId}`，type=PPT、category=file、status=ready，并返回更新后的 PresentationDto，其中 libraryId 和 libraryResourceId 必填。重复保存到同一资料库幂等；改存其他资料库视为移动关联，不复制 PPT 原件。
+
+### 19.9 状态机和刷新恢复
+
+```text
+draft
+  -> outlining -> outline_ready
+  -> failed
+  -> cancelled
+
+outline_ready
+  -> generating -> ready
+  -> failed
+  -> cancelled
+
+ready
+  -> outline_ready  编辑大纲形成新版本
+
+failed/cancelled
+  -> outlining      大纲任务重试
+  -> generating     已有有效大纲时生成任务重试
+```
+
+- 页面刷新时先 GET PresentationDto；有 activeJobId 时继续 GET job，不能重新创建任务。
+- status=generating/outlining 但 activeJobId 为空属于服务端数据错误，返回 `PRESENTATION_STATE_INVALID` 并记录告警。
+- 页面倒退到大纲不会自动取消任务；只有明确点击“停止生成”才调用 cancel。
+- 用户关闭页面不删除 PPT 或任务。再次进入 `/presentations/:id` 必须可恢复。
+- 任务 progress 只表示体验进度，不作为文件是否可下载的依据；只有 status=ready 才允许下载。
+
+### 19.10 讯飞 Provider 内部适配
+
+后端至少分为业务 Service 与 Provider Adapter 两层。Controller 和返回 DTO 不得出现以下字段：讯飞 appId、apiKey、apiSecret、签名、providerTaskId、providerTemplateId、providerFileUrl、Provider 原始状态或原始错误对象。
+
+推荐内部持久化字段：
+
+| 字段 | 用途 |
+| --- | --- |
+| provider | 固定如 `xunfei`，便于未来替换 |
+| providerTaskId | 仅后端轮询/取消使用，加密或受控保存 |
+| providerTemplateId | 由业务 templateId 映射 |
+| providerStatus | 原始状态，只用于排错 |
+| providerErrorCode/message | 受控日志，不直接返回前端 |
+| providerRequestHash | 排查幂等和重复计费 |
+
+Provider 状态必须映射到通用任务状态：未提交/排队映射 pending，生成中映射 running，成功且文件已落本系统映射 succeeded，明确失败映射 failed，用户取消映射 cancelled。网络超时不能立即标记失败，应在可重试查询窗口内继续核验 Provider 任务；超过后端配置的总时限后返回 `PRESENTATION_PROVIDER_TIMEOUT`。
+
+Provider 回调必须验证签名、防重放并按 providerTaskId 找本地任务；轮询与回调同时到达时使用乐观锁或任务版本号，只允许一次最终提交。任何 Provider 原始 prompt、源资料和下载 URL 不写普通业务日志。
+
+### 19.11 权限、并发和数据表
+
+- presentation 必须保存 ownerUserId；所有上下文 ID 都要反查，不信任前端路由参数。
+- 同一用户首期最多 3 个 running PPT 任务，超出返回 429。
+- 同一 PPT 同时只能有一个活动任务，第二个返回 409。
+- 删除资料库或学习项目不能越权删除用户独立创建的 PPT；只解除关联。用户删除 PPT 时再清理文件引用。
+- 建议表：presentation、presentation_slide、generation_job、presentation_preview_asset；文件原件和预览复用现有 file_asset/object storage，资料库展示复用 library resource 聚合。
+- generation_job 保存 requestSnapshot、resultSnapshot、errorCode、进度和时间；讯飞原始大对象放受控日志或专用审计存储，不塞入主业务表。
+- PPT 更新和任务完成使用 version 字段做乐观锁；过期任务不能覆盖用户已经修改的新大纲。
+
+### 19.12 错误码
+
+| HTTP | errorCode | 前端处理 |
+| --- | --- | --- |
+| 400 | PRESENTATION_VALIDATION_FAILED | 保留配置或大纲，定位字段 |
+| 400 | PRESENTATION_STATE_INVALID | 展示不可恢复错误并允许返回 |
+| 403 | PRESENTATION_FORBIDDEN | 不展示实体详情，返回来源页 |
+| 404 | PRESENTATION_NOT_FOUND | 展示不存在状态 |
+| 404 | PRESENTATION_TEMPLATE_NOT_FOUND | 刷新模板并要求重新选择 |
+| 409 | PRESENTATION_CONTEXT_MISMATCH | 保留输入，提示关联实体冲突 |
+| 409 | PRESENTATION_OUTLINE_NOT_READY | 返回大纲步骤 |
+| 409 | PRESENTATION_JOB_RUNNING | 恢复返回的活动任务，不创建新任务 |
+| 409 | IDEMPOTENCY_CONFLICT | 停止重试并记录请求 ID |
+| 413 | PRESENTATION_SOURCE_TOO_LARGE | 保留配置，减少资料 |
+| 422 | PRESENTATION_OUTLINE_REJECTED | 保留大纲，展示可修改原因 |
+| 422 | PRESENTATION_FILE_INVALID | 允许以新请求 ID 重试生成 |
+| 429 | PRESENTATION_RATE_LIMITED | 显示稍后重试，不自动高频重发 |
+| 502 | PRESENTATION_PROVIDER_FAILED | 展示失败并允许重试 |
+| 503 | PRESENTATION_PROVIDER_UNAVAILABLE | 展示服务暂不可用 |
+| 504 | PRESENTATION_PROVIDER_TIMEOUT | 展示超时并允许恢复/重试 |
+
+错误响应必须沿用第 2.3 节统一结构，并在 details 中按需返回 `presentationId`、`activeJobId`、`retryable` 和字段错误；不得返回密钥、Provider 原始响应或内部对象存储键。
+
+### 19.13 后端交付验收
+
+- [ ] API 模式可完成配置、大纲、编辑、生成、刷新恢复、取消、重试、预览、下载和保存资料库。
+- [ ] confirm 和 auto 两种 outlineMode 走同一状态机，auto 只跳过前端人工暂停。
+- [ ] 学习资源生成完成后重新获取项目能得到 presentationId 和已生成状态。
+- [ ] 资料库聚合列表返回 externalKey=`presentation:{id}`，从首页和详情均可重新打开。
+- [ ] 重复 clientRequestId 不重复调用讯飞、不重复计费、不重复创建文件。
+- [ ] 接口错误时前端不会读取 Mock 或伪造 ready。
+- [ ] 前端响应和日志中不存在讯飞密钥、Provider 任务 ID、原始文件 URL和对象存储私有键。
+- [ ] PPTX 下载 MIME、文件名、页数和预览页一致，预览 URL 过期后可通过重新 GET DTO 恢复。

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import AppIcon from '@/components/common/AppIcon.vue'
-import { isImageFile } from '@/utils/mediaFile'
+import { isImageFile } from '@/utils/file'
 
 type Props = { file: File }
 const props = defineProps<Props>()
@@ -39,6 +39,18 @@ const iconName = computed(() => {
       return 'markdown'
     case 'txt':
       return 'txt'
+    case 'xls':
+    case 'xlsx':
+    case 'ppt':
+    case 'pptx':
+    case 'zip':
+    case 'mp3':
+    case 'wav':
+    case 'm4a':
+    case 'aac':
+    case 'ogg':
+    case 'flac':
+      return 'file'
     default:
       return 'file'
   }
@@ -55,6 +67,21 @@ const iconColor = computed(() => {
       return '#6366f1'
     case 'txt':
       return '#6b7280'
+    case 'xls':
+    case 'xlsx':
+      return '#16824b'
+    case 'ppt':
+    case 'pptx':
+      return '#d4552d'
+    case 'zip':
+      return '#a06a14'
+    case 'mp3':
+    case 'wav':
+    case 'm4a':
+    case 'aac':
+    case 'ogg':
+    case 'flac':
+      return '#7c5cce'
     default:
       return '#9ca3af'
   }

@@ -10,7 +10,7 @@ import { isMockDataSource } from '@/config/dataSource'
 import { mockSession } from '@/mock/storage'
 import { documentRepository } from '@/repositories/document'
 import { mediaRepository } from '@/repositories/media'
-import { getMediaSource, isImageFile } from '@/utils/mediaFile'
+import { getMediaSource, isAudioFile, isImageFile } from '@/utils/file'
 import type { MediaAssetDto } from '@/types/contracts/media'
 
 export type ChatRole = "user" | "assistant" | "system";
@@ -520,6 +520,18 @@ export const useMessageStore = defineStore("message", () => {
             mediaAssets.push(asset);
             mediaAssetByFile.set(file, asset);
             extractedTexts.push(`[图片：${file.name}]\n媒体资源 ID：${asset.id}。图片内容由后端多模态识别或 OCR 处理。`);
+          } else if (isAudioFile(file)) {
+            const transcription = await mediaRepository.transcribeAudio(file, {
+              source: 'upload',
+              purpose: extraOptions?.tutorSource ? 'learning-input' : 'chat-attachment',
+              conversationId,
+              learningProjectId: extraOptions?.tutorSource?.projectId ?? null,
+              clientRequestId: clientRequestId(),
+              language: 'zh-CN',
+            }, nextController.signal);
+            mediaAssets.push(transcription.asset);
+            mediaAssetByFile.set(file, transcription.asset);
+            extractedTexts.push(`[音频：${file.name}]\n语音转写：${transcription.text}`);
           } else {
             const extracted = await documentRepository.extract(file, nextController.signal);
             extractedTexts.push(`[文件：${file.name}]\n${extracted}`);
@@ -570,7 +582,7 @@ export const useMessageStore = defineStore("message", () => {
           type: f.type,
           size: f.size,
           assetId: mediaAssetByFile.get(f)?.id,
-          source: isImageFile(f) ? getMediaSource(f) : undefined,
+          source: isImageFile(f) ? getMediaSource(f) : isAudioFile(f) ? 'upload' : undefined,
         })),
       };
 
@@ -663,7 +675,7 @@ export const useMessageStore = defineStore("message", () => {
                   type: f.type,
                   size: f.size,
                   assetId: mediaAssetByFile.get(f)?.id,
-                  source: isImageFile(f) ? getMediaSource(f) : undefined,
+                  source: isImageFile(f) ? getMediaSource(f) : isAudioFile(f) ? 'upload' : undefined,
                 })))
               : undefined,
           mediaAssetIds: mediaAssets.map((asset) => asset.id),

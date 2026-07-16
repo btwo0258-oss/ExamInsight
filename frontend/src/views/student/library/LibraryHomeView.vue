@@ -10,6 +10,7 @@ import { useLibraryResourceStore } from '@/stores/libraryResource'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import type { LibraryResource } from '@/stores/libraryResource'
 import type { KnowledgeBase } from '@/api/knowledgeBase'
+import { presentationRepository } from '@/repositories/presentation'
 
 type LibraryFilter = 'all' | 'knowledge' | 'mindmap' | 'image' | 'file'
 type ViewMode = 'grid' | 'list'
@@ -154,9 +155,24 @@ function fileSize(file: LibraryResource) {
 
 function fileIconName(file: LibraryResource) {
   if (file.category === 'mindmap') return 'mind-topic'
+  if (presentationId(file)) return 'presentation'
   if (file.type === 'PDF') return 'file'
   if (file.type === 'Word') return 'book'
   return 'file'
+}
+
+function presentationId(file: LibraryResource) {
+  return file.externalKey?.startsWith('presentation:') ? file.externalKey.slice('presentation:'.length) : ''
+}
+
+function openAsset(asset: LibraryAsset) {
+  if (asset.kind === 'knowledge') {
+    void router.push(`/library/${asset.source.id}`)
+    return
+  }
+  const id = presentationId(asset.source)
+  if (id) void router.push({ path: `/presentations/${id}`, query: { returnTo: '/library' } })
+  else toggleSelection(asset.id)
 }
 
 function startLearning(libraryId: number) {
@@ -212,7 +228,19 @@ async function downloadFiles(assets: LibraryAsset[]) {
   actionError.value = ''
   try {
     for (const asset of assets) {
-      if (asset.kind === 'file') await libraryResourceStore.download(asset.source.id, asset.source.name)
+      if (asset.kind !== 'file') continue
+      const id = presentationId(asset.source)
+      if (!id) {
+        await libraryResourceStore.download(asset.source.id, asset.source.name)
+        continue
+      }
+      const blob = await presentationRepository.download(id)
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = asset.source.name
+      anchor.click()
+      URL.revokeObjectURL(url)
     }
   } catch (error) {
     actionError.value = error instanceof Error ? error.message : '下载失败'
@@ -398,7 +426,7 @@ onMounted(() => {
             'asset-card--selected': isSelected(asset.id),
             'asset-card--new-row': asset.id === firstFileAfterKnowledgeId,
           }"
-          @click="asset.kind === 'knowledge' ? router.push(`/library/${asset.source.id}`) : toggleSelection(asset.id)"
+          @click="openAsset(asset)"
         >
           <template v-if="asset.kind === 'knowledge'">
             <span class="knowledge-icon">
@@ -479,7 +507,7 @@ onMounted(() => {
           :key="asset.id"
           class="asset-row ui-hover-row"
           :class="{ 'asset-row--selected': isSelected(asset.id) }"
-          @click="asset.kind === 'knowledge' ? router.push(`/library/${asset.source.id}`) : toggleSelection(asset.id)"
+          @click="openAsset(asset)"
         >
           <button class="asset-row-check" type="button" @click.stop="toggleSelection(asset.id)">
             <span v-if="isSelected(asset.id)">✓</span>
