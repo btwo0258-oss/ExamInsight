@@ -10,7 +10,7 @@
 2. 区分当前前端 Mock 行为与正式产品行为，避免把临时规则当成最终方案。
 3. 统一 Mock 阶段和正式环境的存储职责。
 4. 为后续 API 对接提供稳定的字段和状态约束。
-5. 为文件夹整理、组件封装、旧文件归档和无用文件删除提供依据。
+5. 为文件夹整理、组件封装、替代实现收敛和无用文件删除提供依据。
 
 ## 2. 产品边界与核心原则
 
@@ -60,6 +60,12 @@
 - 发送问题并展示流式回答。
 - 加载历史会话和消息版本。
 - 在学习项目场景中承载学习助教对话。
+
+#### 欢迎页快捷入口
+
+- 普通新对话只展示 4 个快捷入口，固定顺序为“撰写或编辑、生成图片、生成 PPT、生成思维导图”。
+- “查找资料”和“生成表格”不在欢迎页快捷区展示；这只是入口收敛，不删除自然语言检索、电子表格路由、生成任务、消息卡或下载能力。
+- “撰写或编辑”固定为第一个入口，点击后只预填提示词，不自动发送。
 
 #### 页面状态
 
@@ -587,7 +593,6 @@ src/
       presentation/
       resource/
     admin/
-    legacy/
   components/
     capture/
     common/
@@ -597,7 +602,6 @@ src/
     learning/
     presentation/
     spreadsheet/
-    legacy/
   composables/
     useLearningPlanRoute.ts
   stores/
@@ -620,32 +624,29 @@ src/
 | `components/presentation` | `PresentationChatCard.vue`、`PresentationOutlineEditor.vue`、`PresentationSlidePreview.vue`，只负责 PPT 业务交互和展示 |
 | `components/spreadsheet` | `SpreadsheetChatCard.vue`，负责电子表格生成中/成功/失败任务卡；ready 文件预览进入统一资源预览 view |
 | `components/common` | `AppSelectMenu.vue` 及经过检查后确实不依赖业务字段的按钮、弹窗、状态和图标组件 |
-| `components/legacy` | 当前主线零引用但仍有参考或复用价值的旧组件 |
-
-原 `main-area/mode3-chat/*` 已迁移到 `components/chat`。旧版组合容器和欢迎页已移入 `components/legacy/chat`。
+原 `main-area/mode3-chat/*` 已迁移到 `components/chat`。旧版组合容器、欢迎页和学习工作台在确认无引用且已有替代实现后删除，不再保留 `legacy` 生产目录。
 
 ### 8.4 归档与删除策略
 
 以下文件目前仍有路由或其他页面引用，不能直接删除：
 
 - `views/ResourceCenterView.vue`
+- `views/ExamAnalysisListView.vue`、`views/ExamAnalysisView.vue`
+- `views/mindmap/*`
+- `views/admin/*`、`layout_admin/*`
 - `components/sidebar/*`
 
-以下旧页面已确认无当前路由并完成归档：
+2026-07-18 已按“入口可达性、import、测试依赖、替代实现、人工确认”完成清理：删除旧知识库列表/详情及其 Store、全部 `views/legacy` 与 `components/legacy`、零引用空壳和重复源码、示例测试及构建缓存。两个 RobotAI Learning SVG 经产品确认保留。
 
-- `views/legacy/ChatView.vue`
-- `views/legacy/LearningWorkspaceView.vue`
-
-完整文件归属和删除判断见 `docs/frontend-file-inventory.md`。本轮已确认并删除旧 `DocumentPreviewModal.vue`，其余旧知识库文件继续保留待后续分类。
+本次只收敛前端实现，不减少后端接口范围。`api/document.ts` 与 `repositories/document.ts` 仍服务试卷分析和附件链路；完整删除记录见 `docs/frontend-file-inventory.md`。
 
 建议执行顺序：
 
 1. 建立完整的路由、动态 import、静态 import 和测试引用清单。
-2. 将当前主线页面按 `chat/library/learning/presentation/spreadsheet` 分组，逐项修正 import。
-3. 将可复用组件按业务域迁移，并保持组件 API 不变。
-4. 将仍有参考价值的旧文件迁入 `legacy`，同时移除主线路由引用。
-5. 运行类型检查、单元测试和主流程页面检查。
-6. 对确认无引用且无独有逻辑的文件单独列清单，得到人工确认后删除。
+2. 确认候选文件已有主线替代，且不承载隐式类型声明或构建配置。
+3. 对源码、关联测试和临时文件分别列清单，取得人工确认。
+4. 删除确认项，并同步本说明、前端文件清单和后端接口契约。
+5. 重新执行入口可达性分析、类型检查、单元测试和生产构建。
 
 ## 9. 后续实施清单
 
@@ -704,6 +705,6 @@ src/
 - [x] 建立统一资源预览路由和 Mock/API 契约，资料库、知识库详情、资源包及对话生成文件使用同一只读页面。
 - [x] 资料库卡片/列表正文点击预览，圆形/方形选择区独立触发批量选择；学习资源操作顺序统一为预览、下载、生成/重试。
 - [x] 保留 PPT 生成工作区第 4 步预览，删除旧文档预览弹窗和学习资源页重复预览弹窗。
-- [ ] 对完全无引用、无独有逻辑的文件二次确认后删除。
+- [x] 对完全无引用、无独有逻辑且已有替代实现的文件二次确认后删除；保留产品指定的 RobotAI Learning SVG。
 
 后续每一项涉及代码或目录调整时，应单独确认范围后执行，避免一次性移动造成大量不可控变更。

@@ -1,8 +1,8 @@
 # 学生端前后端零猜测交接契约
 
-> 版本：1.2
+> 版本：1.3
 >
-> 更新日期：2026-07-17
+> 更新日期：2026-07-18
 >
 > 适用范围：新对话、资料库、智能学习、PPT/电子表格生成、语音输入、拍照/图片上传及其关联的思维导图、登录与用户设置。
 >
@@ -51,6 +51,14 @@
 
 - 选中多个资料后直接创建聊天上下文。
 - 视频上传、识别或抽帧。
+
+### 0.4 前端清理同步说明（2026-07-18）
+
+- 本轮只删除前端零引用空壳、旧版页面、重复实现、示例测试和构建缓存，不修改后端源码、数据库或本契约中的接口交付范围。
+- 旧知识库页面已经由 `/library`、`/library/:id` 和 `/resources/:resourceId/preview` 替代；后端仍须实现本文约定的知识库、文档和资料库聚合接口。
+- `src/api/document.ts` 与 `src/repositories/document.ts` 仍被当前试卷分析和附件链路使用，相关 `/api/doc/**` 接口不因旧 `documentStore` 删除而废弃。
+- 公共资源中心、试卷分析、思维导图和后台管理路由仍保留，对应现有接口继续有效。
+- 后端生成实现只应参考当前路由、`src/repositories` 和 `src/types/contracts`，不得参考已删除的 `legacy` 或旧知识库页面推导字段和状态。
 
 ## 1. 现有后端复用矩阵
 
@@ -503,9 +511,10 @@ type ChatStreamRequest = {
 - 同一媒体同时出现在 files 元数据和 mediaAssetIds 时，以 mediaAssetIds 作为模型输入，files 只用于消息展示，禁止重复上传、重复识别或重复转写。
 - 学习助教必须通过 conversation.projectId 加载权威项目上下文，不能只信任前端拼接的 tutorContext。
 - stageId、taskId、exerciseId 只用于声明当前学习页面位置；提供时必须属于 conversation.projectId，任一不匹配返回 409 CONTEXT_MISMATCH。
-- `presentation.create` 和 `spreadsheet.create` 是前端快捷入口的明确动作，不需要后端再次猜测功能类型；后端仍须校验 conversationId、conversation.projectId 和知识库权限。
+- `presentation.create` 和 `spreadsheet.create` 是前端显式触发生成时使用的明确动作，不需要后端再次猜测功能类型；后端仍须校验 conversationId、conversation.projectId 和知识库权限。
 - projectId 只用于前端声明当前页面上下文；后端必须与 conversation.projectId 交叉校验，冲突返回 409 CONTEXT_MISMATCH。
 - 未传 clientAction 时，用户自然语言是否要生成 PPT 或电子表格由后端 AI 意图层结合当前问题和会话上下文判断。前端不做正式关键词判断；后端不得照抄 Mock 的正则表达式作为正式意图算法。
+- 新对话欢迎页当前只展示“撰写或编辑、生成图片、生成 PPT、生成思维导图”四个入口；“查找资料”和“生成表格”不展示仅属于前端入口收敛，`spreadsheet.create`、电子表格任务及下载接口仍在交付范围内。
 
 ### 5.2 SSE 协议
 

@@ -3,6 +3,8 @@
 > 范围：新对话、资料库、智能学习、PPT/电子表格生成及详情页。
 >
 > 本清单只描述前端文件归属，不包含后端实现。
+>
+> 更新日期：2026-07-18
 
 ## 1. 主线路由页面
 
@@ -34,7 +36,7 @@
 | `src/components/spreadsheet` | 电子表格生成中/成功/失败任务卡；不提供配置表单，不直接执行正式 AI 或文件生成 |
 | `src/components/common` | 不依赖具体业务实体的按钮、输入、选择浮层、弹窗、状态和图标 |
 
-主线页面可以依赖上述目录。主线目录不得依赖 `src/views/legacy` 或 `src/components/legacy`。
+主线页面可以依赖上述目录。旧 `src/views/legacy` 和 `src/components/legacy` 已删除，不得重新作为新功能依赖。
 
 ## 2.1 主线数据与状态文件
 
@@ -129,7 +131,7 @@ PPT、电子表格和统一资源模型对现有主线文件的影响：
 | `src/router/index.ts` | 注册 PPT 生成工作区、电子表格任务页和 `/resources/:resourceId/preview`；旧 `/knowledge` 重定向主线 `/library` |
 | `src/stores/auth.ts` | Mock 未登录访客数据在当前标签页刷新时保留；API 模式仍清理遗留 guest Mock 数据 |
 | `src/App.vue` | Mock 未登录访客启动时重新获取 sessionStorage 中的会话、知识库和分析实体；API 未登录状态不请求业务接口 |
-| `src/views/student/chat/StudentChatView.vue` | PPT 快捷入口保持确认卡；电子表格快捷入口预填要求，发送明确 clientAction 后直接启动生成 |
+| `src/views/student/chat/StudentChatView.vue` | 欢迎页按“撰写或编辑、生成图片、生成 PPT、生成思维导图”展示四个快捷入口；不展示“查找资料”和“生成表格”，但保留电子表格路由、clientAction、任务卡和生成链路 |
 | `src/components/chat/message/MessageBubble.vue` | 渲染 PPT 确认卡和电子表格任务卡；ready 文件预览进入统一资源预览，配置/大纲和任务恢复仍进入各自工作区 |
 | `src/stores/message.ts` | 保存/恢复 presentationData、spreadsheetData，消费两种结构化 SSE 卡片并维持 sourceMessageId |
 | `src/views/student/learning/LearningResourcesView.vue` | PPT 资源可创建和恢复；所有 ready 资源通过 resourceId 进入统一预览，操作顺序为预览、下载、生成/重试 |
@@ -142,21 +144,18 @@ PPT、电子表格和统一资源模型对现有主线文件的影响：
 
 主线 Store 只编排 Repository 和当前页面内存状态。正式模式不得从 `mock` 读取实体，也不得把项目、题目、答题或资源成功状态写入 Web Storage。
 
-## 3. 已归档文件
+## 3. 已清理的替代实现
 
-以下文件没有当前主线路由或静态 import，但仍包含可参考或可复用逻辑，因此保留在 `legacy`：
+2026-07-18 完成人工二次确认后，以下前端文件已删除：
 
-| 文件 | 归档原因 |
-| --- | --- |
-| `src/views/legacy/ChatView.vue` | 旧版对话页面，已由 `StudentChatView.vue` 替代 |
-| `src/views/legacy/LearningWorkspaceView.vue` | 旧版学习工作区，已由智能学习路由组替代 |
-| `src/components/legacy/chat/MessageArea.vue` | 只服务旧版对话页面的组合容器 |
-| `src/components/legacy/chat/ChatHeader.vue` | 只被旧版 `MessageArea.vue` 使用 |
-| `src/components/legacy/chat/ChatWelcome.vue` | 旧版对话欢迎状态 |
-| `src/components/legacy/library/LibrarySelectModal.vue` | 当前零引用，但保留资料库选择交互 |
-| `src/components/legacy/learning/ProjectSelectModal.vue` | 当前零引用，但保留学习项目选择交互 |
+| 分类 | 删除内容 | 删除依据 |
+| --- | --- | --- |
+| 旧知识库实现 | `KnowledgeBaseView.vue`、`KnowledgeBaseCard.vue`、`KnowledgeBaseList.vue`、`KnowledgeBaseDetail.vue`、对应列表测试、旧 `stores/document.ts` | `/knowledge/*` 已重定向 `/library/*`；列表、详情和文件预览均有主线替代 |
+| 旧版页面与组件 | `views/legacy/*`、`components/legacy/*` | 无 Router、主线 import 或测试依赖；对话和学习工作区已有主线实现 |
+| 空壳与重复源码 | 空 `CodeBlock.vue`、`ReasoningBlock.vue`、`EmptyState.vue`、`LoadingDots.vue`，未使用 `api/index.ts`、`utils/time.ts`、重复 `views/admin/index.vue` 和异常 `src/layouts` | 零引用、无独有逻辑或已有实际路由实现 |
+| 临时文件 | `fix_imports.cjs`、`out.txt`、Playwright 官网示例、已提交的 `.vite/deps` 缓存 | 不属于产品功能、正式测试或构建输入 |
 
-归档文件不参与新功能开发。需要恢复时，应先确认接口和样式是否仍符合主线约束。
+`RobotAI-Learning-Icon-Black.svg` 与 `RobotAI-Learning-Icon-Color.svg` 经产品确认继续保留。`src/api/document.ts` 和 `src/repositories/document.ts` 仍服务试卷分析与附件链路，也继续保留。
 
 ## 4. 仍有路由的非主线模块
 
@@ -170,15 +169,13 @@ PPT、电子表格和统一资源模型对现有主线文件的影响：
 
 是否保留这些路由属于单独产品决策，不能仅凭当前主线没有入口就删除。
 
-## 5. 删除候选
+## 5. 后续删除规则
 
-本轮已删除 `src/components/knowledge/DocumentPreviewModal.vue`，并移除旧 `documentStore.getPreview/saveContent` 与 `api/document.ts` 对应零引用方法：旧 `/knowledge` 路由已重定向到 `/library`，主线已有统一资源预览，继续保留会形成第二套预览实现。
-
-本次发现的零引用文件都存在独有页面或交互逻辑，已归档处理。后续只有同时满足以下条件时才进入删除候选：
+此前已删除 `src/components/knowledge/DocumentPreviewModal.vue` 及对应零引用方法；本轮进一步删除了第 3 节列出的旧知识库和 `legacy` 实现。后续文件只有同时满足以下条件时才进入删除候选：
 
 1. 没有 Router、静态 import、动态 import 和测试引用。
 2. 没有主线仍需复用的组件、样式或业务逻辑。
 3. 已有替代实现，且恢复价值低。
 4. 得到人工二次确认。
 
-`src/views/KnowledgeBaseView.vue` 与其余 `src/components/knowledge/*` 已无主线路由，但仍有旧知识库独有逻辑，本轮不连带删除。其余 `legacy` 内文件仍是“可能复用”的隔离区，不进入生产主线路由；实际删除需另行确认。
+当前静态入口复查只剩 `src/types/simple-mind-map.d.ts` 不通过普通 import 可达；它是 TypeScript 自动加载的模块声明，且对应插件仍被思维导图功能使用，因此不是删除候选。

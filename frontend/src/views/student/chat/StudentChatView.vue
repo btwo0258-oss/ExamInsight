@@ -341,11 +341,9 @@ type HomePromptAction = {
 }
 
 const homePromptActions: HomePromptAction[] = [
-  { icon: 'image', label: '生成图片', prompt: '帮我生成一张适合学习资料使用的图片，主题是：' },
   { icon: 'edit', label: '撰写或编辑', prompt: '帮我撰写或润色这段内容：' },
-  { icon: 'search', label: '查找资料', prompt: '帮我查找并整理关于这个主题的资料：' },
+  { icon: 'image', label: '生成图片', prompt: '帮我生成一张适合学习资料使用的图片，主题是：' },
   { icon: 'sparkle', label: '生成 PPT', action: 'presentation' },
-  { icon: 'grid', label: '生成表格', action: 'spreadsheet' },
   { icon: 'mindmap', label: '生成思维导图', prompt: '帮我生成一个思维导图，主题是：' },
 ]
 
@@ -1273,7 +1271,7 @@ watch(
   width: min(760px, 100%);
   margin-top: 18px;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 
