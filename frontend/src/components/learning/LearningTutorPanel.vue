@@ -198,7 +198,7 @@ async function openFullChat() {
     const id = conversationId.value ?? await tutorStore.ensureConversation(props.plan)
     await router.push({
       path: `/chat/${id}`,
-      query: { learningProjectId: String(props.plan.id), tutor: '1' },
+      query: { projectId: String(props.plan.id), tutor: '1' },
     })
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '打开完整对话失败'
@@ -330,8 +330,8 @@ onBeforeUnmount(stopDrawerResize)
           media-purpose="learning-input"
           :media-context="{
             conversationId,
-            libraryId: plan.libraryId || null,
-            learningProjectId: plan.id,
+            knowledgeBaseId: plan.knowledgeBaseId || null,
+            projectId: plan.id,
           }"
           @send="sendQuestion"
           @stop="messageStore.stopStreaming"
@@ -365,7 +365,7 @@ onBeforeUnmount(stopDrawerResize)
 .tutor-header-actions button:hover { background: var(--ui-hover-bg); }
 .tutor-messages { flex: 1; min-height: 280px; max-height: 520px; overflow: auto; padding: 16px 18px; }
 .learning-tutor--drawer .tutor-messages { max-height: none; }
-.tutor-welcome { min-height: 190px; display: grid; align-content: center; justify-items: center; gap: 8px; color: var(--color-info); text-align: center; }
+.tutor-welcome { min-height: 190px; display: grid; align-content: center; justify-items: center; gap: 8px; color: var(--color-text); text-align: center; }
 .tutor-welcome p { max-width: 310px; margin: 0; color: var(--color-text-muted); font-size: 13px; line-height: 1.6; }
 .tutor-error { min-height: 36px; margin-bottom: 12px; padding: 8px 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid color-mix(in srgb, var(--color-danger) 35%, var(--color-border)); border-radius: 8px; color: var(--color-danger); font-size: 12px; }
 .tutor-error button { border: 0; background: transparent; color: inherit; cursor: pointer; }

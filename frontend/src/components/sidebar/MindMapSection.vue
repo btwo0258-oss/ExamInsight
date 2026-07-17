@@ -101,8 +101,8 @@ function handleRename(id: number, oldTitle: string) {
   })
 }
 
-async function handleMoveToKnowledgeBase(id: number, kbId: number | null) {
-  await mindMapStore.moveToKB(id, kbId)
+async function handleMoveToKnowledgeBase(id: number, knowledgeBaseId: number | null) {
+  await mindMapStore.moveToKB(id, knowledgeBaseId)
 }
 
 function handleDelete(id: number, title: string) {

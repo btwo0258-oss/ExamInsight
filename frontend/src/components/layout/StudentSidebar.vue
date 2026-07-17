@@ -35,6 +35,7 @@ import {
   UserRound,
 } from 'lucide-vue-next'
 import AppIcon from '@/components/common/AppIcon.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import UserProfileModal from '@/components/auth/UserProfileModal.vue'
 import LibraryKnowledgeCreateModal from '@/components/library/LibraryKnowledgeCreateModal.vue'
 import logoUrl from '@/assets/icons/ExamInsight-Logo.png'
@@ -119,8 +120,11 @@ const editingKind = ref<'project' | 'recent'>('project')
 const editingId = ref<number | null>(null)
 const editingTitle = ref('')
 const profileOpen = ref(false)
+const deletingProject = ref<SidebarProject | null>(null)
+const deleteProjectPending = ref(false)
+const deleteProjectError = ref('')
 const createProjectTitle = ref('')
-const createProjectLibraryId = ref<number | null>(null)
+const createProjectKnowledgeBaseId = ref<number | null>(null)
 const knowledgeCreateOpen = ref(false)
 const createProjectColor = ref('#000')
 const createProjectIcon = ref('folder')
@@ -188,9 +192,9 @@ const orderedProjects = computed(() => [
 ])
 
 const createLibraryLabel = computed(() =>
-  createProjectLibraryId.value === null
+  createProjectKnowledgeBaseId.value === null
     ? '无'
-    : knowledgeBaseStore.list.find((library) => library.id === createProjectLibraryId.value)?.name ?? '无',
+    : knowledgeBaseStore.list.find((library) => library.id === createProjectKnowledgeBaseId.value)?.name ?? '无',
 )
 
 const pinnedRecent = computed(() => conversationStore.list.filter((item) => item.isPinned))
@@ -251,7 +255,7 @@ function openCreateProject() {
   iconPaletteOpen.value = false
   libraryMenuOpen.value = false
   createProjectTitle.value = ''
-  createProjectLibraryId.value = null
+  createProjectKnowledgeBaseId.value = null
 }
 
 function closeCreateProjectPanels() {
@@ -282,8 +286,8 @@ function openLearningHome() {
 }
 
 function openLearningProject(project: SidebarProject) {
-  if (project.status === '待开启') {
-    go(`/chat?learningProjectId=${project.id}`)
+  if (project.status === '待开启' || project.status === '待完善') {
+    go(`/learning/new?projectId=${project.id}`)
     return
   }
   go(`/learning/${project.id}`)
@@ -372,7 +376,7 @@ function migrateLegacyConversationProjectLinks() {
   if (!isMockDataSource) return
   if (sessionStorage.getItem(PROJECT_LINK_MIGRATION_KEY)) return
   conversationStore.list.forEach((conversation) => {
-    if (conversation.learningProjectId) return
+    if (conversation.projectId) return
     const matches = learningStore.plans.filter((plan) => plan.title.trim() === (conversation.title || '').trim())
     if (matches.length === 1) {
       const project = matches[0]!
@@ -383,7 +387,7 @@ function migrateLegacyConversationProjectLinks() {
 }
 
 function selectCreateLibrary(id: number | null) {
-  createProjectLibraryId.value = id
+  createProjectKnowledgeBaseId.value = id
   libraryMenuOpen.value = false
 }
 
@@ -401,7 +405,7 @@ function createKnowledgeBaseFromProject() {
 }
 
 function handleProjectKnowledgeCreated(id: number) {
-  createProjectLibraryId.value = id
+  createProjectKnowledgeBaseId.value = id
   knowledgeCreateOpen.value = false
 }
 
@@ -410,14 +414,14 @@ async function submitCreateProject() {
   if (!title) return
   const project = await learningStore.createDraftPlan({
     title,
-    libraryId: createProjectLibraryId.value,
-    libraryName: createLibraryLabel.value,
+    knowledgeBaseId: createProjectKnowledgeBaseId.value,
+    knowledgeBaseName: createLibraryLabel.value,
     icon: createProjectIcon.value,
     iconColor: createProjectColor.value,
   })
   syncSidebarProjects()
   createProjectOpen.value = false
-  go(`/chat?learningProjectId=${project.id}`)
+  go(`/learning/new?projectId=${project.id}`)
 }
 
 function openRename(kind: 'project' | 'recent', id: number, title: string) {
@@ -433,7 +437,7 @@ async function submitRename() {
   if (!title || editingId.value === null) return
 
   if (editingKind.value === 'project') {
-    learningStore.renamePlan(editingId.value, title)
+    await learningStore.renamePlan(editingId.value, title)
     const project = sidebarProjects.value.find((item) => item.id === editingId.value)
     if (project) {
       project.title = title
@@ -457,11 +461,26 @@ function toggleProjectPinned(project: SidebarProject) {
   closeMenu()
 }
 
-function deleteProject(project: SidebarProject) {
-  sidebarProjects.value = sidebarProjects.value.filter((item) => item.id !== project.id)
-  persistProjects()
-  if (activeLearningId.value === project.id) {
-    go(orderedProjects.value[0] ? `/learning/${orderedProjects.value[0].id}` : '/learning')
+function requestDeleteProject(project: SidebarProject) {
+  deletingProject.value = project
+  deleteProjectError.value = ''
+  closeMenu()
+}
+
+async function confirmDeleteProject() {
+  const project = deletingProject.value
+  if (!project || deleteProjectPending.value) return
+  deleteProjectPending.value = true
+  deleteProjectError.value = ''
+  try {
+    await learningStore.removePlan(project.id)
+    syncSidebarProjects()
+    deletingProject.value = null
+    if (activeLearningId.value === project.id) await router.push('/learning/projects')
+  } catch (error) {
+    deleteProjectError.value = error instanceof Error ? error.message : '删除学习项目失败'
+  } finally {
+    deleteProjectPending.value = false
   }
   closeMenu()
 }
@@ -484,10 +503,10 @@ function conversationTitle(item: Conversation) {
 }
 
 function conversationProjectName(item: Conversation) {
-  if (!item.learningProjectId) return ''
+  if (!item.projectId) return ''
   if (isTutorConversation(item)) return 'AI 助教历史'
   if (isLearningSetupConversation(item)) return '方案制定记录'
-  return learningStore.getPlan(item.learningProjectId)?.title || item.learningProjectName || ''
+  return learningStore.getPlan(item.projectId)?.title || item.projectName || ''
 }
 
 function isTutorConversation(item: Conversation) {
@@ -499,14 +518,14 @@ function isTutorConversation(item: Conversation) {
 function isLearningSetupConversation(item: Conversation) {
   if (item.conversationType === 'learning-setup') return true
   if (item.conversationType === 'learning-tutor') return false
-  return Boolean(item.learningProjectId && !isTutorConversation(item))
+  return Boolean(item.projectId && !isTutorConversation(item))
 }
 
 function conversationPath(item: Conversation) {
-  if (!item.learningProjectId) return `/chat/${item.id}`
-  const query = new URLSearchParams({ learningProjectId: String(item.learningProjectId) })
+  if (!item.projectId) return `/chat/${item.id}`
+  if (isLearningSetupConversation(item)) return `/learning/setup/${item.id}?projectId=${item.projectId}`
+  const query = new URLSearchParams({ projectId: String(item.projectId) })
   if (isTutorConversation(item)) query.set('tutor', '1')
-  else query.set('learning', '1')
   return `/chat/${item.id}?${query.toString()}`
 }
 
@@ -519,7 +538,7 @@ function openProjectMenu(e: MouseEvent, project: SidebarProject) {
       action: () => toggleProjectPinned(project),
     },
     { label: '项目设置', icon: 'settings', action: openProjectSettings },
-    { label: '删除项目', icon: 'trash', danger: true, divided: true, action: () => deleteProject(project) },
+    { label: '删除项目', icon: 'trash', danger: true, divided: true, action: () => requestDeleteProject(project) },
   ])
 }
 
@@ -869,6 +888,16 @@ onBeforeUnmount(stopSidebarResize)
         </button>
       </template>
     </div>
+
+    <ConfirmDialog
+      :open="Boolean(deletingProject)"
+      title="删除学习项目"
+      :message="deleteProjectError || (deletingProject ? `确认删除“${deletingProject.title}”？项目、进度和题目将无法恢复，资料库原文件不会被删除。` : '')"
+      :confirm-text="deleteProjectPending ? '删除中…' : '确认删除'"
+      cancel-text="取消"
+      @close="deletingProject = null"
+      @confirm="confirmDeleteProject"
+    />
 
     <div v-if="editingOpen" class="modal-backdrop" @click.self="editingOpen = false">
       <section class="rename-modal">

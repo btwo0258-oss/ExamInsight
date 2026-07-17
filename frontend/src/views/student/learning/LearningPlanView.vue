@@ -3,10 +3,11 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
 import AppInput from '@/components/common/AppInput.vue'
+import AppSelectMenu from '@/components/common/AppSelectMenu.vue'
 import LearningTutorPanel from '@/components/learning/LearningTutorPanel.vue'
 import LearningRouteState from '@/components/learning/LearningRouteState.vue'
 import StudentShell from '@/components/layout/StudentShell.vue'
-import { courseLibraries } from '@/mock'
+import { courseKnowledgeBases } from '@/mock'
 import type { LearningResource, LearningTask } from '@/mock'
 import { useLearningStore } from '@/stores/learning'
 import { useLibraryResourceStore } from '@/stores/libraryResource'
@@ -16,8 +17,10 @@ const router = useRouter()
 const learningStore = useLearningStore()
 const libraryResourceStore = useLibraryResourceStore()
 const { plan, hasPlan, isLoading, loadError, loadPlan } = useLearningPlanRoute()
-const library = computed(() => courseLibraries.find((item) => item.id === plan.value.libraryId))
+const library = computed(() => courseKnowledgeBases.find((item) => item.id === plan.value.knowledgeBaseId))
 const adjustOpen = ref(false)
+const adjustSaving = ref(false)
+const adjustError = ref('')
 const tutorDrawerOpen = ref(false)
 const tutorInitialQuestion = ref('')
 const tutorInitialFiles = ref<File[]>([])
@@ -32,6 +35,7 @@ const adjustForm = ref({
   keepProgress: true,
 })
 const targetOptions = ['考试复习', '课程作业', '面试准备', '项目实战', '补弱']
+const targetSelectOptions = targetOptions.map((option) => ({ value: option, label: option }))
 const constraintOptions = ['考试复习', '先补基础', '练习驱动', '刷题强化', '结构化梳理', '代码题强化']
 
 type ResourceWithMeta = LearningResource & { source?: 'default' | 'ai-conversation' }
@@ -45,7 +49,10 @@ function profileValue(labels: string[]) {
 }
 
 function openStage(stageId: number) {
-  router.push(`/learning/${plan.value.id}/study?stage=${stageId}`)
+  const stage = plan.value.stages.find((item) => item.id === stageId)
+  const task = stage?.tasks.find((item) => item.status !== '已锁定')
+  if (!task) return
+  router.push(`/learning/${plan.value.id}/study?stage=${stageId}&task=${task.id}`)
 }
 
 function openResourcePackage() {
@@ -100,7 +107,7 @@ const taskTypeAppearance: Record<LearningTask['type'], { icon: string; color: st
 }
 
 function taskAppearance(task: LearningTask) {
-  const resource = task.resourceId ? plan.value.resources.find((item) => item.id === task.resourceId) : undefined
+  const resource = task.learningResourceId ? plan.value.resources.find((item) => item.id === task.learningResourceId) : undefined
   if (resource) return { icon: resourceIcon(resource.group), color: resourceColors[resource.group] }
   return taskTypeAppearance[task.type]
 }
@@ -138,7 +145,7 @@ ${currentPlan.goal}
 ## 基本信息
 
 - 计划周期：${currentPlan.period}
-- 资料库：${library.value?.name ?? '未选择资料库'}
+- 关联知识库：${library.value?.name ?? '未关联知识库'}
 - 目标类型：${currentPlan.targetType}
 - 当前进度：${currentPlan.progress}%
 
@@ -177,8 +184,8 @@ function exportPlanMarkdown() {
   libraryResourceStore.addPlanExportMarkdown(
     fileName,
     currentPlan.id,
-    currentPlan.relatedProjectId ?? null,
-    currentPlan.libraryId,
+    currentPlan.id,
+    currentPlan.knowledgeBaseId,
   )
 }
 
@@ -201,9 +208,18 @@ function toggleAdjustConstraint(value: string) {
     : [...adjustForm.value.preferences, value]
 }
 
-function applyAdjustPlan() {
-  learningStore.updatePlanConfig(plan.value.id, adjustForm.value)
-  adjustOpen.value = false
+async function applyAdjustPlan() {
+  if (adjustSaving.value) return
+  adjustSaving.value = true
+  adjustError.value = ''
+  try {
+    await learningStore.updatePlanConfig(plan.value.id, adjustForm.value)
+    adjustOpen.value = false
+  } catch (error) {
+    adjustError.value = error instanceof Error ? error.message : '学习计划调整失败'
+  } finally {
+    adjustSaving.value = false
+  }
 }
 </script>
 
@@ -223,7 +239,7 @@ function applyAdjustPlan() {
         </button>
         <div>
           <h1>{{ plan.title }}</h1>
-          <p>{{ plan.period }}｜资料库：{{ library?.name }}｜目标：{{ plan.targetType }}</p>
+          <p>{{ plan.period }}｜知识库：{{ library?.name ?? '未关联' }}｜目标：{{ plan.targetType }}</p>
         </div>
         <div v-if="false" class="head-actions">
           <button class="outline-btn" type="button" @click="openAdjustModal">调整计划</button>
@@ -262,7 +278,7 @@ function applyAdjustPlan() {
                   <small>{{ stage.scheduleLabel }}</small>
                 </div>
               </header>
-              <button v-for="task in stage.tasks" :key="task.id" class="task-row" type="button" @click="router.push(`/learning/${plan.id}/study?stage=${stage.id}&task=${task.id}`)">
+              <button v-for="task in stage.tasks" :key="task.id" class="task-row" type="button" :disabled="task.status === '已锁定'" @click="router.push(`/learning/${plan.id}/study?stage=${stage.id}&task=${task.id}`)">
                 <i :class="{ done: task.done, active: task.status === '进行中' }" />
                 <span class="task-main">
                   <b class="task-type-icon" :style="taskStyle(task)"><AppIcon :name="taskAppearance(task).icon" :size="13" /></b>
@@ -270,7 +286,7 @@ function applyAdjustPlan() {
                 </span>
                 <small>{{ task.done ? '已完成' : task.status ?? '未开始' }}</small>
               </button>
-              <button class="day-study-btn" type="button" @click="openStage(stage.id)">
+              <button class="day-study-btn" type="button" :disabled="stage.tasks.every((task) => task.status === '已锁定')" @click="openStage(stage.id)">
                 <AppIcon name="play" :size="16" />
                 {{ stage.tasks.every((task) => task.done) ? '查看阶段' : stage.tasks.some((task) => task.done || task.status === '进行中') ? '继续学习' : '开始阶段' }}
               </button>
@@ -355,8 +371,8 @@ function applyAdjustPlan() {
               :media-enabled="true"
               media-purpose="learning-input"
               :media-context="{
-                libraryId: plan.libraryId || null,
-                learningProjectId: plan.id,
+                knowledgeBaseId: plan.knowledgeBaseId ?? null,
+                projectId: plan.id,
               }"
               @send="askTutor"
             />
@@ -379,9 +395,7 @@ function applyAdjustPlan() {
           <div class="adjust-grid">
             <label>
               <span>目标类型</span>
-              <select v-model="adjustForm.targetType">
-                <option v-for="option in targetOptions" :key="option">{{ option }}</option>
-              </select>
+              <AppSelectMenu v-model="adjustForm.targetType" :options="targetSelectOptions" aria-label="选择目标类型" />
             </label>
             <label>
               <span>学习天数 / 周期</span>
@@ -424,9 +438,13 @@ function applyAdjustPlan() {
             </label>
           </section>
 
+          <p v-if="adjustError" class="adjust-error" role="alert">{{ adjustError }}</p>
+
           <footer>
             <button class="outline-btn" type="button" @click="adjustOpen = false">取消</button>
-            <button class="primary-btn" type="button" @click="applyAdjustPlan">应用调整</button>
+            <button class="primary-btn" type="button" :disabled="adjustSaving" @click="applyAdjustPlan">
+              {{ adjustSaving ? '保存中…' : '应用调整' }}
+            </button>
           </footer>
         </section>
       </div>
@@ -743,8 +761,14 @@ h2 {
   border-radius: var(--ui-hover-radius);
 }
 
-.task-row:hover {
+.task-row:hover:not(:disabled) {
   background: var(--ui-hover-bg);
+}
+
+.task-row:disabled,
+.day-study-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .task-row > i {
@@ -1108,8 +1132,7 @@ h2 {
   font-weight: 800;
 }
 
-.adjust-grid input,
-.adjust-grid select {
+.adjust-grid input {
   height: 40px;
   border: 1px solid var(--color-border);
   border-radius: 8px;

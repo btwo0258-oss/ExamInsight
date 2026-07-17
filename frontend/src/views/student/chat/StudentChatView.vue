@@ -16,8 +16,9 @@ import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import { useLearningStore } from '@/stores/learning'
 import LibraryKnowledgeCreateModal from '@/components/library/LibraryKnowledgeCreateModal.vue'
 import type { LearningProfileData } from '@/types/contracts/learning'
-import { courseLibraries } from '@/mock'
+import { courseKnowledgeBases } from '@/mock'
 import { isMockDataSource } from '@/config/dataSource'
+import type { ChatClientAction } from '@/repositories/chat'
 
 const conversationStore = useConversationStore()
 const messageStore = useMessageStore()
@@ -27,24 +28,26 @@ const learningStore = useLearningStore()
 const route = useRoute()
 const router = useRouter()
 
-const learningProjectId = computed(() => {
-  const value = Number(route.query.learningProjectId)
+const projectId = computed(() => {
+  const value = Number(route.query.projectId)
   return Number.isFinite(value) && value > 0 ? value : null
 })
 const routeConversation = computed(() => {
   const id = Number(route.params.id)
   return Number.isFinite(id) ? conversationStore.list.find((item) => item.id === id) : null
 })
-const isLearningChat = computed(() => route.query.learning === '1' || learningProjectId.value !== null)
-const isTutorChat = computed(() => learningProjectId.value !== null && (
+const isLearningRoute = computed(() => route.name === 'learning-new' || route.name === 'learning-setup')
+const isLearningChat = computed(() => isLearningRoute.value || route.query.learning === '1' || projectId.value !== null)
+const isTutorChat = computed(() => projectId.value !== null && (
   route.query.tutor === '1'
   || routeConversation.value?.conversationType === 'learning-tutor'
   || routeConversation.value?.title?.includes('AI 助教')
 ))
 const isLearningSetupChat = computed(() => isLearningChat.value && !isTutorChat.value)
 const tutorQuestionFromRoute = computed(() => typeof route.query.tutorQuestion === 'string' ? route.query.tutorQuestion.trim() : '')
-const learningProject = computed(() => learningProjectId.value ? learningStore.getPlan(learningProjectId.value) : null)
-const learningPhase = ref<'idle' | 'analyzing' | 'profile' | 'document' | 'generating'>('idle')
+const learningProject = computed(() => projectId.value ? learningStore.getPlan(projectId.value) : null)
+type LearningPhase = 'idle' | 'analyzing' | 'profile' | 'document' | 'generating'
+const learningPhase = ref<LearningPhase>('idle')
 const selectedKnowledgeBaseId = ref<number | null>(null)
 const knowledgeMenuOpen = ref(false)
 const knowledgeMenuQuery = ref('')
@@ -55,6 +58,7 @@ const learningPrompt = ref('')
 const confirmationDocument = ref('')
 const decisionDismissed = ref(false)
 const retryAction = ref<null | (() => void | Promise<void>)>(null)
+const pendingClientAction = ref<ChatClientAction | undefined>()
 let learningTimer: ReturnType<typeof window.setTimeout> | undefined
 let tutorRequestKey = ''
 
@@ -71,11 +75,97 @@ const emptyProfile = (): LearningProfileData => ({
 })
 const learningProfile = ref<LearningProfileData>(emptyProfile())
 const learningMediaAssetIds = ref<string[]>([])
+const learningSourceResourceIds = ref<string[]>([])
+const learningUploadedFileNames = ref<string[]>([])
+const learningConfirmationResourceId = ref<string | null>(null)
+const learningSetupId = ref<string>(crypto.randomUUID())
+const completedLearningSetupProjectIds = new Set<number>()
+let restoringLearningSetup = false
+
+type LearningSetupSessionState = {
+  setupId: string
+  knowledgeBaseId: number | null
+  prompt: string
+  profile: LearningProfileData
+  mediaAssetIds: string[]
+  sourceResourceIds: string[]
+  uploadedFileNames: string[]
+  confirmationResourceId: string | null
+  confirmationDocument: string
+  phase: LearningPhase
+  profileMessageId: string
+  documentMessageId: string
+}
+
+function learningSetupStorageKey(activeProjectId = projectId.value) {
+  return activeProjectId ? `examinsight.learning.chat-setup.v1.${activeProjectId}` : null
+}
+
+function persistLearningSetup(activeProjectId = projectId.value) {
+  const key = learningSetupStorageKey(activeProjectId)
+  if (!key || !activeProjectId || restoringLearningSetup || completedLearningSetupProjectIds.has(activeProjectId)) return
+  const state: LearningSetupSessionState = {
+    setupId: learningSetupId.value,
+    knowledgeBaseId: selectedKnowledgeBaseId.value,
+    prompt: learningPrompt.value,
+    profile: learningProfile.value,
+    mediaAssetIds: learningMediaAssetIds.value,
+    sourceResourceIds: learningSourceResourceIds.value,
+    uploadedFileNames: learningUploadedFileNames.value,
+    confirmationResourceId: learningConfirmationResourceId.value,
+    confirmationDocument: confirmationDocument.value,
+    phase: learningPhase.value,
+    profileMessageId: currentProfileMessageId.value,
+    documentMessageId: currentDocumentMessageId.value,
+  }
+  sessionStorage.setItem(key, JSON.stringify(state))
+}
+
+function restoreLearningSetup(activeProjectId = projectId.value) {
+  const key = learningSetupStorageKey(activeProjectId)
+  if (!key) return false
+  const raw = sessionStorage.getItem(key)
+  if (!raw) return false
+  try {
+    const state = JSON.parse(raw) as Partial<LearningSetupSessionState>
+    restoringLearningSetup = true
+    if (typeof state.setupId === 'string' && state.setupId) learningSetupId.value = state.setupId
+    if (state.knowledgeBaseId === null || typeof state.knowledgeBaseId === 'number') selectedKnowledgeBaseId.value = state.knowledgeBaseId
+    if (typeof state.prompt === 'string') learningPrompt.value = state.prompt
+    if (state.profile) learningProfile.value = state.profile
+    if (Array.isArray(state.mediaAssetIds)) learningMediaAssetIds.value = state.mediaAssetIds
+    if (Array.isArray(state.sourceResourceIds)) learningSourceResourceIds.value = state.sourceResourceIds
+    if (Array.isArray(state.uploadedFileNames)) learningUploadedFileNames.value = state.uploadedFileNames
+    if (typeof state.confirmationResourceId === 'string' || state.confirmationResourceId === null) {
+      learningConfirmationResourceId.value = state.confirmationResourceId ?? null
+    }
+    if (typeof state.confirmationDocument === 'string') confirmationDocument.value = state.confirmationDocument
+    if (state.phase === 'generating') learningPhase.value = 'generating'
+    else if (confirmationDocument.value) learningPhase.value = 'document'
+    else if (state.phase === 'profile' || state.phase === 'analyzing' || state.phase === 'document') learningPhase.value = 'profile'
+    else learningPhase.value = 'idle'
+    if (typeof state.profileMessageId === 'string') currentProfileMessageId.value = state.profileMessageId
+    if (typeof state.documentMessageId === 'string') currentDocumentMessageId.value = state.documentMessageId
+    return true
+  } catch {
+    sessionStorage.removeItem(key)
+    return false
+  } finally {
+    restoringLearningSetup = false
+  }
+}
+
+function clearLearningSetup(activeProjectId = projectId.value) {
+  const key = learningSetupStorageKey(activeProjectId)
+  if (key) sessionStorage.removeItem(key)
+  if (activeProjectId) completedLearningSetupProjectIds.add(activeProjectId)
+}
 
 async function requestLearningProfile(text: string) {
-  const selectedCourse = courseLibraries.find((item) => item.id === selectedKnowledgeBaseId.value)
+  const selectedCourse = courseKnowledgeBases.find((item) => item.id === selectedKnowledgeBaseId.value)
   return learningStore.generateLearningProfile({
-    libraryId: selectedKnowledgeBaseId.value ?? 0,
+    conversationId: activeChatId.value,
+    knowledgeBaseId: selectedKnowledgeBaseId.value,
     text,
     currentProfile: learningProfile.value,
     source: selectedKnowledgeBase.value?.name || '无',
@@ -86,13 +176,23 @@ async function requestLearningProfile(text: string) {
   })
 }
 
-function requestLearningConfirmation() {
-  return learningStore.generateLearningConfirmation({
-    libraryId: selectedKnowledgeBaseId.value ?? 0,
+async function requestLearningConfirmation() {
+  const result = await learningStore.generateLearningConfirmation({
+    setupId: learningSetupId.value,
+    conversationId: activeChatId.value,
+    knowledgeBaseId: selectedKnowledgeBaseId.value,
     goal: learningPrompt.value || learningProfile.value.goal,
     profile: learningProfile.value,
+    uploadedFileNames: learningUploadedFileNames.value,
     mediaAssetIds: learningMediaAssetIds.value,
+    projectId: projectId.value,
+    confirmationResourceId: learningConfirmationResourceId.value,
+    clientRequestId: crypto.randomUUID(),
   })
+  learningConfirmationResourceId.value = result.resourceId
+  learningSourceResourceIds.value = [...new Set([...learningSourceResourceIds.value, result.resourceId])]
+  persistLearningSetup()
+  return result.content
 }
 
 const availableKnowledgeBases = computed(() => {
@@ -112,6 +212,10 @@ async function loadConversationMessages(id: number) {
   if (!loaded) {
     retryAction.value = () => loadConversationMessages(id)
     return
+  }
+  if (isLearningSetupChat.value) {
+    restoreLearningSetup(projectId.value)
+    restoreLearningCards(id)
   }
   const autoMsgKey = `chat_auto_msg_${id}`
   const autoMsgStr = sessionStorage.getItem(autoMsgKey)
@@ -232,7 +336,7 @@ type HomePromptAction = {
   icon: string
   label: string
   prompt?: string
-  action?: 'presentation'
+  action?: 'presentation' | 'spreadsheet'
 }
 
 const homePromptActions: HomePromptAction[] = [
@@ -240,11 +344,34 @@ const homePromptActions: HomePromptAction[] = [
   { icon: 'edit', label: '撰写或编辑', prompt: '帮我撰写或润色这段内容：' },
   { icon: 'search', label: '查找资料', prompt: '帮我查找并整理关于这个主题的资料：' },
   { icon: 'sparkle', label: '生成 PPT', action: 'presentation' },
+  { icon: 'grid', label: '生成表格', action: 'spreadsheet' },
   { icon: 'mindmap', label: '生成思维导图', prompt: '帮我生成一个思维导图，主题是：' },
 ]
 
 function appendLearningMessage(conversationId: number, role: 'user' | 'assistant', content: string, extra: Record<string, unknown> = {}) {
   return messageStore.appendLocalMessage(conversationId, { role, content, ...extra })
+}
+
+function restoreLearningCards(conversationId: number) {
+  const items = messageStore.getMessages(conversationId)
+  if (items.some((message) => message.kind === 'learning-profile' || message.kind === 'learning-document')) return
+  if (!items.length && learningPrompt.value) appendLearningMessage(conversationId, 'user', learningPrompt.value)
+  if (confirmationDocument.value) {
+    const message = appendLearningMessage(conversationId, 'assistant', '', {
+      kind: 'learning-document',
+      learningData: { loading: false, content: confirmationDocument.value, resourceId: learningConfirmationResourceId.value },
+    })
+    currentDocumentMessageId.value = message.id
+    learningPhase.value = 'document'
+    return
+  }
+  if (learningPhase.value === 'profile') {
+    const message = appendLearningMessage(conversationId, 'assistant', '', {
+      kind: 'learning-profile',
+      learningData: { loading: false, confirmed: false, profile: learningProfile.value },
+    })
+    currentProfileMessageId.value = message.id
+  }
 }
 
 function tutorConversationStorageKey(projectId: number) {
@@ -290,21 +417,21 @@ async function ensureTutorConversation() {
   const storedId = isMockDataSource ? Number(sessionStorage.getItem(storageKey)) : 0
   const title = `${project.title} · AI 助教`
   const current = conversationStore.list.find((item) => item.id === activeChatId.value)
-  let matched = current?.id === storedId || (current?.learningProjectId === project.id && current?.title === title)
+  let matched = current?.id === storedId || (current?.projectId === project.id && current?.title === title)
     ? current
     : conversationStore.list.find((item) => item.id === storedId)
-      ?? conversationStore.list.find((item) => item.learningProjectId === project.id && item.title === title)
+      ?? conversationStore.list.find((item) => item.projectId === project.id && item.title === title)
   if (isMockDataSource && !matched && Number.isFinite(storedId) && storedId > 0) {
-    conversationStore.restoreLearningConversation(storedId, project.id, project.title, project.libraryId || null, title)
+    conversationStore.restoreLearningConversation(storedId, project.id, project.title, project.knowledgeBaseId ?? null, title)
     matched = conversationStore.list.find((item) => item.id === storedId)
   }
 
   const conversationId = matched?.id ?? await conversationStore.create({
-    kbId: project.libraryId || null,
+    knowledgeBaseId: project.knowledgeBaseId ?? null,
     title,
     navigate: false,
-    learningProjectId: project.id,
-    learningProjectName: project.title,
+    projectId: project.id,
+    projectName: project.title,
     conversationType: 'learning-tutor',
   })
   if (isMockDataSource) sessionStorage.setItem(storageKey, String(conversationId))
@@ -312,7 +439,7 @@ async function ensureTutorConversation() {
   return conversationId
 }
 
-async function sendTutorQuestion(question: string, files?: File[]) {
+async function sendTutorQuestion(question: string, files?: File[], clientAction?: ChatClientAction) {
   const nextQuestion = question.trim()
   if (!nextQuestion && !files?.length) return
   const conversationId = await ensureTutorConversation()
@@ -320,7 +447,7 @@ async function sendTutorQuestion(question: string, files?: File[]) {
   if (activeChatId.value !== conversationId) {
     await router.replace({
       path: `/chat/${conversationId}`,
-      query: { learningProjectId: String(learningProject.value.id), tutor: '1' },
+      query: { projectId: String(learningProject.value.id), tutor: '1' },
     })
   }
   await messageStore.sendMessage(
@@ -332,43 +459,47 @@ async function sendTutorQuestion(question: string, files?: File[]) {
     files,
     false,
     {
-      tutorContext: buildTutorContext(),
+      tutorContext: isMockDataSource ? buildTutorContext() : undefined,
       tutorSource: {
         projectId: learningProject.value.id,
         projectTitle: learningProject.value.title,
         page: 'chat',
         label: '完整对话',
       },
+      clientAction,
+      projectId: learningProject.value.id,
     },
   )
   conversationStore.linkLearningProject(conversationId, learningProject.value.id, learningProject.value.title, 'learning-tutor')
 }
 
 async function ensureLearningConversation(text: string) {
-  let projectId = learningProjectId.value
-  if (!projectId) {
+  let activeProjectId = projectId.value
+  if (!activeProjectId) {
     const draft = await learningStore.createDraftPlan({
       title: text.slice(0, 22) || '新学习项目',
-      libraryId: selectedKnowledgeBaseId.value,
-      libraryName: selectedKnowledgeBase.value?.name,
+      knowledgeBaseId: selectedKnowledgeBaseId.value,
+      knowledgeBaseName: selectedKnowledgeBase.value?.name,
     })
-    projectId = draft.id
+    activeProjectId = draft.id
   }
   let conversationId = activeChatId.value
   if (!conversationId) {
     conversationId = await conversationStore.create({
-      kbId: selectedKnowledgeBaseId.value,
+      knowledgeBaseId: selectedKnowledgeBaseId.value,
       title: `${learningProject.value?.title || text.slice(0, 22) || '新学习项目'} · 方案制定`,
-      learningProjectId: projectId,
-      learningProjectName: learningStore.getPlan(projectId)?.title || text.slice(0, 22),
+      projectId: activeProjectId,
+      projectName: learningStore.getPlan(activeProjectId)?.title || text.slice(0, 22),
       conversationType: 'learning-setup',
       localOnly: true,
       navigate: false,
     })
   }
-  const projectName = learningStore.getPlan(projectId)?.title || text.slice(0, 22) || '新学习项目'
-  conversationStore.linkLearningProject(conversationId, projectId, projectName, 'learning-setup')
-  await router.replace({ path: `/chat/${conversationId}`, query: { learningProjectId: String(projectId) } })
+  const projectName = learningStore.getPlan(activeProjectId)?.title || text.slice(0, 22) || '新学习项目'
+  conversationStore.linkLearningProject(conversationId, activeProjectId, projectName, 'learning-setup')
+  persistLearningSetup(activeProjectId)
+  await router.replace({ path: `/learning/setup/${conversationId}`, query: { projectId: String(activeProjectId) } })
+  restoreLearningSetup(activeProjectId)
   return conversationId
 }
 
@@ -387,7 +518,10 @@ function showProfile(conversationId: number, text: string) {
       messageStore.updateLocalMessage(conversationId, skeleton.id, {
         learningData: { loading: false, confirmed: false, profile: learningProfile.value },
       })
-      if (activeChatId.value === conversationId) learningPhase.value = 'profile'
+      if (activeChatId.value === conversationId) {
+        learningPhase.value = 'profile'
+        persistLearningSetup()
+      }
     } catch (error) {
       messageStore.updateLocalMessage(conversationId, skeleton.id, {
         kind: undefined,
@@ -411,25 +545,27 @@ async function onSend(text: string, files?: File[], complete?: (success?: boolea
   if (files?.length && isLearningSetupChat.value) {
     const uploaded = await libraryResourceStore.uploadFiles(
       files,
-      '智能学习上传',
-      learningProjectId.value,
+      'learning',
+      projectId.value,
       selectedKnowledgeBaseId.value,
     )
     const nextMediaIds = uploaded
-      .filter((item) => item.id.startsWith('media:') && item.externalKey)
+      .filter((item) => item.resourceId.startsWith('media:') && item.externalKey)
       .map((item) => item.externalKey)
     learningMediaAssetIds.value = [...new Set([...learningMediaAssetIds.value, ...nextMediaIds])]
+    learningSourceResourceIds.value = [...new Set([...learningSourceResourceIds.value, ...uploaded.map((item) => item.resourceId)])]
+    learningUploadedFileNames.value = [...new Set([...learningUploadedFileNames.value, ...files.map((file) => file.name)])]
   } else if (files?.length && isMockDataSource) {
     libraryResourceStore.addFiles(
       files,
-      '聊天上传',
+      'chat',
       null,
       currentConversation.value?.knowledgeBaseId ?? null,
     )
   }
 
   if (isTutorChat.value) {
-    await sendTutorQuestion(text, files)
+    await sendTutorQuestion(text, files, pendingClientAction.value)
     succeeded = !messageStore.errorMessage
     return
   }
@@ -440,19 +576,21 @@ async function onSend(text: string, files?: File[], complete?: (success?: boolea
       files: files?.map((file) => ({ name: file.name, type: file.type, size: file.size })),
     })
     learningPrompt.value ||= text
-    learningProfile.value = (await requestLearningProfile(`${learningPrompt.value} ${text}`)).profile
     if (learningPhase.value === 'document') {
+      learningProfile.value = (await requestLearningProfile(`${learningPrompt.value} ${text}`)).profile
       appendLearningMessage(conversationId, 'assistant', '好的，我已根据你的补充更新学习画像和方案确认稿。')
       confirmationDocument.value = await requestLearningConfirmation()
       if (currentDocumentMessageId.value) {
         messageStore.updateLocalMessage(conversationId, currentDocumentMessageId.value, {
-          learningData: { loading: false, content: confirmationDocument.value },
+          learningData: { loading: false, content: confirmationDocument.value, resourceId: learningConfirmationResourceId.value },
         })
       }
       decisionDismissed.value = false
+      persistLearningSetup()
       succeeded = true
       return
     }
+    persistLearningSetup()
     showProfile(conversationId, `${learningPrompt.value} ${text}`)
     succeeded = true
     return
@@ -460,16 +598,23 @@ async function onSend(text: string, files?: File[], complete?: (success?: boolea
 
   if (!activeChatId.value) {
     const newChatId = await conversationStore.create()
-    await messageStore.sendMessage(newChatId, text, undefined, undefined, undefined, files)
+    await messageStore.sendMessage(newChatId, text, undefined, undefined, undefined, files, false, {
+      clientAction: pendingClientAction.value,
+      projectId: projectId.value,
+    })
     succeeded = !messageStore.errorMessage
     return
   }
 
-  await messageStore.sendMessage(activeChatId.value, text, undefined, undefined, undefined, files)
+  await messageStore.sendMessage(activeChatId.value, text, undefined, undefined, undefined, files, false, {
+    clientAction: pendingClientAction.value,
+    projectId: projectId.value,
+  })
   succeeded = !messageStore.errorMessage
   } catch (error) {
     reportFlowError(error, '消息发送失败', () => onSend(text, files))
   } finally {
+    if (succeeded) pendingClientAction.value = undefined
     complete?.(succeeded)
   }
 }
@@ -487,16 +632,18 @@ async function confirmLearningProfile(messageId: string) {
     learningData: { loading: true, content: '' },
   })
   currentDocumentMessageId.value = documentMessage.id
+  persistLearningSetup()
   if (learningTimer) window.clearTimeout(learningTimer)
   learningTimer = window.setTimeout(async () => {
     try {
       confirmationDocument.value = await requestLearningConfirmation()
       messageStore.updateLocalMessage(conversationId, documentMessage.id, {
-        learningData: { loading: false, content: confirmationDocument.value },
+        learningData: { loading: false, content: confirmationDocument.value, resourceId: learningConfirmationResourceId.value },
       })
       if (activeChatId.value !== conversationId) return
       decisionDismissed.value = false
       learningPhase.value = 'document'
+      persistLearningSetup()
     } catch (error) {
       messageStore.updateLocalMessage(conversationId, documentMessage.id, {
         learningData: { loading: false, content: '' },
@@ -514,14 +661,16 @@ function updateLearningProfile(messageId: string, profile: LearningProfileData) 
   messageStore.updateLocalMessage(activeChatId.value, messageId, {
     learningData: { loading: false, confirmed: false, profile },
   })
+  persistLearningSetup()
 }
 
 function updateLearningDocument(messageId: string, content: string) {
   if (!activeChatId.value) return
   confirmationDocument.value = content
   messageStore.updateLocalMessage(activeChatId.value, messageId, {
-    learningData: { loading: false, content },
+    learningData: { loading: false, content, resourceId: learningConfirmationResourceId.value },
   })
+  persistLearningSetup()
 }
 
 function regenerateLearningDocument(messageId: string) {
@@ -537,10 +686,11 @@ function regenerateLearningDocument(messageId: string) {
     try {
       confirmationDocument.value = await requestLearningConfirmation()
       messageStore.updateLocalMessage(conversationId, messageId, {
-        learningData: { loading: false, content: confirmationDocument.value },
+        learningData: { loading: false, content: confirmationDocument.value, resourceId: learningConfirmationResourceId.value },
       })
       if (activeChatId.value !== conversationId) return
       learningPhase.value = 'document'
+      persistLearningSetup()
     } catch (error) {
       messageStore.updateLocalMessage(conversationId, messageId, {
         learningData: { loading: false, content: '' },
@@ -555,6 +705,7 @@ function regenerateLearningDocument(messageId: string) {
 function continueEditing() {
   decisionDismissed.value = true
   homeInputRef.value?.setText('')
+  persistLearningSetup()
 }
 
 function selectKnowledgeBase(id: number | null) {
@@ -563,6 +714,7 @@ function selectKnowledgeBase(id: number | null) {
   knowledgeMenuOpen.value = false
   knowledgeMenuQuery.value = ''
   if (activeChatId.value) void conversationStore.moveToKnowledgeBase(activeChatId.value, id)
+  persistLearningSetup()
 }
 
 function handleKnowledgeCreated(id: number) {
@@ -572,14 +724,15 @@ function handleKnowledgeCreated(id: number) {
 
 function scheduleLearningPlanGeneration(conversationId: number) {
   learningPhase.value = 'generating'
+  persistLearningSetup()
   if (learningTimer) window.clearTimeout(learningTimer)
   learningTimer = window.setTimeout(async () => {
     try {
       const profile = learningProfile.value
+      const draftProjectId = projectId.value
       const generated = await learningStore.createPlan({
         prompt: confirmationDocument.value || learningPrompt.value,
-        libraryId: learningProject.value?.libraryId || selectedKnowledgeBaseId.value || 1,
-        projectId: learningProjectId.value,
+        knowledgeBaseId: selectedKnowledgeBaseId.value,
         targetType: profile.goal,
         preferences: profile.preferences,
         resourceGroups: ['思维导图'],
@@ -590,15 +743,13 @@ function scheduleLearningPlanGeneration(conversationId: number) {
         studyDepth: profile.preferences.includes('项目实操') ? '项目实操' : profile.preferences.includes('练习驱动') ? '刷题强化' : '系统学习',
         questionCount: 60,
         supplementalRequirement: profile.extra,
-        draftPlanId: learningProjectId.value,
-        libraryName: selectedKnowledgeBase.value?.name,
+        sourceResourceIds: learningSourceResourceIds.value,
+        mediaAssetIds: learningMediaAssetIds.value,
+        confirmationResourceId: learningConfirmationResourceId.value,
+        draftPlanId: draftProjectId,
+        knowledgeBaseName: selectedKnowledgeBase.value?.name,
       })
-      const mindMap = generated.resources.find((resource) => resource.group === '思维导图')
-      if (mindMap) {
-        void learningStore.generateResource(generated.id, mindMap.id).catch((error) => {
-          console.error('Failed to generate mind map resource:', error)
-        })
-      }
+      clearLearningSetup(draftProjectId)
       if (activeChatId.value === conversationId) await router.push(`/learning/${generated.id}`)
     } catch (error) {
       if (activeChatId.value !== conversationId) return
@@ -606,6 +757,23 @@ function scheduleLearningPlanGeneration(conversationId: number) {
       reportFlowError(error, '学习方案生成失败', () => scheduleLearningPlanGeneration(conversationId))
     }
   }, 900)
+}
+
+async function resumeLearningPlanGeneration() {
+  const draftProjectId = projectId.value
+  const active = learningStore.activePlanGeneration
+  if (!isLearningSetupChat.value || !draftProjectId || !active || active.draftPlanId !== draftProjectId) return
+  learningPhase.value = 'generating'
+  try {
+    const generated = await learningStore.resumePlanGeneration(draftProjectId)
+    if (!generated) return
+    clearLearningSetup(draftProjectId)
+    await router.replace(`/learning/${generated.id}`)
+  } catch (error) {
+    learningPhase.value = confirmationDocument.value ? 'document' : 'profile'
+    persistLearningSetup(draftProjectId)
+    reportFlowError(error, '学习方案生成恢复失败', resumeLearningPlanGeneration)
+  }
 }
 
 function confirmLearningPlan() {
@@ -616,21 +784,52 @@ function confirmLearningPlan() {
   scheduleLearningPlanGeneration(conversationId)
 }
 
-function fillHomePrompt(prompt: string) {
+function fillHomePrompt(prompt: string, clientAction?: ChatClientAction) {
+  pendingClientAction.value = clientAction
   homeInputRef.value?.setText(prompt)
 }
 
-function runHomePromptAction(action: HomePromptAction) {
-  if (action.action !== 'presentation') {
+async function runHomePromptAction(action: HomePromptAction) {
+  if (!action.action) {
     if (action.prompt) fillHomePrompt(action.prompt)
     return
   }
 
-  const query: Record<string, string> = { returnTo: route.fullPath }
-  if (activeChatId.value) query.conversationId = String(activeChatId.value)
-  if (selectedKnowledgeBaseId.value) query.libraryId = String(selectedKnowledgeBaseId.value)
-  if (learningProjectId.value) query.learningProjectId = String(learningProjectId.value)
-  void router.push({ path: '/presentations/new', query })
+  if (action.action === 'spreadsheet') {
+    fillHomePrompt('请根据以下要求、当前对话和我上传的文件直接生成电子表格：', 'spreadsheet.create')
+    return
+  }
+
+  if (messageStore.isStreaming) return
+  try {
+    const conversationId = activeChatId.value ?? await conversationStore.create({
+      knowledgeBaseId: selectedKnowledgeBaseId.value,
+      title: 'PPT 创作',
+      navigate: false,
+      projectId: projectId.value,
+      projectName: learningProject.value?.title,
+      conversationType: isTutorChat.value ? 'learning-tutor' : 'general',
+    })
+    if (activeChatId.value !== conversationId) {
+      const query = projectId.value ? { projectId: String(projectId.value) } : undefined
+      await router.replace({ path: `/chat/${conversationId}`, query })
+    }
+    await messageStore.sendMessage(
+      conversationId,
+      '生成 PPT',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      {
+        clientAction: 'presentation.create',
+        projectId: projectId.value,
+      },
+    )
+  } catch (error) {
+    reportFlowError(error, 'PPT 创建入口加载失败', () => runHomePromptAction(action))
+  }
 }
 
 function handleKeyDown(e: KeyboardEvent) {
@@ -676,31 +875,68 @@ function handleToggleMindMapSidebar() {
   mindMapSidebarCollapsed.value = !mindMapSidebarCollapsed.value
 }
 
+async function initializeLearningChat() {
+  try {
+    await Promise.all([knowledgeBaseStore.fetchList(), learningStore.fetchPlans()])
+    if (!isLearningSetupChat.value) return
+    const project = projectId.value ? learningStore.getPlan(projectId.value) : null
+    if (project?.knowledgeBaseId !== null && project?.knowledgeBaseId !== undefined) {
+      selectedKnowledgeBaseId.value = project.knowledgeBaseId
+    }
+    restoreLearningSetup(projectId.value)
+    if (activeChatId.value) restoreLearningCards(activeChatId.value)
+    await resumeLearningPlanGeneration()
+  } catch (error) {
+    reportFlowError(error, '初始化学习方案对话失败', initializeLearningChat)
+  }
+}
+
 onMounted(() => {
   conversationStore.init()
-  knowledgeBaseStore.fetchList()
+  void initializeLearningChat()
   window.addEventListener('keydown', handleKeyDown)
 })
 
+let routeIntentHandled = false
+watch(
+  [() => route.query.intent, homeInputRef],
+  ([intent, input]) => {
+    if (routeIntentHandled || intent !== 'spreadsheet' || !input) return
+    routeIntentHandled = true
+    fillHomePrompt('请根据以下要求、当前对话和我上传的文件直接生成电子表格：', 'spreadsheet.create')
+  },
+  { immediate: true, flush: 'post' },
+)
+
 onUnmounted(() => {
   if (learningTimer) window.clearTimeout(learningTimer)
+  persistLearningSetup()
   window.removeEventListener('keydown', handleKeyDown)
 })
 
 watch(
-  [isLearningChat, learningProjectId],
-  ([learning, projectId]) => {
+  [isLearningChat, projectId, () => route.query.knowledgeBaseId, availableKnowledgeBases],
+  ([learning, activeProjectId, requestedKnowledgeBaseId]) => {
     if (!learning) return
-    const project = projectId ? learningStore.getPlan(projectId) : null
-    if (project?.libraryId) selectedKnowledgeBaseId.value = project.libraryId
+    const project = activeProjectId ? learningStore.getPlan(activeProjectId) : null
+    if (project?.knowledgeBaseId !== null && project?.knowledgeBaseId !== undefined) {
+      selectedKnowledgeBaseId.value = project.knowledgeBaseId
+      return
+    }
+    const requestedId = Number(requestedKnowledgeBaseId)
+    if (!activeProjectId && availableKnowledgeBases.value.some((item) => item.id === requestedId)) {
+      selectedKnowledgeBaseId.value = requestedId
+    }
   },
   { immediate: true },
 )
 
 watch(
-  [activeChatId, learningProjectId],
-  ([chatId, projectId], previous) => {
-    if (previous && chatId === previous[0] && projectId === previous[1]) return
+  [activeChatId, projectId],
+  ([chatId, activeProjectId], previous) => {
+    if (previous && chatId === previous[0] && activeProjectId === previous[1]) return
+    const previousProjectId = previous?.[1]
+    if (previousProjectId) persistLearningSetup(previousProjectId)
     if (learningTimer) window.clearTimeout(learningTimer)
     learningPhase.value = 'idle'
     currentProfileMessageId.value = ''
@@ -709,8 +945,32 @@ watch(
     confirmationDocument.value = ''
     decisionDismissed.value = false
     learningProfile.value = emptyProfile()
+    learningMediaAssetIds.value = []
+    learningSourceResourceIds.value = []
+    learningUploadedFileNames.value = []
+    learningConfirmationResourceId.value = null
+    learningSetupId.value = crypto.randomUUID()
+    if (activeProjectId) restoreLearningSetup(activeProjectId)
   },
   { flush: 'sync' },
+)
+
+watch(
+  [
+    selectedKnowledgeBaseId,
+    learningPrompt,
+    learningProfile,
+    learningMediaAssetIds,
+    learningSourceResourceIds,
+    learningUploadedFileNames,
+    learningConfirmationResourceId,
+    confirmationDocument,
+    learningPhase,
+    currentProfileMessageId,
+    currentDocumentMessageId,
+  ],
+  () => persistLearningSetup(),
+  { deep: true },
 )
 
 watch(
@@ -721,6 +981,10 @@ watch(
     if (lastDocument?.learningData) {
       currentDocumentMessageId.value = lastDocument.id
       confirmationDocument.value = lastDocument.learningData.content || ''
+      if (lastDocument.learningData.resourceId) {
+        learningConfirmationResourceId.value = lastDocument.learningData.resourceId
+        learningSourceResourceIds.value = [...new Set([...learningSourceResourceIds.value, lastDocument.learningData.resourceId])]
+      }
       learningPhase.value = lastDocument.learningData.loading ? 'analyzing' : 'document'
       return
     }
@@ -735,7 +999,7 @@ watch(
 )
 
 watch(
-  [isTutorChat, tutorQuestionFromRoute, learningProjectId],
+  [isTutorChat, tutorQuestionFromRoute, projectId],
   async ([tutor, question, projectId]) => {
     if (!tutor || !question || !projectId) return
     const requestKey = `${projectId}:${question}`
@@ -748,7 +1012,7 @@ watch(
     }
     await router.replace({
       path: `/chat/${conversationId}`,
-      query: { learningProjectId: String(projectId), tutor: '1' },
+      query: { projectId: String(projectId), tutor: '1' },
     })
     await sendTutorQuestion(question)
     tutorRequestKey = ''
@@ -778,12 +1042,13 @@ watch(
           <div class="chat-home__main">
             <h1>{{ isTutorChat ? '围绕当前学习项目提问' : isLearningChat ? '想制定怎样的学习计划？' : '我们先从哪里开始呢？' }}</h1>
 
-            <div class="home-action-chips">
+            <div v-if="!isLearningSetupChat" class="home-action-chips">
               <button
                 v-for="action in homePromptActions"
                 :key="action.label"
                 class="home-action-chip ui-hover-row"
                 type="button"
+                :disabled="messageStore.isStreaming"
                 @click="runHomePromptAction(action)"
               >
                 <AppIcon :name="action.icon" :size="18" />
@@ -827,8 +1092,8 @@ watch(
           :media-purpose="isLearningChat ? 'learning-input' : 'chat-attachment'"
           :media-context="{
             conversationId: activeChatId,
-            libraryId: selectedKnowledgeBaseId,
-            learningProjectId,
+            knowledgeBaseId: selectedKnowledgeBaseId,
+            projectId,
           }"
           placeholder="输入消息，Enter 发送，Shift+Enter 换行"
           @send="onSend"

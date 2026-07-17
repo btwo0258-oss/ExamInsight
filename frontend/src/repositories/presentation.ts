@@ -10,8 +10,8 @@ import type {
   PresentationPreviewPage,
   PresentationSlideOutline,
   PresentationTemplateDto,
-  SavePresentationToLibraryRequest,
   StartPresentationGenerationRequest,
+  UpdatePresentationDraftRequest,
   UpdatePresentationOutlineRequest,
 } from '@/types/contracts/presentation'
 
@@ -20,13 +20,13 @@ export interface PresentationRepository {
   list(): Promise<PresentationDto[]>
   get(id: string): Promise<PresentationDto>
   create(input: CreatePresentationRequest): Promise<PresentationDto>
+  updateDraft(id: string, input: UpdatePresentationDraftRequest): Promise<PresentationDto>
   startOutlineGeneration(id: string, clientRequestId: string): Promise<PresentationOutlineJob>
   updateOutline(id: string, input: UpdatePresentationOutlineRequest): Promise<PresentationDto>
   startGeneration(id: string, input: StartPresentationGenerationRequest): Promise<PresentationGenerationJob>
   getJob<T>(jobId: string): Promise<AsyncJob<T>>
   cancelJob(jobId: string): Promise<void>
   retryGeneration(id: string, input: StartPresentationGenerationRequest): Promise<PresentationGenerationJob>
-  saveToLibrary(id: string, input: SavePresentationToLibraryRequest): Promise<PresentationDto>
   download(id: string): Promise<Blob>
 }
 
@@ -212,6 +212,7 @@ function completePresentationJob(job: StoredJob) {
   presentation.status = 'ready'
   presentation.activeJobId = undefined
   presentation.fileName = `${presentation.config.title.trim() || presentation.config.topic.trim() || '演示文稿'}.pptx`
+  presentation.resourceId = `presentation:${presentation.id}`
   presentation.errorCode = undefined
   presentation.errorMessage = undefined
   presentation.updatedAt = now()
@@ -353,7 +354,6 @@ const mockPresentationRepository: PresentationRepository = {
         topic: input.topic,
         title: input.title,
         pageCount: input.pageCount,
-        outlineMode: input.outlineMode,
         templateId: input.templateId,
         aspectRatio: input.aspectRatio,
         style: input.style,
@@ -366,14 +366,33 @@ const mockPresentationRepository: PresentationRepository = {
       outline: [],
       previewPages: [],
       conversationId: input.conversationId ?? null,
-      libraryId: input.libraryId ?? null,
-      learningProjectId: input.learningProjectId ?? null,
+      sourceMessageId: input.sourceMessageId ?? null,
+      knowledgeBaseId: input.knowledgeBaseId ?? null,
+      projectId: input.projectId ?? null,
       learningResourceId: input.learningResourceId ?? null,
       createdAt: timestamp,
       updatedAt: timestamp,
     }
     updateMockPresentation(presentation)
     return structuredClone(presentation)
+  },
+  async updateDraft(presentationId, input) {
+    const presentation = getMockPresentation(presentationId)
+    if (!['draft', 'outline_ready', 'cancelled'].includes(presentation.status)) {
+      throw new Error('当前 PPT 状态不能修改配置')
+    }
+    presentation.config = {
+      ...input.config,
+      sourceFileNames: input.config.sourceFileNames ? [...input.config.sourceFileNames] : undefined,
+      mediaAssetIds: input.config.mediaAssetIds ? [...input.config.mediaAssetIds] : undefined,
+    }
+    presentation.conversationId = input.conversationId ?? presentation.conversationId ?? null
+    presentation.sourceMessageId = input.sourceMessageId ?? presentation.sourceMessageId ?? null
+    presentation.knowledgeBaseId = input.knowledgeBaseId ?? null
+    presentation.projectId = input.projectId ?? null
+    presentation.learningResourceId = input.learningResourceId ?? presentation.learningResourceId ?? null
+    presentation.updatedAt = now()
+    return structuredClone(updateMockPresentation(presentation))
   },
   async startOutlineGeneration(presentationId) {
     const presentation = getMockPresentation(presentationId)
@@ -427,14 +446,6 @@ const mockPresentationRepository: PresentationRepository = {
   async retryGeneration(presentationId) {
     return this.startGeneration(presentationId, { clientRequestId: id('retry') })
   },
-  async saveToLibrary(presentationId, input) {
-    const presentation = getMockPresentation(presentationId)
-    if (presentation.status !== 'ready') throw new Error('PPT 尚未生成完成')
-    presentation.libraryId = input.libraryId
-    presentation.libraryResourceId = `presentation:${presentation.id}`
-    presentation.updatedAt = now()
-    return structuredClone(updateMockPresentation(presentation))
-  },
   async download(presentationId) {
     const presentation = getMockPresentation(presentationId)
     if (presentation.status !== 'ready') throw new Error('PPT 尚未生成完成')
@@ -464,6 +475,9 @@ const apiPresentationRepository: PresentationRepository = {
   async create(input) {
     return unwrap<PresentationDto>(await request.post('/api/presentations', input))
   },
+  async updateDraft(id, input) {
+    return unwrap<PresentationDto>(await request.put(`/api/presentations/${id}/draft`, input))
+  },
   async startOutlineGeneration(id, clientRequestId) {
     return unwrap<PresentationOutlineJob>(await request.post(`/api/presentations/${id}/outline-jobs`, { clientRequestId }))
   },
@@ -481,9 +495,6 @@ const apiPresentationRepository: PresentationRepository = {
   },
   async retryGeneration(id, input) {
     return unwrap<PresentationGenerationJob>(await request.post(`/api/presentations/${id}/generation-jobs`, input))
-  },
-  async saveToLibrary(id, input) {
-    return unwrap<PresentationDto>(await request.post(`/api/presentations/${id}/library`, input))
   },
   async download(id) {
     const response = await request.get(`/api/presentations/${id}/download`, { responseType: 'blob' })

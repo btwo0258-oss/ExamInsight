@@ -10,7 +10,7 @@ function createEmptyPlan(id: number): LearningPlan {
     title: '',
     goal: '',
     updatedAt: '',
-    libraryId: 0,
+    knowledgeBaseId: null,
     status: '待开启',
     period: '',
     targetType: '',

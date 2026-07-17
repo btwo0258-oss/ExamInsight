@@ -10,10 +10,14 @@ import { useLibraryResourceStore } from '@/stores/libraryResource'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import type { LibraryResource } from '@/stores/libraryResource'
 import type { KnowledgeBase } from '@/api/knowledgeBase'
+import type { ResourceFileType, ResourceSourceType } from '@/types/contracts/library'
 import { presentationRepository } from '@/repositories/presentation'
+import { spreadsheetRepository } from '@/repositories/spreadsheet'
+import { resourcePreviewRoute } from '@/utils/resourcePreview'
 
 type LibraryFilter = 'all' | 'knowledge' | 'mindmap' | 'image' | 'file'
 type ViewMode = 'grid' | 'list'
+type AdvancedFileType = Extract<ResourceFileType, 'image' | 'document' | 'spreadsheet' | 'presentation' | 'pdf'>
 type LibraryAsset =
   | { kind: 'knowledge'; id: string; source: KnowledgeBase }
   | { kind: 'file'; id: string; source: LibraryResource }
@@ -30,9 +34,12 @@ const searchQuery = ref('')
 const selectedIds = ref<string[]>([])
 const knowledgeMenuId = ref<string | null>(null)
 const fileMenuId = ref<string | null>(null)
+const filterMenuOpen = ref(false)
+const sourceFilter = ref<ResourceSourceType | null>(null)
+const fileTypeFilter = ref<AdvancedFileType | null>(null)
 const moveModalOpen = ref(false)
 const moveResourceIds = ref<string[]>([])
-const moveTargetLibraryId = ref<number | null>(null)
+const moveTargetKnowledgeBaseId = ref<number | null>(null)
 const deleteTargets = ref<LibraryAsset[]>([])
 const actionError = ref('')
 
@@ -43,33 +50,51 @@ const filters: Array<{ label: string; value: LibraryFilter }> = [
   { label: '图片', value: 'image' },
   { label: '文件', value: 'file' },
 ]
+const sourceFilterOptions: Array<{ value: ResourceSourceType; label: string; icon: string }> = [
+  { value: 'uploaded', label: '已上传', icon: 'upload-cloud' },
+  { value: 'generated', label: '已生成', icon: 'sparkle' },
+]
+const fileTypeFilterOptions: Array<{ value: AdvancedFileType; label: string; icon: string }> = [
+  { value: 'image', label: '图片', icon: 'image' },
+  { value: 'document', label: '文档', icon: 'file' },
+  { value: 'spreadsheet', label: '电子表格', icon: 'grid' },
+  { value: 'presentation', label: '演示文稿', icon: 'presentation' },
+  { value: 'pdf', label: 'PDF', icon: 'file' },
+]
 
 const knowledgeAssets = computed<LibraryAsset[]>(() =>
   knowledgeBaseStore.list.map((source) => ({ kind: 'knowledge', id: `knowledge-${source.id}`, source })),
 )
 
 const fileAssets = computed<LibraryAsset[]>(() =>
-  libraryResourceStore.resources.map((source) => ({ kind: 'file', id: `file-${source.id}`, source })),
+  libraryResourceStore.resources.map((source) => ({ kind: 'file', id: `file-${source.resourceId}`, source })),
 )
 
 const visibleAssets = computed(() => {
   let assets: LibraryAsset[] = []
   if (activeFilter.value === 'knowledge') assets = knowledgeAssets.value
   if (activeFilter.value === 'mindmap') {
-    assets = fileAssets.value.filter((asset) => asset.kind === 'file' && asset.source.category === 'mindmap')
+    assets = fileAssets.value.filter((asset) => asset.kind === 'file' && asset.source.fileType === 'mindmap')
   } else if (activeFilter.value === 'image') {
-    assets = fileAssets.value.filter((asset) => asset.kind === 'file' && asset.source.category === 'image')
+    assets = fileAssets.value.filter((asset) => asset.kind === 'file' && asset.source.fileType === 'image')
   } else if (activeFilter.value === 'file') {
-    assets = fileAssets.value.filter((asset) => asset.kind === 'file' && asset.source.category === 'file')
+    assets = fileAssets.value.filter((asset) => asset.kind === 'file' && !['image', 'mindmap'].includes(asset.source.fileType))
   } else if (activeFilter.value !== 'knowledge') {
     assets = [...knowledgeAssets.value, ...fileAssets.value]
+  }
+  if (sourceFilter.value || fileTypeFilter.value) {
+    assets = assets.filter((asset) => (
+      asset.kind === 'file'
+      && (!sourceFilter.value || asset.source.sourceType === sourceFilter.value)
+      && (!fileTypeFilter.value || asset.source.fileType === fileTypeFilter.value)
+    ))
   }
   const query = searchQuery.value.trim().toLocaleLowerCase()
   if (!query) return assets
   return assets.filter((asset) => {
     const text = asset.kind === 'knowledge'
       ? `${asset.source.name} ${asset.source.description || ''}`
-      : `${asset.source.name} ${asset.source.type} ${asset.source.source}`
+      : `${asset.source.name} ${asset.source.format} ${sourceLabel(asset.source)}`
     return text.toLocaleLowerCase().includes(query)
   })
 })
@@ -85,6 +110,7 @@ const firstFileAfterKnowledgeId = computed(() => {
 
 const selectedCount = computed(() => selectedIds.value.length)
 const hasSelection = computed(() => selectedCount.value > 0)
+const activeAdvancedFilterCount = computed(() => Number(Boolean(sourceFilter.value)) + Number(Boolean(fileTypeFilter.value)))
 
 function openNewMenu() {
   newMenuOpen.value = !newMenuOpen.value
@@ -136,10 +162,10 @@ function closeFileMenu() {
 }
 
 function openMoveModal(resourceIds?: string[]) {
-  const ids = resourceIds ?? selectedAssets.value.filter((asset) => asset.kind === 'file').map((asset) => String(asset.source.id))
+  const ids = resourceIds ?? selectedAssets.value.filter((asset) => asset.kind === 'file').map((asset) => asset.source.resourceId)
   if (!ids.length) return
   moveResourceIds.value = ids
-  moveTargetLibraryId.value = null
+  moveTargetKnowledgeBaseId.value = null
   moveModalOpen.value = true
   closeFileMenu()
 }
@@ -150,19 +176,43 @@ function openKnowledgeFromMove() {
 }
 
 function fileSize(file: LibraryResource) {
-  return file.size
+  if (!file.sizeBytes) return '—'
+  if (file.sizeBytes < 1024 * 1024) return `${Math.max(1, Math.round(file.sizeBytes / 1024))} KB`
+  return `${(file.sizeBytes / 1024 / 1024).toFixed(1)} MB`
 }
 
 function fileIconName(file: LibraryResource) {
-  if (file.category === 'mindmap') return 'mind-topic'
-  if (presentationId(file)) return 'presentation'
-  if (file.type === 'PDF') return 'file'
-  if (file.type === 'Word') return 'book'
+  if (file.fileType === 'mindmap') return 'mind-topic'
+  if (file.fileType === 'presentation') return 'presentation'
+  if (file.fileType === 'spreadsheet') return 'grid'
+  if (file.fileType === 'image') return 'image'
+  if (file.fileType === 'document') return 'book'
   return 'file'
+}
+
+function sourceLabel(file: LibraryResource) {
+  if (file.sourceType === 'uploaded') {
+    if (file.origin === 'learning') return '智能学习上传'
+    if (file.origin === 'chat') return '聊天上传'
+    return '资料库上传'
+  }
+  return file.origin === 'learning' ? '智能学习生成' : 'AI 生成'
+}
+
+function toggleSourceFilter(value: ResourceSourceType) {
+  sourceFilter.value = sourceFilter.value === value ? null : value
+}
+
+function toggleFileTypeFilter(value: AdvancedFileType) {
+  fileTypeFilter.value = fileTypeFilter.value === value ? null : value
 }
 
 function presentationId(file: LibraryResource) {
   return file.externalKey?.startsWith('presentation:') ? file.externalKey.slice('presentation:'.length) : ''
+}
+
+function spreadsheetId(file: LibraryResource) {
+  return file.externalKey?.startsWith('spreadsheet:') ? file.externalKey.slice('spreadsheet:'.length) : ''
 }
 
 function openAsset(asset: LibraryAsset) {
@@ -170,14 +220,12 @@ function openAsset(asset: LibraryAsset) {
     void router.push(`/library/${asset.source.id}`)
     return
   }
-  const id = presentationId(asset.source)
-  if (id) void router.push({ path: `/presentations/${id}`, query: { returnTo: '/library' } })
-  else toggleSelection(asset.id)
+  void router.push(resourcePreviewRoute(asset.source.resourceId, '/library', 'library'))
 }
 
-function startLearning(libraryId: number) {
+function startLearning(knowledgeBaseId: number) {
   closeKnowledgeMenu()
-  router.push({ path: '/learning/new', query: { libraryId } })
+  router.push({ path: '/learning/new', query: { knowledgeBaseId } })
 }
 
 async function loadData() {
@@ -205,7 +253,7 @@ async function renameFile(file: LibraryResource) {
   const name = window.prompt('输入新的文件名称', file.name)?.trim()
   if (!name || name === file.name) return
   try {
-    await libraryResourceStore.rename(file.id, name)
+    await libraryResourceStore.rename(file.resourceId, name)
   } catch (error) {
     actionError.value = error instanceof Error ? error.message : '重命名失败'
   }
@@ -221,7 +269,7 @@ function startLearningFromAsset(asset: LibraryAsset) {
 }
 
 function openMoveForAsset(asset: LibraryAsset) {
-  if (asset.kind === 'file') openMoveModal([asset.source.id])
+  if (asset.kind === 'file') openMoveModal([asset.source.resourceId])
 }
 
 async function downloadFiles(assets: LibraryAsset[]) {
@@ -230,8 +278,19 @@ async function downloadFiles(assets: LibraryAsset[]) {
     for (const asset of assets) {
       if (asset.kind !== 'file') continue
       const id = presentationId(asset.source)
+      const sheetId = spreadsheetId(asset.source)
       if (!id) {
-        await libraryResourceStore.download(asset.source.id, asset.source.name)
+        if (sheetId) {
+          const blob = await spreadsheetRepository.download(sheetId)
+          const url = URL.createObjectURL(blob)
+          const anchor = document.createElement('a')
+          anchor.href = url
+          anchor.download = asset.source.name
+          anchor.click()
+          URL.revokeObjectURL(url)
+          continue
+        }
+        await libraryResourceStore.download(asset.source.resourceId, asset.source.name)
         continue
       }
       const blob = await presentationRepository.download(id)
@@ -261,7 +320,7 @@ async function confirmDelete() {
   try {
     for (const asset of targets) {
       if (asset.kind === 'knowledge') await knowledgeBaseStore.remove(asset.source.id)
-      else await libraryResourceStore.remove(asset.source.id)
+      else await libraryResourceStore.remove(asset.source.resourceId)
     }
     selectedIds.value = selectedIds.value.filter((id) => !targets.some((asset) => asset.id === id))
   } catch (error) {
@@ -273,7 +332,13 @@ async function moveSelectedResources() {
   if (!moveResourceIds.value.length) return
   actionError.value = ''
   try {
-    for (const id of moveResourceIds.value) await libraryResourceStore.move(id, moveTargetLibraryId.value)
+    for (const resourceId of moveResourceIds.value) {
+      const resource = libraryResourceStore.resources.find((item) => item.resourceId === resourceId)
+      await libraryResourceStore.updateAssociations(resourceId, {
+        projectId: resource?.projectId ?? null,
+        knowledgeBaseId: moveTargetKnowledgeBaseId.value,
+      })
+    }
     moveModalOpen.value = false
     clearSelection()
   } catch (error) {
@@ -286,7 +351,7 @@ function knowledgeTitle(item: KnowledgeBase) {
 }
 
 function knowledgeFileCount(item: KnowledgeBase) {
-  return (item.documentCount || 0) + libraryResourceStore.resources.filter((resource) => resource.libraryId === item.id).length
+  return (item.documentCount || 0) + libraryResourceStore.resources.filter((resource) => resource.knowledgeBaseId === item.id).length
 }
 
 function knowledgeUpdatedAt(item: KnowledgeBase) {
@@ -311,7 +376,7 @@ onMounted(() => {
 
 <template>
   <StudentShell>
-    <div class="library-page" @click="newMenuOpen = false; closeKnowledgeMenu(); closeFileMenu()">
+    <div class="library-page" @click="newMenuOpen = false; filterMenuOpen = false; closeKnowledgeMenu(); closeFileMenu()">
       <header class="library-header">
         <h1>资料库</h1>
 
@@ -338,6 +403,14 @@ onMounted(() => {
               <button class="ui-menu-item" type="button" @click="newMenuOpen = false; router.push('/mindmap')">
                 <span class="ui-menu-icon"><AppIcon name="mindmap" :size="16" /></span>
                 创建思维导图
+              </button>
+              <button class="ui-menu-item" type="button" @click="newMenuOpen = false; router.push({ path: '/presentations/new', query: { returnTo: '/library' } })">
+                <span class="ui-menu-icon"><AppIcon name="presentation" :size="16" /></span>
+                生成演示文稿
+              </button>
+              <button class="ui-menu-item" type="button" @click="newMenuOpen = false; router.push({ path: '/spreadsheets/new', query: { returnTo: '/library' } })">
+                <span class="ui-menu-icon"><AppIcon name="grid" :size="16" /></span>
+                生成电子表格
               </button>
             </div>
           </div>
@@ -378,9 +451,47 @@ onMounted(() => {
         <div class="view-tools">
           <span v-if="selectedCount">已选 {{ selectedCount }} 个</span>
 
-          <button class="filter-btn ui-icon-action" type="button" aria-label="筛选" title="高级筛选暂未开放" disabled>
-            <AppIcon name="list-filter" :size="18" />
-          </button>
+          <div class="filter-menu-wrap" @click.stop>
+            <button
+              class="filter-btn ui-icon-action"
+              :class="{ active: filterMenuOpen || activeAdvancedFilterCount > 0 }"
+              type="button"
+              aria-label="筛选"
+              :aria-expanded="filterMenuOpen"
+              @click="filterMenuOpen = !filterMenuOpen"
+            >
+              <AppIcon name="list-filter" :size="18" />
+              <span v-if="activeAdvancedFilterCount" class="filter-count">{{ activeAdvancedFilterCount }}</span>
+            </button>
+            <div v-if="filterMenuOpen" class="filter-menu ui-menu-panel">
+              <span class="filter-section-label">来源</span>
+              <button
+                v-for="option in sourceFilterOptions"
+                :key="option.value"
+                class="ui-menu-item filter-option"
+                :class="{ selected: sourceFilter === option.value }"
+                type="button"
+                @click="toggleSourceFilter(option.value)"
+              >
+                <span class="ui-menu-icon"><AppIcon :name="option.icon" :size="16" /></span>
+                {{ option.label }}
+                <AppIcon v-if="sourceFilter === option.value" class="filter-check" name="check" :size="16" />
+              </button>
+              <span class="filter-section-label filter-section-label--divided">文件类型</span>
+              <button
+                v-for="option in fileTypeFilterOptions"
+                :key="option.value"
+                class="ui-menu-item filter-option"
+                :class="{ selected: fileTypeFilter === option.value }"
+                type="button"
+                @click="toggleFileTypeFilter(option.value)"
+              >
+                <span class="ui-menu-icon"><AppIcon :name="option.icon" :size="16" /></span>
+                {{ option.label }}
+                <AppIcon v-if="fileTypeFilter === option.value" class="filter-check" name="check" :size="16" />
+              </button>
+            </div>
+          </div>
           <span class="view-divider" />
           <button
             class="round-icon ui-icon-action"
@@ -460,14 +571,14 @@ onMounted(() => {
           </template>
 
           <template v-else>
-            <button class="asset-check" type="button" @click.stop="toggleSelection(asset.id)">
+            <button class="asset-check" type="button" :aria-label="`选择 ${asset.source.name}`" @click.stop="toggleSelection(asset.id)">
               <span v-if="isSelected(asset.id)">✓</span>
             </button>
             <div class="asset-grid-actions" @click.stop>
               <button class="ui-icon-action" type="button" aria-label="重命名" @click="renameFile(asset.source)">
                 <AppIcon name="edit" :size="18" />
               </button>
-              <button class="ui-icon-action" type="button" aria-label="移动" @click="openMoveModal([asset.source.id])">
+              <button class="ui-icon-action" type="button" aria-label="移动" @click="openMoveModal([asset.source.resourceId])">
                 <AppIcon name="folder-move" :size="18" />
               </button>
               <button class="ui-icon-action" type="button" aria-label="下载" @click="downloadFiles([asset])">
@@ -481,7 +592,7 @@ onMounted(() => {
             <span class="file-preview-icon">
               <AppIcon :name="fileIconName(asset.source)" :size="34" />
             </span>
-            <small>{{ asset.source.type }} · {{ fileSize(asset.source) }} · {{ asset.source.source }}</small>
+            <small>{{ asset.source.format }} · {{ fileSize(asset.source) }} · {{ sourceLabel(asset.source) }}</small>
           </template>
         </article>
       </section>
@@ -509,7 +620,7 @@ onMounted(() => {
           :class="{ 'asset-row--selected': isSelected(asset.id) }"
           @click="openAsset(asset)"
         >
-          <button class="asset-row-check" type="button" @click.stop="toggleSelection(asset.id)">
+          <button class="asset-row-check" type="button" :aria-label="`选择 ${asset.kind === 'knowledge' ? knowledgeTitle(asset.source) : asset.source.name}`" @click.stop="toggleSelection(asset.id)">
             <span v-if="isSelected(asset.id)">✓</span>
           </button>
           <AppIcon :name="asset.kind === 'knowledge' ? 'folder' : fileIconName(asset.source)" :size="20" />
@@ -583,7 +694,7 @@ onMounted(() => {
         </header>
         <span class="move-label">知识库</span>
         <div class="move-list">
-          <button type="button" :class="{ selected: moveTargetLibraryId === null }" @click="moveTargetLibraryId = null">
+          <button type="button" :class="{ selected: moveTargetKnowledgeBaseId === null }" @click="moveTargetKnowledgeBaseId = null">
             <span class="move-icon"><AppIcon name="close" :size="18" /></span>
             <span>不归属知识库</span>
             <AppIcon name="chevron-right" :size="16" />
@@ -592,8 +703,8 @@ onMounted(() => {
             v-for="item in knowledgeBaseStore.list"
             :key="item.id"
             type="button"
-            :class="{ selected: moveTargetLibraryId === item.id }"
-            @click="moveTargetLibraryId = item.id"
+            :class="{ selected: moveTargetKnowledgeBaseId === item.id }"
+            @click="moveTargetKnowledgeBaseId = item.id"
           >
             <span class="move-icon"><AppIcon name="folder" :size="20" /></span>
             <span>{{ knowledgeTitle(item) }}</span>
@@ -828,8 +939,65 @@ h1 {
 }
 
 .view-tools .filter-btn {
+  position: relative;
   background: transparent;
   color: var(--color-text-muted);
+}
+
+.filter-menu-wrap {
+  position: relative;
+}
+
+.filter-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  width: 240px;
+  padding: 8px;
+}
+
+.filter-count {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--color-bg);
+  border-radius: 9px;
+  background: var(--color-text);
+  color: var(--color-bg);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.filter-section-label {
+  display: block;
+  padding: 5px 9px 4px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.filter-section-label--divided {
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+}
+
+.filter-option {
+  width: 100%;
+}
+
+.filter-option.selected {
+  background: var(--ui-hover-strong-bg);
+  color: var(--color-text);
+}
+
+.filter-check {
+  margin-left: auto;
 }
 
 .view-divider {
@@ -847,9 +1015,9 @@ h1 {
   color: var(--color-text);
 }
 
-.filter-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
+.view-tools .filter-btn.active {
+  background: var(--color-hover);
+  color: var(--color-text);
 }
 
 .library-state {
@@ -969,8 +1137,9 @@ h1 {
   cursor: pointer;
   font-size: 14px;
   font-weight: 900;
+  z-index: 3;
   opacity: 0;
-  pointer-events: none;
+  pointer-events: auto;
   transition: opacity 0.15s ease;
 }
 
@@ -1156,7 +1325,7 @@ h1 {
   place-items: center;
   padding: 0;
   opacity: 0;
-  pointer-events: none;
+  pointer-events: auto;
   transition: opacity 0.15s ease;
 }
 
@@ -1214,6 +1383,11 @@ h1 {
 .asset-row-check:focus-visible {
   opacity: 1;
   pointer-events: auto;
+}
+
+@media (hover: none) {
+  .asset-check,
+  .asset-row-check { opacity: 1; }
 }
 
 .row-actions {

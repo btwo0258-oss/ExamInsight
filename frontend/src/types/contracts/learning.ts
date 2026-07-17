@@ -1,10 +1,64 @@
-import type { LearningResource } from '@/mock/student'
+import type {
+  Exercise,
+  LearningPlan,
+  LearningResource,
+  LearningStage,
+  LearningTask,
+  TrainingSet,
+  WrongQuestion,
+  WrongReviewSet,
+} from '@/mock/student'
 import type { AsyncJob, EntityId } from './common'
+
+export type LearningProjectStatus = 'draft' | 'configuring' | 'ready' | 'in_progress' | 'completed'
+export type LearningTaskStatus = 'not_started' | 'in_progress' | 'completed' | 'needs_review' | 'locked'
+export type LearningResourceStatus = 'not_selected' | 'generating' | 'ready' | 'failed'
+export type WrongQuestionStatus = 'needs_review' | 'mastered'
+export type TrainingSetStatus = 'pending' | 'answering' | 'submitted'
+export type WrongReviewSetStatus = 'pending' | 'answering' | 'completed'
+
+export type LearningTaskDto = Omit<LearningTask, 'status'> & {
+  status: LearningTaskStatus
+}
+
+export type LearningStageDto = Omit<LearningStage, 'tasks'> & {
+  tasks: LearningTaskDto[]
+}
+
+export type LearningResourceDto = Omit<LearningResource, 'status'> & {
+  status: LearningResourceStatus
+}
+
+export type ExerciseDto = Omit<Exercise, 'draftAnswer' | 'codeDrafts'>
+
+export type TrainingSetDto = Omit<TrainingSet, 'status'> & {
+  status: TrainingSetStatus
+}
+
+export type WrongQuestionDto = Omit<WrongQuestion, 'status'> & {
+  status: WrongQuestionStatus
+}
+
+export type WrongReviewSetDto = Omit<WrongReviewSet, 'status'> & {
+  status: WrongReviewSetStatus
+}
+
+export type LearningProjectDto = Omit<
+  LearningPlan,
+  'status' | 'stages' | 'resources' | 'exercises' | 'trainingSets' | 'wrongQuestions' | 'wrongReviewSets'
+> & {
+  status: LearningProjectStatus
+  stages: LearningStageDto[]
+  resources: LearningResourceDto[]
+  exercises: ExerciseDto[]
+  trainingSets?: TrainingSetDto[]
+  wrongQuestions: WrongQuestionDto[]
+  wrongReviewSets?: WrongReviewSetDto[]
+}
 
 export type CreateLearningPlanInput = {
   prompt: string
-  libraryId: EntityId
-  projectId: EntityId | null
+  knowledgeBaseId: EntityId | null
   targetType: string
   preferences: string[]
   resourceGroups: LearningResource['group'][]
@@ -15,20 +69,35 @@ export type CreateLearningPlanInput = {
   studyDepth: string
   questionCount: number
   supplementalRequirement: string
+  sourceResourceIds?: string[]
+  mediaAssetIds?: string[]
+  confirmationResourceId?: string | null
   draftPlanId?: EntityId | null
-  libraryName?: string
+  knowledgeBaseName?: string
 }
 
 export type CreateLearningDraftInput = {
   title: string
-  libraryId: EntityId | null
-  libraryName?: string
+  knowledgeBaseId: EntityId | null
+  knowledgeBaseName?: string
   icon?: string
   iconColor?: string
 }
 
+export type UpdateLearningProjectRequest = {
+  title?: string
+  targetType?: string
+  period?: string
+  dailyTime?: string
+  weakPoints?: string
+  preferences?: string[]
+  keepExercises?: boolean
+  keepProgress?: boolean
+}
+
 export type LearningProfileRequest = {
-  libraryId: EntityId
+  conversationId?: EntityId | null
+  knowledgeBaseId: EntityId | null
   text: string
   currentProfile?: LearningProfileData
   source?: string
@@ -52,11 +121,12 @@ export type LearningProfileData = {
 
 export type LearningProfileResult = {
   profile: LearningProfileData
-  confirmationDocument: string
 }
 
 export type LearningConfirmationRequest = {
-  libraryId: EntityId
+  setupId: string
+  conversationId?: EntityId | null
+  knowledgeBaseId: EntityId | null
   goal: string
   profile: LearningProfileData
   uploadedFileNames?: string[]
@@ -64,15 +134,43 @@ export type LearningConfirmationRequest = {
   relatedProjectName?: string
   questionCount?: number
   difficultyStrategy?: string
+  projectId?: EntityId | null
+  confirmationResourceId?: string | null
+  clientRequestId: string
+}
+
+export type LearningConfirmationResult = {
+  content: string
+  resourceId: string
 }
 
 export type LearningGenerationJob = AsyncJob<{ projectId: EntityId }>
+
+export type AnswerResult = {
+  correct: boolean
+  score?: number
+  feedback?: string
+  explanation: string
+  correctAnswer: string
+  taskProgress: number
+  projectProgress: number
+}
 
 export type SubmitAnswerRequest = {
   projectId: EntityId
   exerciseId: EntityId
   answer: string
   language?: string
+  clientRequestId: string
+}
+
+export type SubmitAnswerBatchRequest = {
+  projectId: EntityId
+  answers: Array<{
+    exerciseId: EntityId
+    answer: string
+    language?: string
+  }>
   clientRequestId: string
 }
 

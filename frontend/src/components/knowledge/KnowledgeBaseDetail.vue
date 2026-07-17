@@ -12,7 +12,6 @@ import KnowledgeBaseCreate from "./KnowledgeBaseCreate.vue";
 import AppInput from "@/components/common/AppInput.vue";
 import AppIcon from "@/components/common/AppIcon.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
-import DocumentPreviewModal from "./DocumentPreviewModal.vue";
 
 const router = useRouter();
 const route = useRoute();
@@ -35,11 +34,6 @@ const errorMessage = ref("");
 // 删除文档确认状态
 const showDeleteDocConfirm = ref(false);
 const deletingDocId = ref<number | null>(null);
-
-// 预览弹窗状态
-const showPreview = ref(false);
-const previewDocId = ref<number | null>(null);
-const previewFileName = ref("");
 
 // 对话操作确认状态
 const showConvActionConfirm = ref(false);
@@ -65,7 +59,7 @@ const convActionMessage = computed(() => {
 });
 
 const documents = computed(() => {
-  return docStore.documents.filter((doc: { kbId: number }) => doc.kbId === Number(route.params.id));
+  return docStore.documents.filter((doc: { knowledgeBaseId: number }) => doc.knowledgeBaseId === Number(route.params.id));
 });
 
 const kbConversations = computed(() => {
@@ -73,7 +67,7 @@ const kbConversations = computed(() => {
 });
 
 const relatedMindMaps = computed(() => {
-  return mindMapStore.mindMapList.filter((map) => map.kbId === Number(route.params.id));
+  return mindMapStore.mindMapList.filter((map) => map.knowledgeBaseId === Number(route.params.id));
 });
 
 const showCreateMindMapConfirm = ref(false);
@@ -120,7 +114,7 @@ function handleClickOutside(e: MouseEvent) {
 onMounted(async () => {
   if (route.params.id) {
     await kbStore.fetchAll();
-    await docStore.fetchByKbId(Number(route.params.id));
+    await docStore.fetchByKnowledgeBaseId(Number(route.params.id));
     await conversationStore.fetchList();
 
     // 开始轮询处理中的文档
@@ -134,7 +128,7 @@ watch(
   async (newId) => {
     if (newId) {
       await kbStore.fetchAll();
-      await docStore.fetchByKbId(Number(newId));
+      await docStore.fetchByKnowledgeBaseId(Number(newId));
       await conversationStore.fetchList();
       startPolling();
     }
@@ -229,7 +223,7 @@ async function handleFileSelect(file: File) {
 function handleNewChat() {
   if (!knowledgeBase.value) return;
   conversationStore.create({
-    kbId: knowledgeBase.value.id,
+    knowledgeBaseId: knowledgeBase.value.id,
     title: `与${knowledgeBase.value.name}的对话`,
   });
 }
@@ -246,14 +240,14 @@ async function handleSendMessage(text: string, files?: File[]) {
   if (!text.trim() && (!files || files.length === 0)) return;
   if (!knowledgeBase.value) return;
 
-  const kbId = knowledgeBase.value.id;
+  const knowledgeBaseId = knowledgeBase.value.id;
 
   // 注意：files 已经在 AppInput 的 @upload 事件中通过 handleFileSelect 上传过了
   // 这里不需要再次调用 handleFileSelect(file)
 
   // 1. 先创建会话
   const result = await messageStore.createConversation({
-    knowledgeBaseId: kbId,
+    knowledgeBaseId,
   });
 
   // 2. 将消息存储到 sessionStorage，让聊天页面在挂载后自动发送
@@ -332,12 +326,6 @@ function getStatusText(status: string): string {
 function handleDeleteDocument(docId: number) {
   deletingDocId.value = docId;
   showDeleteDocConfirm.value = true;
-}
-
-async function handlePreviewDocument(docId: number, fileName: string) {
-  previewDocId.value = docId;
-  previewFileName.value = fileName;
-  showPreview.value = true;
 }
 
 async function handleDownloadDocument(docId: number, fileName: string) {
@@ -495,8 +483,6 @@ async function confirmDeleteDocument() {
                 v-for="doc in documents"
                 :key="doc.id"
                 class="document-item"
-                :class="{ 'document-item--clickable': doc.status === 'completed' }"
-                @click="doc.status === 'completed' && handlePreviewDocument(doc.id, doc.fileName)"
               >
                 <div class="document-item__icon">
                   <AppIcon
@@ -600,14 +586,6 @@ async function confirmDeleteDocument() {
         </div>
       </div>
     </div>
-
-    <DocumentPreviewModal
-      v-if="showPreview && previewDocId"
-      :open="showPreview"
-      :document-id="previewDocId"
-      :file-name="previewFileName"
-      @close="showPreview = false"
-    />
 
     <div class="input-container">
       <AppInput
@@ -1065,10 +1043,6 @@ async function confirmDeleteDocument() {
   border-radius: 8px;
   background: var(--color-bg);
   transition: all 0.2s ease;
-}
-
-.document-item--clickable {
-  cursor: pointer;
 }
 
 .document-item:hover {

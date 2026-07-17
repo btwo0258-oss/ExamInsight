@@ -92,8 +92,8 @@ function handleActionClick() {
   showActions.value = false
 }
 
-async function handleMoveToKnowledgeBase(kbId: number | null) {
-  await conversationStore.moveToKnowledgeBase(props.item.id, kbId)
+async function handleMoveToKnowledgeBase(knowledgeBaseId: number | null) {
+  await conversationStore.moveToKnowledgeBase(props.item.id, knowledgeBaseId)
   handleActionClick()
 }
 
@@ -102,8 +102,8 @@ async function handleCreateKnowledgeBase() {
   menuOpen.value = false
 }
 
-async function handleKnowledgeBaseCreated(kbId: number) {
-  await conversationStore.moveToKnowledgeBase(props.item.id, kbId)
+async function handleKnowledgeBaseCreated(knowledgeBaseId: number) {
+  await conversationStore.moveToKnowledgeBase(props.item.id, knowledgeBaseId)
   showCreateKb.value = false
 }
 

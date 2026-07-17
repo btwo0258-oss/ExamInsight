@@ -7,22 +7,19 @@ import { mockSession } from '@/mock/storage'
 import type { Exercise, LearningPlan } from '@/mock/student'
 import type { AsyncJob } from '@/types/contracts/common'
 import type {
+  AnswerResult,
   CreateLearningDraftInput,
-  LearningConfirmationRequest,
   CreateLearningPlanInput,
+  LearningConfirmationRequest,
+  LearningConfirmationResult,
+  LearningProjectDto,
   LearningProfileRequest,
   LearningProfileResult,
   RecordLearningActivityRequest,
   SubmitAnswerRequest,
+  SubmitAnswerBatchRequest,
+  UpdateLearningProjectRequest,
 } from '@/types/contracts/learning'
-
-export type AnswerResult = {
-  correct: boolean
-  score?: number
-  feedback?: string
-  explanation: string
-  correctAnswer: string
-}
 
 export interface LearningRepository {
   initialPlans(): LearningPlan[]
@@ -30,16 +27,19 @@ export interface LearningRepository {
   listPlans(): Promise<LearningPlan[]>
   getPlan(id: number): Promise<LearningPlan>
   createDraft(input: CreateLearningDraftInput): Promise<LearningPlan>
+  updatePlan(id: number, input: UpdateLearningProjectRequest): Promise<LearningPlan>
+  removePlan(id: number): Promise<void>
   startProfileGeneration(input: LearningProfileRequest): Promise<AsyncJob<LearningProfileResult>>
-  generateConfirmation(input: LearningConfirmationRequest): Promise<string>
+  generateConfirmation(input: LearningConfirmationRequest): Promise<LearningConfirmationResult>
   getGenerationJob<T>(jobId: string): Promise<AsyncJob<T>>
   startPlanGeneration(input: CreateLearningPlanInput): Promise<AsyncJob<{ projectId: number }>>
   recordActivity(input: RecordLearningActivityRequest): Promise<LearningPlan>
   submitAnswer(input: SubmitAnswerRequest): Promise<AnswerResult>
+  submitAnswers(input: SubmitAnswerBatchRequest): Promise<AnswerResult[]>
   startAdaptivePracticeGeneration(projectId: number, sourceTaskId: number, input: { mode: 'repeat' | 'reinforce'; count: number; difficultyMode: '保持难度' | '逐步提升' }): Promise<AsyncJob<{ projectId: number }>>
   startWrongReviewGeneration(projectId: number, wrongIds: number[], input: { count: number; difficultyMode: '保持难度' | '逐步提升' }): Promise<AsyncJob<{ projectId: number }>>
-  startResourceGeneration(projectId: number, resourceId: number): Promise<AsyncJob<{ projectId: number }>>
-  downloadResource(projectId: number, resourceId: number): Promise<Blob>
+  startResourceGeneration(projectId: number, learningResourceId: number): Promise<AsyncJob<{ projectId: number }>>
+  downloadResource(projectId: number, learningResourceId: number): Promise<Blob>
 }
 
 const JOB_DOMAIN = 'learning-jobs'
@@ -73,6 +73,20 @@ const mockLearningRepository: LearningRepository = {
     saveLearningPlans(plans)
     return draft
   },
+  async updatePlan(id, input) {
+    const plans = getLearningPlans()
+    const plan = plans.find((item) => item.id === id)
+    if (!plan) throw new Error('Learning project not found')
+    if (input.title?.trim()) plan.title = input.title.trim()
+    if (input.targetType) plan.targetType = input.targetType
+    if (input.period) plan.period = input.period
+    plan.updatedAt = '刚刚'
+    saveLearningPlans(plans)
+    return plan
+  },
+  async removePlan(id) {
+    saveLearningPlans(getLearningPlans().filter((item) => item.id !== id))
+  },
   async startProfileGeneration(input) {
     const result = createMockLearningProfileResult(input)
     return saveJob({
@@ -83,7 +97,7 @@ const mockLearningRepository: LearningRepository = {
     })
   },
   async generateConfirmation(input) {
-    return buildMockLearningConfirmation(input)
+    return { content: buildMockLearningConfirmation(input), resourceId: '' }
   },
   async getGenerationJob<T>(jobId: string) {
     const job = readJobs()[jobId]
@@ -113,7 +127,25 @@ const mockLearningRepository: LearningRepository = {
     const plan = getLearningPlans().find((item) => item.id === input.projectId)
     const exercise = plan?.exercises.find((item) => item.id === input.exerciseId)
     if (!exercise) throw new Error('Exercise not found')
-    return evaluateMockExerciseAnswer(exercise, input.answer)
+    return {
+      ...evaluateMockExerciseAnswer(exercise, input.answer),
+      taskProgress: plan?.stages.flatMap((stage) => stage.tasks).find((task) => task.exerciseIds?.includes(exercise.id))?.done ? 100 : 0,
+      projectProgress: plan?.progress ?? 0,
+    }
+  },
+  async submitAnswers(input) {
+    const plan = getLearningPlans().find((item) => item.id === input.projectId)
+    if (!plan) throw new Error('Learning project not found')
+    return input.answers.map((answer) => {
+      const exercise = plan.exercises.find((item) => item.id === answer.exerciseId)
+      if (!exercise) throw new Error('Exercise not found')
+      if (answer.language && exercise.type === '代码题') exercise.selectedLanguage = answer.language as Exercise['selectedLanguage']
+      return {
+        ...evaluateMockExerciseAnswer(exercise, answer.answer),
+        taskProgress: plan.stages.flatMap((stage) => stage.tasks).find((task) => task.exerciseIds?.includes(exercise.id))?.done ? 100 : 0,
+        projectProgress: plan.progress,
+      }
+    })
   },
   async startAdaptivePracticeGeneration(projectId) {
     const plan = getLearningPlans().find((item) => item.id === projectId)
@@ -143,10 +175,14 @@ const mockLearningRepository: LearningRepository = {
       result: { projectId },
     })
   },
-  async downloadResource(projectId, resourceId) {
-    const resource = getLearningPlans().find((item) => item.id === projectId)?.resources.find((item) => item.id === resourceId)
+  async downloadResource(projectId, learningResourceId) {
+    const resource = getLearningPlans().find((item) => item.id === projectId)?.resources.find((item) => item.id === learningResourceId)
     if (!resource) throw new Error('学习资源不存在')
-    return new Blob([resource.content || resource.desc], { type: 'text/plain;charset=utf-8' })
+    const content = resource.group === '思维导图' && resource.mindMapTreeData
+      ? JSON.stringify(resource.mindMapTreeData, null, 2)
+      : resource.content || resource.desc
+    const type = resource.group === '思维导图' ? 'application/json;charset=utf-8' : 'text/markdown;charset=utf-8'
+    return new Blob([content], { type })
   },
 }
 
@@ -156,10 +192,10 @@ function unwrap<T>(response: { data: unknown }): T {
 }
 
 function enumValue<T extends string>(value: unknown, values: Record<string, T>, fallback: T): T {
-  return typeof value === 'string' ? values[value] ?? (value as T) : fallback
+  return typeof value === 'string' ? values[value] ?? fallback : fallback
 }
 
-export function normalizeLearningPlan(raw: Record<string, any>): LearningPlan {
+export function normalizeLearningPlan(raw: LearningProjectDto): LearningPlan {
   const projectStatuses = {
     draft: '待开启',
     configuring: '待完善',
@@ -171,6 +207,8 @@ export function normalizeLearningPlan(raw: Record<string, any>): LearningPlan {
     not_started: '未开始',
     in_progress: '进行中',
     completed: '已完成',
+    needs_review: '需复习',
+    locked: '已锁定',
   } as const
   const resourceStatuses = {
     not_selected: '未选择',
@@ -184,27 +222,28 @@ export function normalizeLearningPlan(raw: Record<string, any>): LearningPlan {
 
   return {
     ...raw,
+    knowledgeBaseId: raw.knowledgeBaseId ?? null,
     status: enumValue(raw.status, projectStatuses, '待开启'),
-    stages: (raw.stages ?? []).map((stage: Record<string, any>) => ({
+    stages: (raw.stages ?? []).map((stage) => ({
       ...stage,
-      tasks: (stage.tasks ?? []).map((task: Record<string, any>) => ({
+      tasks: (stage.tasks ?? []).map((task) => ({
         ...task,
         status: enumValue(task.status, taskStatuses, '未开始'),
       })),
     })),
-    resources: (raw.resources ?? []).map((resource: Record<string, any>) => ({
+    resources: (raw.resources ?? []).map((resource) => ({
       ...resource,
       status: enumValue(resource.status, resourceStatuses, '未选择'),
     })),
-    wrongQuestions: (raw.wrongQuestions ?? []).map((wrong: Record<string, any>) => ({
+    wrongQuestions: (raw.wrongQuestions ?? []).map((wrong) => ({
       ...wrong,
       status: enumValue(wrong.status, wrongStatuses, '需巩固'),
     })),
-    trainingSets: (raw.trainingSets ?? []).map((set: Record<string, any>) => ({
+    trainingSets: (raw.trainingSets ?? []).map((set) => ({
       ...set,
       status: enumValue(set.status, trainingStatuses, '待练习'),
     })),
-    wrongReviewSets: (raw.wrongReviewSets ?? []).map((set: Record<string, any>) => ({
+    wrongReviewSets: (raw.wrongReviewSets ?? []).map((set) => ({
       ...set,
       status: enumValue(set.status, reviewStatuses, '待作答'),
     })),
@@ -217,20 +256,25 @@ const apiLearningRepository: LearningRepository = {
   },
   persistMockSnapshot() {},
   async listPlans() {
-    return unwrap<Record<string, any>[]>(await request.get('/api/learning/projects')).map(normalizeLearningPlan)
+    return unwrap<LearningProjectDto[]>(await request.get('/api/learning/projects')).map(normalizeLearningPlan)
   },
   async getPlan(id) {
-    return normalizeLearningPlan(unwrap<Record<string, any>>(await request.get(`/api/learning/projects/${id}`)))
+    return normalizeLearningPlan(unwrap<LearningProjectDto>(await request.get(`/api/learning/projects/${id}`)))
   },
   async createDraft(input) {
-    return normalizeLearningPlan(unwrap<Record<string, any>>(await request.post('/api/learning/projects/drafts', input)))
+    return normalizeLearningPlan(unwrap<LearningProjectDto>(await request.post('/api/learning/projects/drafts', input)))
+  },
+  async updatePlan(id, input) {
+    return normalizeLearningPlan(unwrap<LearningProjectDto>(await request.patch(`/api/learning/projects/${id}`, input)))
+  },
+  async removePlan(id) {
+    await request.delete(`/api/learning/projects/${id}`)
   },
   async startProfileGeneration(input) {
     return unwrap<AsyncJob<LearningProfileResult>>(await request.post('/api/learning/profile-jobs', input))
   },
   async generateConfirmation(input) {
-    const response = await request.post('/api/learning/profile-confirmations', input)
-    return unwrap<{ content: string }>(response).content
+    return unwrap<LearningConfirmationResult>(await request.post('/api/learning/profile-confirmations', input))
   },
   async getGenerationJob<T>(jobId: string) {
     return unwrap<AsyncJob<T>>(await request.get(`/api/learning/generation-jobs/${jobId}`))
@@ -239,10 +283,13 @@ const apiLearningRepository: LearningRepository = {
     return unwrap<AsyncJob<{ projectId: number }>>(await request.post('/api/learning/plan-jobs', input))
   },
   async recordActivity(input) {
-    return normalizeLearningPlan(unwrap<Record<string, any>>(await request.post(`/api/learning/projects/${input.projectId}/activities`, input)))
+    return normalizeLearningPlan(unwrap<LearningProjectDto>(await request.post(`/api/learning/projects/${input.projectId}/activities`, input)))
   },
   async submitAnswer(input) {
     return unwrap<AnswerResult>(await request.post(`/api/learning/projects/${input.projectId}/answers`, input))
+  },
+  async submitAnswers(input) {
+    return unwrap<AnswerResult[]>(await request.post(`/api/learning/projects/${input.projectId}/answers/batch`, input))
   },
   async startAdaptivePracticeGeneration(projectId, sourceTaskId, input) {
     return unwrap<AsyncJob<{ projectId: number }>>(await request.post(`/api/learning/projects/${projectId}/tasks/${sourceTaskId}/adaptive-practice-jobs`, input))
@@ -250,11 +297,11 @@ const apiLearningRepository: LearningRepository = {
   async startWrongReviewGeneration(projectId, wrongIds, input) {
     return unwrap<AsyncJob<{ projectId: number }>>(await request.post(`/api/learning/projects/${projectId}/mistake-review-jobs`, { wrongIds, ...input }))
   },
-  async startResourceGeneration(projectId, resourceId) {
-    return unwrap<AsyncJob<{ projectId: number }>>(await request.post(`/api/learning/projects/${projectId}/resource-jobs`, { resourceId }))
+  async startResourceGeneration(projectId, learningResourceId) {
+    return unwrap<AsyncJob<{ projectId: number }>>(await request.post(`/api/learning/projects/${projectId}/resource-jobs`, { learningResourceId }))
   },
-  async downloadResource(projectId, resourceId) {
-    const response = await request.get(`/api/learning/projects/${projectId}/resources/${resourceId}/download`, { responseType: 'blob' })
+  async downloadResource(projectId, learningResourceId) {
+    const response = await request.get(`/api/learning/projects/${projectId}/resources/${learningResourceId}/download`, { responseType: 'blob' })
     return response.data as Blob
   },
 }

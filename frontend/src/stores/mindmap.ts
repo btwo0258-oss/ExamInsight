@@ -26,9 +26,9 @@ export const useMindMapStore = defineStore('mindmap', () => {
 
   const isPinned = (id: number) => pinnedIds.value.includes(id)
 
-  const fetchList = async (kbId?: number | null) => {
+  const fetchList = async (knowledgeBaseId?: number | null) => {
     try {
-      const list = await mindmapApi.getMindMapList(kbId)
+      const list = await mindmapApi.getMindMapList(knowledgeBaseId)
       mindMapList.value = list
       return list
     } catch (error) {
@@ -59,19 +59,19 @@ export const useMindMapStore = defineStore('mindmap', () => {
     }
   }
 
-  const createMap = async (title: string, kbId: number | null = null) => {
+  const createMap = async (title: string, knowledgeBaseId: number | null = null) => {
     const initialData = { data: { text: title }, children: [] }
     const id = await mindmapApi.createMindMap({
       title,
-      kbId,
+      knowledgeBaseId,
       content: JSON.stringify(initialData)
     })
     await fetchList()
     return id
   }
 
-  const updateMap = async (id: number, title?: string, content?: string, kbId?: number | null) => {
-    await mindmapApi.updateMindMap({ id, title, content, kbId })
+  const updateMap = async (id: number, title?: string, content?: string, knowledgeBaseId?: number | null) => {
+    await mindmapApi.updateMindMap({ id, title, content, knowledgeBaseId })
     if (title && id === currentMapId.value) {
       mapTitle.value = title
     }
@@ -87,8 +87,8 @@ export const useMindMapStore = defineStore('mindmap', () => {
     await updateMap(id, newTitle)
   }
 
-  const moveToKB = async (id: number, kbId: number | null) => {
-    await updateMap(id, undefined, undefined, kbId)
+  const moveToKB = async (id: number, knowledgeBaseId: number | null) => {
+    await updateMap(id, undefined, undefined, knowledgeBaseId)
   }
 
   const initEmptyMap = (title: string = '未命名思维导图') => {

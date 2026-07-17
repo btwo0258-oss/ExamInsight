@@ -7,7 +7,7 @@ import {
 describe('Mock learning profile generator', () => {
   it('extracts an editable profile without involving page state', () => {
     const profile = inferMockLearningProfile({
-      libraryId: 1,
+      knowledgeBaseId: 1,
       text: '我要准备 2 周后的面试，每天学习 90 分钟，算法基础薄弱，希望刷题和案例讲解',
       subject: '算法基础',
       source: '算法资料库',
@@ -23,16 +23,18 @@ describe('Mock learning profile generator', () => {
 
   it('builds the confirmation text from the shared request contract', () => {
     const profile = inferMockLearningProfile({
-      libraryId: 1,
+      knowledgeBaseId: 1,
       text: '下周复习数据库，每天 60 分钟',
       subject: '数据库',
       source: '数据库资料库',
     })
     const content = buildMockLearningConfirmation({
-      libraryId: 1,
+      setupId: 'setup-1',
+      knowledgeBaseId: 1,
       goal: '期末复习',
       profile,
       questionCount: 30,
+      clientRequestId: 'test-confirmation-1',
     })
 
     expect(content).toContain('# 个性化学习方案确认稿')

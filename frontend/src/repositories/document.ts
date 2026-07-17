@@ -1,14 +1,14 @@
 import { request } from '@/api/request'
 import { isMockDataSource } from '@/config/dataSource'
 import { mockSession } from '@/mock/storage'
-import type { DocumentProcessingStatus, LibraryDocumentDto } from '@/types/contracts/library'
+import type { DocumentProcessingStatus, KnowledgeBaseDocumentDto } from '@/types/contracts/library'
 
 export type DocumentStatus = DocumentProcessingStatus
-export type DocumentDto = LibraryDocumentDto & { errorMsg?: string }
+export type DocumentDto = KnowledgeBaseDocumentDto & { errorMsg?: string }
 
 export interface DocumentRepository {
-  list(kbId: number): Promise<DocumentDto[]>
-  upload(kbId: number, file: File): Promise<DocumentDto>
+  list(knowledgeBaseId: number): Promise<DocumentDto[]>
+  upload(knowledgeBaseId: number, file: File): Promise<DocumentDto>
   extract(file: File, signal?: AbortSignal): Promise<string>
   remove(id: number): Promise<void>
   status(id: number): Promise<{ status: DocumentStatus; errorMsg?: string; chunkCount?: number }>
@@ -35,7 +35,7 @@ function normalizeDocument(item: Record<string, unknown>): DocumentDto {
     : typeof item.errorMsg === 'string' ? item.errorMsg : undefined
   return {
     id: Number(item.id),
-    kbId: Number(item.kbId),
+    knowledgeBaseId: Number(item.knowledgeBaseId ?? item.kbId),
     fileName: String(item.fileName ?? ''),
     fileType: String(item.fileType ?? ''),
     fileSize: Number(item.fileSize ?? 0),
@@ -49,13 +49,13 @@ function normalizeDocument(item: Record<string, unknown>): DocumentDto {
 }
 
 const mockDocumentRepository: DocumentRepository = {
-  async list(kbId) {
-    return mockDocuments().filter((item) => item.kbId === kbId)
+  async list(knowledgeBaseId) {
+    return mockDocuments().filter((item) => item.knowledgeBaseId === knowledgeBaseId)
   },
-  async upload(kbId, file) {
+  async upload(knowledgeBaseId, file) {
     const document: DocumentDto = {
       id: Date.now(),
-      kbId,
+      knowledgeBaseId,
       fileName: file.name,
       fileType: file.name.split('.').pop() || 'unknown',
       fileSize: file.size,
@@ -88,15 +88,15 @@ const mockDocumentRepository: DocumentRepository = {
 }
 
 const apiDocumentRepository: DocumentRepository = {
-  async list(kbId) {
-    const response = await request.get('/api/doc/list', { params: { kbId } })
+  async list(knowledgeBaseId) {
+    const response = await request.get('/api/doc/list', { params: { kbId: knowledgeBaseId } })
     const data = (response.data?.data ?? response.data) as Record<string, unknown>[]
     return data.map(normalizeDocument)
   },
-  async upload(kbId, file) {
+  async upload(knowledgeBaseId, file) {
     const formData = new FormData()
     formData.append('file', file)
-    formData.append('kbId', String(kbId))
+    formData.append('kbId', String(knowledgeBaseId))
     const response = await request.post('/api/doc/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
@@ -119,7 +119,7 @@ const apiDocumentRepository: DocumentRepository = {
   async status(id) {
     const response = await request.get(`/api/doc/status/${id}`)
     const data = (response.data?.data ?? response.data) as Record<string, unknown>
-    const normalized = normalizeDocument({ id, kbId: 0, fileName: '', fileType: '', fileSize: 0, createTime: '', ...data })
+    const normalized = normalizeDocument({ id, knowledgeBaseId: 0, fileName: '', fileType: '', fileSize: 0, createTime: '', ...data })
     return { status: normalized.status, errorMsg: normalized.errorMsg, chunkCount: normalized.chunkCount }
   },
 }

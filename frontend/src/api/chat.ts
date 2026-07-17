@@ -1,11 +1,11 @@
 import { chatRepository } from '@/repositories/chat'
-import type { ChatStreamPayload } from '@/repositories/chat'
+import type { ChatStreamEvent, ChatStreamPayload } from '@/repositories/chat'
 
-export type { ChatStreamPayload }
+export type { ChatStreamEvent, ChatStreamPayload }
 
 export function streamChat(
   payload: ChatStreamPayload,
   options?: { signal?: AbortSignal },
-): Promise<AsyncGenerator<string>> {
+): Promise<AsyncGenerator<ChatStreamEvent>> {
   return chatRepository.stream(payload, options)
 }

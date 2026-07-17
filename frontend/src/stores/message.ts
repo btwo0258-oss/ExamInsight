@@ -12,6 +12,9 @@ import { documentRepository } from '@/repositories/document'
 import { mediaRepository } from '@/repositories/media'
 import { getMediaSource, isAudioFile, isImageFile } from '@/utils/file'
 import type { MediaAssetDto } from '@/types/contracts/media'
+import type { ChatClientAction } from '@/repositories/chat'
+import type { PresentationChatCardDto } from '@/types/contracts/presentation'
+import type { SpreadsheetChatCardDto } from '@/types/contracts/spreadsheet'
 
 export type ChatRole = "user" | "assistant" | "system";
 
@@ -46,8 +49,10 @@ export type ChatMessage = {
   aVersion?: number; // 回答版本 (0-based, 针对特定的 qVersion)
   // 附件
   files?: { name: string; type: string; size: number; assetId?: string; source?: 'upload' | 'camera' }[];
-  kind?: "learning-profile" | "learning-document";
+  kind?: "learning-profile" | "learning-document" | "presentation" | "spreadsheet";
   learningData?: any;
+  presentationData?: PresentationChatCardDto;
+  spreadsheetData?: SpreadsheetChatCardDto;
   tutorContext?: string;
   tutorSource?: TutorSource;
 };
@@ -122,6 +127,16 @@ function parseCreateTime(createTime: any): number {
   }
   const t = new Date(createTime).getTime();
   return isNaN(t) ? Date.now() : t;
+}
+
+function parseStructuredValue<T>(value: T | string | null | undefined): T | undefined {
+  if (!value) return undefined
+  if (typeof value !== 'string') return value
+  try {
+    return JSON.parse(value) as T
+  } catch {
+    return undefined
+  }
 }
 
 export const useMessageStore = defineStore("message", () => {
@@ -260,6 +275,16 @@ export const useMessageStore = defineStore("message", () => {
                     }
                   })()
                 : m.learningSource) || localMatch?.tutorSource,
+            kind: m.kind || localMatch?.kind || undefined,
+            learningData:
+              parseStructuredValue(m.learningData)
+              || localMatch?.learningData,
+            presentationData:
+              parseStructuredValue<PresentationChatCardDto>(m.presentationData)
+              || localMatch?.presentationData,
+            spreadsheetData:
+              parseStructuredValue<SpreadsheetChatCardDto>(m.spreadsheetData)
+              || localMatch?.spreadsheetData,
             //files: parsedFiles || localMatch?.files,
             files:
               parsedFiles ||
@@ -466,7 +491,18 @@ export const useMessageStore = defineStore("message", () => {
     aVersion?: number,
     files?: File[],
     skipUserMsg: boolean = false,
-    extraOptions?: { isRegenerate?: boolean; editMsgId?: number; parentId?: number; tutorContext?: string; tutorSource?: TutorSource },
+    extraOptions?: {
+      isRegenerate?: boolean
+      editMsgId?: number
+      parentId?: number
+      tutorContext?: string
+      tutorSource?: TutorSource
+      clientAction?: ChatClientAction
+      projectId?: number | null
+      stageId?: number | string | null
+      taskId?: number | string | null
+      exerciseId?: number | string | null
+    },
   ) {
     if (isStreaming.value) return;
     let text = content.trim();
@@ -514,7 +550,7 @@ export const useMessageStore = defineStore("message", () => {
               source: getMediaSource(file),
               purpose: extraOptions?.tutorSource ? 'learning-input' : 'chat-attachment',
               conversationId,
-              learningProjectId: extraOptions?.tutorSource?.projectId ?? null,
+              projectId: extraOptions?.tutorSource?.projectId ?? null,
               clientRequestId: clientRequestId(),
             }, nextController.signal);
             mediaAssets.push(asset);
@@ -525,7 +561,7 @@ export const useMessageStore = defineStore("message", () => {
               source: 'upload',
               purpose: extraOptions?.tutorSource ? 'learning-input' : 'chat-attachment',
               conversationId,
-              learningProjectId: extraOptions?.tutorSource?.projectId ?? null,
+              projectId: extraOptions?.tutorSource?.projectId ?? null,
               clientRequestId: clientRequestId(),
               language: 'zh-CN',
             }, nextController.signal);
@@ -608,7 +644,7 @@ export const useMessageStore = defineStore("message", () => {
     try {
       const convStore = useConversationStore();
       const currentConv = convStore.list.find((c) => c.id === conversationId);
-      const kbId = currentConv?.knowledgeBaseId;
+      const knowledgeBaseId = currentConv?.knowledgeBaseId;
 
       // 构建基于当前选中版本的历史上下文
       const historyContext: { role: string; content: string }[] = [];
@@ -647,7 +683,7 @@ export const useMessageStore = defineStore("message", () => {
         ? `[附加文件内容]\n${fileContext}\n\n[用户输入]\n${text}`
         : text;
 
-      if (extraOptions?.tutorContext) {
+      if (isMockDataSource && extraOptions?.tutorContext) {
         historyContext.unshift({ role: "system", content: extraOptions.tutorContext });
       }
 
@@ -659,7 +695,7 @@ export const useMessageStore = defineStore("message", () => {
           conversationId,
           content: finalQuestion,
           model: modelStore.currentModel,
-          kbId,
+          knowledgeBaseId,
           fileContext,
           history: historyContext,
           isRegenerate: extraOptions?.isRegenerate,
@@ -679,16 +715,37 @@ export const useMessageStore = defineStore("message", () => {
                 })))
               : undefined,
           mediaAssetIds: mediaAssets.map((asset) => asset.id),
+          projectId: extraOptions?.projectId ?? null,
+          stageId: extraOptions?.stageId ?? null,
+          taskId: extraOptions?.taskId ?? null,
+          exerciseId: extraOptions?.exerciseId ?? null,
+          clientAction: extraOptions?.clientAction,
         },
         { signal: nextController.signal },
       );
 
       let fullContent = "";
       for await (const chunk of gen) {
-        fullContent += chunk;
         const targetIdx = list.findIndex((m) => m.id === assistantMsg.id);
         if (targetIdx !== -1) {
-          list[targetIdx].content = fullContent;
+          if (chunk.type === 'text-delta') {
+            fullContent += chunk.delta;
+            list[targetIdx].content = fullContent;
+          } else if (chunk.type === 'presentation-card') {
+            list[targetIdx].kind = 'presentation';
+            list[targetIdx].presentationData = {
+              ...chunk.data,
+              conversationId: chunk.data.conversationId ?? conversationId,
+              sourceMessageId: chunk.data.sourceMessageId ?? assistantMsg.id,
+            };
+          } else if (chunk.type === 'spreadsheet-card') {
+            list[targetIdx].kind = 'spreadsheet';
+            list[targetIdx].spreadsheetData = {
+              ...chunk.data,
+              conversationId: chunk.data.conversationId ?? conversationId,
+              sourceMessageId: chunk.data.sourceMessageId ?? assistantMsg.id,
+            };
+          }
           saveLocal(conversationId, list);
         }
       }
@@ -765,6 +822,7 @@ export const useMessageStore = defineStore("message", () => {
           }
 
           if (remoteAssistant && localAssistantIdx !== -1) {
+            const localAssistantId = list[localAssistantIdx].id;
             list[localAssistantIdx].id = String(remoteAssistant.id);
             list[localAssistantIdx].parentId = remoteAssistant.parentId ?? undefined;
             list[localAssistantIdx].turnId =
@@ -784,6 +842,29 @@ export const useMessageStore = defineStore("message", () => {
                   })()
                 : remoteAssistant.sourceChunks;
             list[localAssistantIdx].durationMs = remoteAssistant.durationMs;
+            list[localAssistantIdx].kind = remoteAssistant.kind || list[localAssistantIdx].kind;
+            const remotePresentationData = parseStructuredValue<PresentationChatCardDto>(
+              remoteAssistant.presentationData,
+            );
+            if (remotePresentationData) {
+              list[localAssistantIdx].presentationData = remotePresentationData;
+            } else if (list[localAssistantIdx].presentationData?.sourceMessageId === localAssistantId) {
+              list[localAssistantIdx].presentationData = {
+                ...list[localAssistantIdx].presentationData,
+                sourceMessageId: String(remoteAssistant.id),
+              };
+            }
+            const remoteSpreadsheetData = parseStructuredValue<SpreadsheetChatCardDto>(
+              remoteAssistant.spreadsheetData,
+            );
+            if (remoteSpreadsheetData) {
+              list[localAssistantIdx].spreadsheetData = remoteSpreadsheetData;
+            } else if (list[localAssistantIdx].spreadsheetData?.sourceMessageId === localAssistantId) {
+              list[localAssistantIdx].spreadsheetData = {
+                ...list[localAssistantIdx].spreadsheetData,
+                sourceMessageId: String(remoteAssistant.id),
+              };
+            }
           }
 
           saveLocal(conversationId, list);

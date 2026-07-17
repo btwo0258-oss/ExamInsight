@@ -1,6 +1,6 @@
 # 学生端前端功能与对接说明
 
-> 范围：当前 `npm run dev` 中的“新对话”“资料库”“智能学习”、PPT 生成及其详情页。
+> 范围：当前 `npm run dev` 中的“新对话”“资料库”“智能学习”、PPT/电子表格生成及其详情页。
 >
 > 本文描述前端当前实现、Mock 边界和正式后端对接约束。后端内部实现不在本文范围内。
 
@@ -15,7 +15,7 @@
 ## 2. 产品边界与核心原则
 
 - 前端负责：页面展示、表单编辑、用户确认、交互状态、路由、接口调用、流式响应展示和少量 UI 偏好持久化。
-- 后端负责：业务实体持久化、权限、文件存储、文档解析、AI/PPT Provider 调用、生成任务、学习进度、题目、答题结果、错题和资源关联。
+- 后端负责：业务实体持久化、权限、文件存储、文档解析、AI/PPT/电子表格 Provider 调用、生成任务、学习进度、题目、答题结果、错题和资源关联。
 - 只有 Mock Repository 会调用 `mock/generators` 生成演示用学习方案、题目和评分；API Repository 不执行前端生成规则。
 - 正式环境中，学习画像、确认稿、学习方案、题目、解析、推荐资源均应由后端调用 AI 或业务服务生成；前端不能承担这类权威业务生成逻辑。
 - 前端可以保留格式校验、空值校验、展示排序和交互限制，但不能用前端规则替代后端 AI 结果。
@@ -24,17 +24,19 @@
 
 | 模块 | 页面 | 当前路由 | 页面职责 | 主要跳转 |
 | --- | --- | --- | --- | --- |
-| 新对话 | 新对话页 | `/chat` | 创建普通对话或学习助教对话，选择资料库、附件和模型 | 创建成功后进入 `/chat/:id` |
+| 新对话 | 新对话页 | `/chat` | 创建普通对话或学习助教对话，选择知识库、附件和模型 | 创建成功后进入 `/chat/:id` |
 | 新对话 | 对话详情页 | `/chat/:id` | 加载历史消息、发送消息、展示流式回答、版本和引用 | 侧边栏切换其他会话或学习项目 |
-| PPT | 创建/详情工作区 | `/presentations/new`、`/presentations/:id` | 配置、生成/编辑大纲、查看任务进度、预览、下载和保存资料库 | 按 returnTo 返回来源页 |
-| 资料库 | 资料库首页 | `/library` | 查看、创建资料库，查看资料文件，上传资料 | 进入 `/library/:id`；开始学习进入 `/learning/new?libraryId=:id` |
-| 资料库 | 资料库详情 | `/library/:id` | 展示单个资料库的文件、状态和操作 | 用于智能学习进入 `/learning/new?libraryId=:id` |
+| PPT | 创建/详情工作区 | `/presentations/new`、`/presentations/:id` | 配置、生成/编辑大纲、查看任务进度、预览和下载；成功后自动进入资料库 | 按 returnTo 返回来源页 |
+| 电子表格 | 对话入口/任务页 | `/spreadsheets/new` 重定向对话、`/spreadsheets/:id` | 根据对话、附件、知识库和项目直接生成；恢复任务、失败重试和关联 | ready 后预览进入统一资源页 |
+| 统一资源预览 | 只读预览工作区 | `/resources/:resourceId/preview` | 预览和下载资料库中的 ready 文件，不创建对话 | 按受控 returnTo 返回来源页 |
+| 资料库 | 资料库首页 | `/library` | 展示全局资源、知识库入口、上传和组合筛选 | 进入 `/library/:id`；开始学习进入 `/learning/new?knowledgeBaseId=:id` |
+| 知识库 | 知识库详情 | `/library/:id` | 展示单个知识库关联的资源、状态和操作 | 用于智能学习进入 `/learning/new?knowledgeBaseId=:id` |
 | 智能学习 | 项目列表 | `/learning/projects` | 查看学习项目、状态、进度和入口 | 新建进入 `/learning/new`；详情进入 `/learning/:id` |
-| 智能学习 | 创建页 | `/learning/new` | 选择资料库并收集学习目标，形成确认稿 | 确认创建后进入 `/learning/:id` |
+| 智能学习 | 方案制定对话 | `/learning/new`、`/learning/setup/:conversationId` | 通过对话收集目标，展示并编辑学习画像 Card 和确认文档 | 首次发送进入 setup 历史；确认后进入 `/learning/:id` |
 | 智能学习 | 学习计划 | `/learning/:id` | 展示画像、阶段、任务、进度和学习入口 | 任务进入 `/learning/:id/study` |
 | 智能学习 | 学习执行 | `/learning/:id/study` | 阅读材料、练习、评估、案例任务和助教交互 | 返回计划或进入错题/资源 |
 | 智能学习 | 错题页 | `/learning/:id/mistakes` | 查看错题、解析和掌握状态 | 返回计划或继续学习 |
-| 智能学习 | 资源页 | `/learning/:id/resources` | 查看学习资源、知识图谱和 PPT 等辅助内容 | 可打开 `/mindmap/:id` 或 `/presentations/:id` |
+| 智能学习 | 资源页 | `/learning/:id/resources` | 查看学习资源、思维导图、PPT 等辅助内容 | ready 文件统一进入 `/resources/:resourceId/preview`；未生成 PPT 进入工作区 |
 
 补充路由规则：
 
@@ -42,8 +44,9 @@
 - `/learning` 当前重定向到 `/learning/projects`，因此任何“创建学习项目”的入口都不能跳到 `/learning`。
 - `/learning/:id/practice` 当前重定向到 `/learning/:id/study`。
 - `/presentations/new` 必须位于 `/presentations/:id` 之前注册，避免把 `new` 当成实体 id。
+- `/spreadsheets/new` 必须位于 `/spreadsheets/:id` 之前注册，并重定向 `/chat?intent=spreadsheet`，不能重新出现独立配置页。
 - `returnTo` 只接受以 `/` 开头的站内路径；无有效返回路径时回 `/chat`。
-- `libraryId` 是创建学习项目时的预选参数。创建页读取后只在当前用户有权限的知识库列表中匹配；参数无效时选择第一项可用知识库，无可用项时展示空状态并阻止生成。
+- `knowledgeBaseId` 是创建学习项目时的可选预选参数。创建页只在当前用户有权限的知识库列表中匹配；参数无效或未提供时保持“不关联知识库”，仍允许基于用户输入和上传资源生成。
 
 ## 4. 功能、状态与触发条件
 
@@ -52,7 +55,7 @@
 #### 功能说明
 
 - 创建普通对话。
-- 选择资料库作为回答上下文。
+- 选择知识库作为回答上下文。
 - 添加附件并展示附件状态。
 - 发送问题并展示流式回答。
 - 加载历史会话和消息版本。
@@ -76,58 +79,73 @@
 2. `/chat` 首次发送时先创建会话，再发送消息；`/chat/:id` 直接在当前会话发送。
 3. 正式环境回答由后端 AI 流式生成，前端只负责渲染增量内容和最终状态。
 4. 重新生成、编辑问题和消息版本必须携带同一轮次标识，避免覆盖错误消息。
-5. 学习助教会话必须关联 `learningProjectId`，普通对话不应伪造该字段。
+5. 学习助教会话必须关联 `projectId`，普通对话不应伪造该字段。
 6. 普通对话和学习助教均支持停止流式生成；中止请求保留已生成内容，不作为失败提示。
 7. Mock 附件提取只返回文件元数据，不读取真实文件；API 模式通过 Document Repository 调用附件提取接口。
 
-### 4.2 资料库
+### 4.2 资料库与知识库
 
-#### 功能说明
+#### 名词与功能
 
-- 创建和查看资料库。
-- 查看资料库详情及文件列表。
-- 上传资料并展示上传、解析状态。
-- 从资料库直接发起智能学习。
+- 资料库：当前用户全部上传文件和 AI 生成文件的全局列表。
+- 知识库：资源的可选归类和 AI 检索上下文，不保存第二份文件。
+- 学习项目：资源的另一种可选关联，不取代资料库或知识库。
+- 首页 `/library` 同时展示知识库入口和全局资料；详情 `/library/:id` 展示单个知识库关联的资料。
+- 所有上传文件、PPT、电子表格、思维导图和智能学习生成文件都自动进入资料库；只有明确选择知识库或项目时才建立对应关联。
 
 #### 页面状态
 
 | 状态 | 触发条件 | 前端表现 | 后续动作 |
 | --- | --- | --- | --- |
-| 空列表 | 用户没有资料库 | 展示空状态和创建入口 | 创建资料库 |
-| 有数据 | 列表加载成功 | 展示资料库和文件 | 查看详情或开始学习 |
-| 上传中 | 用户选择文件 | 展示进度，限制重复操作 | 上传完成后进入解析状态 |
-| 解析中 | 文件上传成功 | 展示处理中 | 轮询或订阅后端任务状态 |
-| 可用 | 解析完成 | 允许对话引用和智能学习 | 作为 AI 上下文使用 |
-| 解析失败 | 后端解析失败 | 展示失败原因和重试 | 重新解析或删除文件 |
-| 删除确认 | 用户点击删除 | 展示确认弹窗 | 确认后调用删除接口 |
+| 空列表 | 没有资源和知识库 | 展示空状态和创建/上传入口 | 创建知识库或上传文件 |
+| 有数据 | 列表加载成功 | 展示知识库卡片和资料卡片 | 查看详情、下载或开始学习 |
+| 上传/解析中 | 已提交文件 | 展示 waiting/processing，限制重复操作 | 刷新资源状态 |
+| 可用 | status=ready | 允许下载、知识库引用和智能学习 | 按资源类型打开 |
+| 失败 | status=failed | 展示原因与重试 | 重试解析或删除 |
+| 筛选中 | 打开漏斗菜单 | 来源单选、文件类型单选；两组可同时生效 | 再点已选项取消该组筛选 |
 
-#### 触发与跳转逻辑
+来源筛选固定为“已上传/已生成”；文件类型固定为“图片/文档/电子表格/演示文稿/PDF”。不提供“最近删除”。搜索、顶部分类、来源和文件类型使用 AND 组合。
 
-- 首页点击资料库进入 `/library/:id`。
-- 首页“开始智能学习”和详情页“用于智能学习”统一进入 `/learning/new?libraryId=:id`。
-- 创建页根据 `libraryId` 预选资料库，但仍允许用户修改。
-- 未解析完成的资料不能作为正式 AI 上下文；前端需要根据后端状态禁用相关入口。
-- 列表搜索、网格/列表偏好、重命名、移动、下载、删除和解析失败重试均通过 Library Resource Store 调用同一 Repository。
-- 当前“选择资料后开始聊天”和文件在线预览保持禁用，直到后端提供资源引用和预览接口；前端不会伪造成功。
+#### 资源与关联规则
 
+~~~text
+resourceId       // 资料库中的唯一资源 ID
+knowledgeBaseId  // 可空，关联的知识库 ID
+projectId        // 可空，关联的学习项目 ID
+~~~
+
+- 两个关联都为空时，资源仍正常出现在资料库。
+- 上传/生成时选中的关联随请求提交；修改关联调用统一 Resource Repository，不复制文件。
+- 智能学习项目内上传和生成的资源自动关联当前项目和项目知识库。
+- 首页点击知识库进入 `/library/:id`；“开始智能学习”和详情“用于智能学习”进入 `/learning/new?knowledgeBaseId=:id`。
+- 未解析完成的资源不能作为正式 AI 上下文；前端根据状态禁用相关入口。
+- 正式环境刷新后重新调用 `/api/resources` 获取权威数据，不从 Storage 恢复业务资源。
 ### 4.3 智能学习
 
 #### 功能说明
 
-- 根据资料库、学习目标和用户补充信息创建学习项目。
+- 根据可选知识库、上传资源、学习目标和用户补充信息创建学习项目。
 - 展示学习画像、确认稿、学习方案、阶段、任务和总体进度。
 - 执行阅读、练习、评估和案例任务。
 - 展示题目、解析、错题和推荐资源。
 - 通过学习助教继续提问。
-- 在创建页输入区通过语音补充学习目标；移动端可从输入框 `+` 菜单上传照片或拍照。
+- 在方案制定对话的输入区通过语音补充学习目标；移动端可从输入框 `+` 菜单上传照片或拍照。
+
+创建主线固定为：
+
+1. `/learning/new` 只负责展示空的方案制定对话，不展示独立大表单。
+2. 用户首次发送目标时创建 draft 项目和 `learning-setup` 会话，然后替换为 `/learning/setup/:conversationId?projectId=:projectId`。
+3. AI 返回学习画像后，页面在消息流内展示可编辑的 `LearningProfileCard`；用户确认画像后生成可编辑的 `LearningPlanDocument`。
+4. 用户确认文档后启动异步方案生成任务；成功后进入 `/learning/:projectId`。
+5. 从侧边栏打开历史 `learning-setup` 会话时，按会话消息恢复同一组 Card；Mock 未完成草稿额外使用 sessionStorage 支持当前标签页刷新恢复。
 
 #### 创建流程状态
 
 | 状态 | 触发条件 | 前端表现 | 正式处理方 |
 | --- | --- | --- | --- |
-| 未选择资料库 | 直接进入 `/learning/new` | 要求选择资料库 | 前端交互状态 |
-| 已预选资料库 | 携带有效 `libraryId` | 展示已选资料库 | 前端读取参数，后端校验权限 |
-| 信息收集中 | 用户描述目标 | 展示对话或表单 | 前端收集输入 |
+| 未关联知识库 | 直接进入 `/learning/new` 或主动选择“无” | 允许继续，仅不使用知识库 RAG | 前端交互状态，后端按空值处理 |
+| 已预选知识库 | 携带有效 `knowledgeBaseId` | 展示已选知识库 | 前端读取参数，后端校验权限 |
+| 信息收集中 | 用户描述目标 | 展示方案制定对话 | 前端收集输入 |
 | 画像生成中 | 用户提交目标 | 展示生成状态 | 后端 AI |
 | 待确认 | 后端返回画像/确认稿 | 允许用户修改或确认 | 前端编辑，后端保存草稿 |
 | 方案生成中 | 用户确认 | 展示任务状态 | 后端 AI/任务服务 |
@@ -144,22 +162,55 @@
 | 需复习 | 结果低于掌握阈值或到达复习时间 | 后端学习策略判断 |
 | 已锁定 | 前置任务未完成 | 后端返回锁定条件 |
 
+后端分别返回 `completed`、`needs_review`、`locked`。前端允许进入需复习任务，但锁定任务只展示状态，禁止从详情、阶段按钮、前后导航或直接 task 查询参数进入。
+
 当前 Mock 完成规则仅用于页面演示：
 
 - 阅读/资源任务：阅读进度达到 80%，且有效学习时间达到 5 秒。
 - 练习/评估任务：关联题目全部提交。
 - 案例任务：完成 `run-case` 操作。
-- 项目进度：按已完成任务数计算；100% 标记为“已完成”，否则为“进行中”。
+- 项目状态：方案生成成功但尚未开始任务时为“已生成”；首次有效学习行为后为“进行中”；任务全部完成后为“已完成”。
 
 正式环境中，上述阈值和完成结果必须由后端返回。前端可以展示规则，但不应自行决定权威进度。
 
 #### 当前前端状态实现
 
 - 项目列表：加载、失败重试、无项目、筛选无结果、网格/列表偏好。
-- 创建页：无可用知识库、画像生成中/失败、确认稿生成中/失败、项目生成中/失败。
+- 方案制定对话：知识库可空，覆盖画像生成中/失败、Card 待确认、确认稿生成中/失败、文档待确认和项目生成中/失败；Mock setup 草稿和活动 plan jobId 使用 sessionStorage 刷新恢复。
 - 计划、学习、错题和资源页：统一按路由 `projectId` 重新请求后端，处理加载失败和项目不存在；不再回退到第一个项目。
 - 答题、追加练习、错题巩固和资源生成：阻止重复提交，失败后保留当前页面数据并允许重试。
-- 学习资源：只展示项目接口真实返回的资源；正式模式不在前端补造默认方案、思维导图或下载文件。
+- 任务完成：页面不提供绕过规则的“手动完成”；阅读、交卷和案例操作分别触发对应完成条件。
+- 学习资源：Mock 初次生成默认产出学习方案和思维导图，其余资源按需；正式模式只展示项目接口真实返回的资源，不在前端补造文件。
+- 上传资料：选择文件后立即进入全局资料库；新项目生成时通过 sourceResourceIds 关联新 projectId，知识库非空时同时关联 knowledgeBaseId；图片和音频的 mediaAssetIds 从画像一直传递到最终方案生成。
+- 方案确认稿：画像接口只返回画像；专用确认稿接口返回 content 和 resourceId，文件立即进入资料库；同一次配置流程使用 sessionStorage 中稳定的 setupId，重新生成只更新同一个 resourceId，不会与下一个新项目串档；创建项目时把用户最终编辑内容回写该资源。
+- 正式题组交卷：一次调用批量答案接口，禁止逐题请求造成部分成功；未提交草稿仅短期保存在 sessionStorage。
+- 正式项目响应：统一使用共享 LearningProjectDto，API Repository 不再用 `Record<string, any>`；未提交的 draftAnswer 和 codeDrafts 仍只属于前端草稿，不要求后端返回。
+- 正式资源恢复：资源状态为 generating 时资源页每 3 秒重新获取项目详情，约 120 秒后停止自动查询并提示稍后刷新。
+
+#### 学习助教上下文
+
+- 页面发送 projectId，并在学习执行页额外发送 stageId、taskId、exerciseId；这些值只用于定位当前上下文。
+- Mock 使用前端生成的项目摘要模拟回答；API 模式不把该摘要作为系统提示词发送。
+- 正式后端根据 conversation.projectId 加载画像、路径、进度、已提交答案、错题和资源，再根据 project.knowledgeBaseId 做 RAG；知识库为空时跳过 RAG。
+- 项目结构化状态由业务数据库提供，知识库正文由检索系统提供。后端必须校验 ID 层级和权限，未提交测验只能提示思路。
+
+#### 路径倒退、异常与边界
+
+- `/learning/new` 首次发送后进入 `/learning/setup/:conversationId`；返回项目列表不会取消生成任务，再次打开同一 setup 会话可恢复 Card、确认文档和活动任务，创建成功后清理 Mock setup 草稿。
+- `/learning/:id/study`、`/resources`、`/mistakes` 统一返回 `/learning/:id`；项目详情返回 `/learning/projects`。
+- 无效 projectId、无权限和 404 展示路由错误状态并返回项目列表，禁止回退到第一个 Mock 项目或新对话。
+- 方案生成中后退或刷新不自动取消后端任务；sessionStorage 中的活动 jobId 用于重新查询。failed/cancelled 清理活动 job，保留输入供重试。
+- stage/task 查询参数无效时选择当前项目第一个未完成任务；不能访问其他项目中的实体。
+- 接口超时、断网或 5xx 保留用户输入和未提交答案；正式模式不切换 Mock、不伪造成功。401 进入登录处理，403/404 不提供重复提交按钮。
+- 删除项目不删除全局资料库文件，只解除 projectId；知识库关联保持。删除运行中项目由后端返回 409。
+- 同一个生成、交卷或资源操作通过 pending 状态禁用重复点击；clientRequestId 负责网络重试幂等。
+
+#### 意图与任务执行
+
+- 创建画像、生成确认稿、确认创建项目、追加练习、错题巩固和资源生成都是明确按钮动作，前端不通过关键词猜测。
+- 学习助教的普通问答由后端结合 conversationType、项目状态和当前问题判断回答策略；需要检索时使用项目知识库 RAG。
+- 正式任务执行统一为“创建 job -> 后端异步执行 -> 前端查询 -> GET 项目权威结果”。Mock Generator 只模拟同一请求/响应和状态，不代表后端提示词或算法。
+- 性能边界：初始题量 10 至 200，输入资源最多 20 个，媒体最多 5 个；计划 job 每秒查询且最多 120 次，生成资源恢复每 3 秒查询且约 120 秒停止，阅读行为约 10 秒聚合上报。
 
 ### 4.4 语音、拍照与上传照片
 
@@ -209,7 +260,7 @@
 - 支持 JPEG、PNG、WEBP、HEIC、HEIF，单图最大 10MB；服务端仍必须重新校验文件签名。
 - Mock 只在 sessionStorage 保存资产元数据，缩略图只使用当前页面内存中的 Object URL，不保存真实图片内容。
 - 正式环境先上传图片取得 `mediaAssetId`，聊天接口只发送 `mediaAssetIds`；图片二进制不转 Base64 塞进 JSON。
-- 资料库和智能学习图片通过相同 MediaRepository 上传，后端根据 purpose 和 libraryId/learningProjectId 建立关联，避免同一文件重复上传。
+- 资料库和智能学习图片通过相同 MediaRepository 上传，后端根据 purpose 和 knowledgeBaseId/projectId 建立关联，避免同一文件重复上传。
 
 #### 识别、意图和上下文
 
@@ -217,63 +268,78 @@
 - `purpose` 固定为 `chat-attachment`、`library-resource` 或 `learning-input`；`source` 固定为 `upload`、`camera` 或 `microphone`。
 - 用户明确要求“识别文字”时使用 `mode=ocr`；明确要求“识别题目”时使用 `mode=question`；普通图片问答使用 `mode=auto`，由后端结合当前问题、图片和会话类型判断意图。
 - 图片上下文默认只属于当前消息；跨轮引用由后端根据消息与媒体资产关联恢复，前端不能把识别文本永久拼入所有 history。
-- conversationId、libraryId 和 learningProjectId 仅用于建立上下文，正式权限由后端逐个校验。
+- conversationId、knowledgeBaseId 和 projectId 仅用于建立上下文，正式权限由后端逐个校验。
 - 识别任务使用 pending、running、succeeded、failed、cancelled；刷新后可用 jobId 恢复查询，任务失败不删除原图。
 
 完整 multipart 字段、DTO、状态机、错误码、重试和权限规则以 `docs/backend-api-contract.md` 第 18 节为准。
 
 ### 4.5 PPT 生成
 
-#### 入口和上下文
+#### 入口与确认卡
 
 | 入口 | 触发条件 | 跳转与上下文 |
 | --- | --- | --- |
-| 新对话欢迎页“生成 PPT” | 点击功能入口 | `/presentations/new`，携 conversationId、已选 libraryId 和 returnTo |
-| 智能学习资源页 PPT 行 | PPT 未生成、失败或已有结果 | 新建时携 learningProjectId、learningResourceId、libraryId；已有 presentationId 时进入详情 |
-| 资料库 PPT 聚合项 | externalKey 为 `presentation:{id}` | 进入 `/presentations/:id`，保留资料库 returnTo |
+| 新对话“生成 PPT” | 显式 `clientAction=presentation.create` | 留在对话中展示确认卡 |
+| 对话自然语言请求 | 正式后端意图识别；Mock 仅模拟 | 返回同一 PresentationChatCardDto |
+| 确认卡“更多设置” | 用户需要完整配置 | 先创建草稿，再进入 `/presentations/:id` |
+| 确认卡“生成大纲” | 主题和页数已确认 | 创建草稿并生成大纲，进入 `/presentations/:id` |
+| 智能学习资源 | 当前项目创建 PPT | 携 projectId、learningResourceId、knowledgeBaseId |
+| 资料库 PPT | `externalKey=presentation:{id}` | 打开 `/presentations/:id` |
 
-普通附件中的 PPT/PPTX 是“上传已有演示文件”，走资料库文档解析；“生成 PPT”是独立 PresentationRepository 流程，两者不能共用生成状态或把上传接口误当生成接口。
+确认卡只确认主题、页数和是否进入更多设置，不再提供“先确认大纲/自动生成”。卡片与工作区引用同一个 presentationId；工作区修改配置、返回对话或完成生成后，卡片必须同步最新数据。
 
-PPT 工作区的用户可见术语统一为“知识库”，包括配置、摘要、保存提示和下拉名称。为兼容现有前后端，代码字段仍使用 libraryId，路由仍使用 `/library`，不新增同义接口字段。
+#### 唯一页面流程
 
-#### 四步流程
+1. 配置：编辑主题、标题、页数、受众、风格、模板、比例、引用知识库和补充要求。
+2. 大纲生成：创建或更新草稿后由 AI 填充大纲。
+3. 大纲确认：用户检查、编辑、增删和排序；此步骤不可跳过。
+4. 最终生成：用户点击“确认大纲并生成”，展示异步任务进度。
+5. 预览：展示页面、下载 PPTX；生成成功时文件已经自动进入资料库。
 
-1. 配置：填写主题、标题、页数、受众、风格、模板、比例、资料库和补充要求；选择“先确认大纲”或“自动生成”。
-2. 大纲：确认模式下编辑页面标题、要点、备注、布局和顺序；自动模式生成大纲后直接进入生成。
-3. 生成：展示后端任务进度，可明确停止；刷新或重新进入详情时根据 activeJobId 恢复轮询。
-4. 预览：API 有 previewImageUrl 时展示后端实际页面，没有时按结构化页面数据渲染；支持翻页、下载和保存到资料库。
+配置页不能直接生成最终 PPT。“生成大纲”也不会自动继续到最终生成。知识库选择只决定引用和关联；选择“无”时 PPT 仍进入资料库，但 knowledgeBaseId 为空。
+
+#### 状态与倒退
+
+| 状态 | 前端行为 | 倒退/恢复 |
+| --- | --- | --- |
+| draft | 编辑配置并同步草稿 | 返回对话后卡片显示最新配置 |
+| outlining | 展示大纲生成进度 | 返回不删除草稿；再次进入按 activeJobId 恢复 |
+| outline_ready | 编辑并确认大纲 | 返回配置继续修改同一实体 |
+| generating | 展示最终生成进度，可停止 | 后退不自动取消；刷新后继续查询 |
+| ready | 预览、下载、修改资源关联 | 资料库已存在同一 resourceId |
+| failed/cancelled | 保留配置和大纲，允许重试 | 不创建伪 ready 或重复资源 |
+
+Mock 使用 sessionStorage 保存 PPT 实体和任务元数据，只在下载时用 PptxGenJS 生成演示 PPTX。API 模式只调用 Presentation Repository；讯飞字段、文件原件、预览图、Provider 任务和资料库创建均由后端处理。
+
+### 4.6 电子表格生成
+
+#### 功能流程
+
+- 新对话快捷入口只预填“根据要求和当前上下文直接生成电子表格”，用户可继续输入要求和添加附件，发送后由同一次对话请求启动任务。
+- 自然语言意图明确且信息充分时，后端直接返回带 `spreadsheetId` 的 SpreadsheetChatCardDto；信息不足时 AI 在对话中追问，不返回空配置卡。
+- `/spreadsheets/new` 重定向对话；`/spreadsheets/:id` 负责生成状态恢复、失败重试和知识库关联，ready 文件从外部入口进入统一资源预览。
+- 统一流程为“对话要求/附件/知识库/项目 → AI 直接生成 → 自动进入资料库 → 统一只读预览或下载 XLSX”。
+- 上传 XLS/XLSX/CSV 是读取已有文件，走资料上传；生成新表格走 Spreadsheet Repository，两者状态独立。
+- 若选择知识库或项目，生成资源建立对应关联；都选“无”时只进入资料库。
 
 #### 页面状态
 
-| 状态 | 触发条件 | 前端行为 | 退出路径 |
-| --- | --- | --- | --- |
-| config | 新建路由 | 校验主题、3 至 30 页和配置 | 创建草稿并生成大纲 |
-| outlining | 大纲任务 pending/running | 禁用重复创建，显示进度 | 成功进 outline；失败保留配置 |
-| outline | 后端返回 outline_ready | 允许编辑、增删和排序 | 确认生成或返回配置 |
-| generating | PPT 任务 pending/running | 展示非递减进度和停止 | 成功进 preview；取消/失败可重试 |
-| preview | status=ready | 展示实际预览、下载、关联资料库 | 返回大纲形成新版本或返回来源页 |
-| failed | 任务失败 | 显示后端稳定错误码对应文案 | 保留大纲并使用新 clientRequestId 重试 |
-| cancelled | 用户停止 | 不删除 PPT 草稿和大纲 | 返回大纲或重新生成 |
-| not-found/forbidden | 详情无权访问或不存在 | 不读取 Mock 兜底，不展示旧缓存 | 返回来源页 |
+| 状态 | 前端表现 | 退出与恢复 |
+| --- | --- | --- |
+| generating | 对话卡和预览页展示生成进度，可停止 | 后退不自动取消，刷新按 activeJobId 恢复 |
+| ready | 下载 XLSX、更新知识库关联 | resourceId 已出现在资料库 |
+| failed/cancelled | 展示错误并保留原始要求和上下文 | 使用新 clientRequestId 在原实体上重试 |
 
-#### Mock 与正式环境
+Mock 根据对话要求生成只读演示工作簿，并在下载时用 ExcelJS 生成真实 XLSX，二进制不写 Storage。正式后端用 AI 生成受约束的 JSON，再由后端表格库生成文件；前端不执行正式 AI、公式或文件生成算法。
+### 4.7 统一选择浮层
 
-- MockPresentationRepository 把 PPT 实体和任务元数据写入按用户隔离的 sessionStorage，大纲和进度只用于演示。
-- Mock 只在用户点击下载时通过 PptxGenJS 生成真实 PPTX；二进制不写 Storage。
-- ApiPresentationRepository 固定调用后端 `/api/presentations` 端点，正式构建不导入 Mock 生成路径，也不直接出现讯飞字段。
-- 正式 PPT 原件、逐页预览、Provider 任务和资料库关联全部由后端保存。前端只缓存当前 DTO 和交互状态。
-- confirm 与 auto 使用相同后端状态机；auto 只是前端不暂停在大纲编辑步骤。
-
-#### 倒退、刷新和异常
-
-- 配置页未创建实体时返回来源页，不产生服务端草稿。
-- 已创建实体后浏览器后退不会删除实体或取消任务；再次进入详情可恢复。
-- 生成中返回大纲只改变页面步骤，不自动取消；只有点击“停止生成”才调用 cancel。
-- 接口超时保留配置/大纲，不伪造 ready；重复点击由 isSaving 和后端 clientRequestId 双重限制。
-- 学习来源生成成功后，Mock 回写 presentationId；API 模式重新获取后端学习项目，前端不自行伪造正式学习资源。
-- 保存资料库后，聚合项使用 externalKey=`presentation:{id}`，首页与详情都可重新打开和下载。
-
-完整 DTO、接口示例、状态机、讯飞 Provider 隐藏、权限、幂等和错误码见 `docs/backend-api-contract.md` 第 19 节。
+- 主线页面不使用浏览器原生 `select`；PPT 配置/大纲、资料上传弹窗、学习配置/方案调整/追加练习和代码语言统一使用 `components/common/AppSelectMenu.vue`。
+- 触发按钮展示当前值和上下箭头；展开项支持 hover、键盘焦点、禁用和当前选中标记，同一时间只展开一个选择浮层。
+- 浮层默认向下展开，空间不足时向上展开；宽度不小于触发控件并限制在视口内，长列表内部滚动，不超出可视区域。
+- 点击选项后更新原有前端字段并关闭；点击外部、按 Esc、打开另一个选择浮层或组件禁用时关闭。展开/收起使用短距离位移、透明度和缩放动画，并尊重 `prefers-reduced-motion`。
+- 知识库选择可提供底部“新建知识库”动作，动作复用 `LibraryKnowledgeCreateModal.vue` 和既有知识库创建 Store；普通选择器不显示创建动作。
+- 该组件只处理 UI 交互，不读取 Store、不生成选项、不转换 DTO。Mock/API 模式仍由原页面和 Store 提供相同值，切换数据源不改变控件行为。
+- 完整模态框、确认框和上传弹窗继续使用原组件；本规范只统一其内部选择控件，不改变弹窗层级和提交时机。
 
 ## 5. AI 生成逻辑与接口边界
 
@@ -284,6 +350,7 @@ PPT 工作区的用户可见术语统一为“知识库”，包括配置、摘�
 - Mock 业务实体：通过 Repository 写入按用户隔离的 `sessionStorage`。
 - 正式数据源：通过 API Repository 请求后端，不读取 Mock Storage。
 - PPT：Mock Repository 生成演示大纲和 PPTX；正式 API 只提交结构化配置，由后端调用 PPT Provider 并保存文件。
+- 电子表格：Mock Repository 根据对话上下文直接生成演示工作簿和 XLSX；正式 API 由后端 AI 生成结构化 JSON，再生成并保存 XLSX。
 - 数据源由 `VITE_DATA_SOURCE=mock|api` 在构建时决定，正式构建强制使用 `api`。
 
 Mock 生成器只负责返回符合接口结构的演示数据。后端不得复制其中的文本匹配、题目拼装、评分阈值或完成条件。
@@ -292,7 +359,7 @@ Mock 生成器只负责返回符合接口结构的演示数据。后端不得复
 
 正式环境建议采用异步生成流程：
 
-1. 前端提交资料库、学习目标和用户补充信息。
+1. 前端提交可选 knowledgeBaseId、sourceResourceIds、mediaAssetIds、学习目标和用户补充信息。
 2. 后端创建生成任务并返回 `jobId`。
 3. 后端校验资料权限、读取解析结果并调用 AI。
 4. 前端通过轮询、SSE 或 WebSocket 获取任务状态。
@@ -317,11 +384,12 @@ PPT 生成使用独立的 PresentationJob，但仍遵守“创建任务、查询
 | 图片/录音资产和识别任务元数据 | `sessionStorage`，按用户隔离 | 不保存真实二进制；关闭标签页后清除 |
 | 学习项目、任务、题目、答题和错题 | `sessionStorage`，按用户隔离 | 模拟当前会话内的后端业务数据 |
 | PPT 实体、大纲和任务元数据 | `sessionStorage`，按用户隔离 | 模拟刷新恢复；PPTX 二进制只在下载时生成，不持久化 |
+| 电子表格实体、只读预览和任务元数据 | `sessionStorage`，按用户隔离 | 模拟刷新恢复；XLSX 二进制只在下载时生成，不持久化 |
 | 未提交草稿、生成任务 id | `sessionStorage` | 用于刷新恢复和继续查询任务 |
 | 弹窗、筛选、当前选中项、加载状态 | Pinia 或组件内存 | 不需要跨会话持久化 |
 | AI 生成结果 | Mock Repository/Generator | 页面和 Store 不直接生成权威业务结果 |
 
-Mock key 使用 `examinsight.mock.v1.{userId}.{domain}`。页面和 Store 不直接读写 Mock 业务存储，由 `mock/storage.ts` 和 Repository 统一处理。
+Mock key 使用 `examinsight.mock.v2.{userId}.{domain}`。页面和 Store 不直接读写 Mock 业务存储，由 `mock/storage.ts` 和 Repository 统一处理。
 
 Mock 是否跨浏览器启动保留不属于后端接口契约。正式环境通过后端数据库持久化；Mock 使用 `sessionStorage` 仍能完整模拟刷新、查询、创建和更新流程。
 
@@ -336,8 +404,9 @@ Mock 是否跨浏览器启动保留不属于后端接口契约。正式环境通
 | 文档解析、向量化状态 | 后端任务/状态表 | 否，只展示状态 |
 | 学习项目、阶段、任务、进度 | 后端数据库 | 否，只缓存当前项目 |
 | 题目、答案、解析、答题结果、错题 | 后端数据库 | 否 |
-| AI 生成任务 | 后端任务表 | 否，只保存当前 `jobId` 到内存；必要时短期保存 |
+| AI 生成任务 | 后端任务表 | 前端仅把活动 `jobId` 和恢复所需的草稿 id 短期写入 `sessionStorage`，不保存结果 |
 | PPT 配置、大纲、文件和预览 | 后端数据库 + 私有对象存储 | 否，只缓存当前 DTO；不得保存 Provider URL 或二进制 |
+| 电子表格请求、结构化工作簿和 XLSX | 后端数据库 + 私有对象存储 | 否，只缓存当前 DTO 和预览状态 |
 | UI 偏好 | `localStorage` | 是 |
 | 未提交草稿、返回路由、生成 `jobId` | `sessionStorage` | 只用于临时恢复，不作为业务权威数据 |
 | 访问令牌 | 后端签发的 Bearer JWT | 当前契约沿用现有后端 JWT；Cookie 方案如需启用必须另开契约版本同步迁移 |
@@ -361,6 +430,7 @@ Repository 接口与共享 TypeScript 契约
 - API Repository 不捕获 `404` 后回退 Mock。
 - Store 只保存页面当前内存状态；正式模式刷新后重新调用后端接口。
 - 学习助教会话 id 仅在 Mock 模式写 `sessionStorage`；正式模式从后端会话列表及项目关联字段恢复。
+- 智能学习创建草稿、未提交答案草稿和活动生成 jobId 可在 API 模式短期写 sessionStorage；成功提交后立即清理，后端项目和答案仍是唯一权威。
 - 详细接口见 `docs/backend-api-contract.md`。
 
 ## 7. 后端接口约束摘要
@@ -392,25 +462,25 @@ interface ApiResponse<T> {
 ```ts
 interface CreateConversationRequest {
   title?: string
-  kbId?: number | null
+  knowledgeBaseId?: number | null
   conversationType?: 'general' | 'learning-setup' | 'learning-tutor'
-  learningProjectId?: number | null
-  learningProjectName?: string
+  projectId?: number | null
+  projectName?: string
 }
 ```
 
-当前 API Repository 已发送学习项目关联字段。现有后端 `ConversationCreateReq` 仍只有 `kbId` 和 `title`，需要按正式契约扩展并持久化，否则学习助教关系在刷新或换设备后会丢失。
+前端内部只使用上述正确命名。现有已实现会话后端仍使用 `kbId`、`learningProjectName` 时，只允许 API Repository 在网络边界映射；资料库和智能学习新接口不得继续复制旧字段。
 
-消息流接口需要稳定支持：`conversationId`、`question`、`model`、`kbId`、`history`、`parentId`、`turnId`、问题/答案版本、重新生成标识、被编辑消息 id 和附件引用。为兼容当前前后端，SSE 固定为未命名 `message` 文本增量、`finish` 引用数组和 `error` 错误事件，详细格式以 `docs/backend-api-contract.md` 为准。
+消息流接口需要稳定支持：`conversationId`、`question`、`model`、`kbId`、`history`、`parentId`、`turnId`、问题/答案版本、重新生成标识、被编辑消息 id 和附件引用。学习助教额外发送 `projectId/stageId/taskId/exerciseId`，但后端必须按会话关联重新校验。为兼容当前前后端，SSE 固定为未命名 `message` 文本增量、`finish` 引用数组和 `error` 错误事件，详细格式以 `docs/backend-api-contract.md` 为准。
 
-### 7.3 资料库接口
+### 7.3 资料库与知识库接口
 
 建议至少提供：
 
-- 资料库列表、详情、创建、更新、删除。
-- 文件上传、文件列表、删除、重新解析。
-- 文件状态查询或任务事件订阅。
-- 资料库是否可用于对话/学习的明确字段，例如 `availableForAi`。
+- 知识库列表、详情、创建、更新、删除。
+- `/api/resources` 全局资料列表、上传、重命名、关联、删除、下载和重新解析。
+- 所有上传和 AI 生成文件自动创建资源；`resourceId` 唯一，`knowledgeBaseId`、`projectId` 可空。
+- 知识库是否可用于对话/学习的明确字段，例如 `availableForAi`。
 
 文件状态建议固定为：`uploading`、`uploaded`、`parsing`、`ready`、`failed`。前端展示文案单独映射。
 
@@ -426,6 +496,8 @@ interface CreateConversationRequest {
 - 阶段、任务、资源和题目详情。
 - 提交答题结果、任务行为和学习时长。
 - 错题列表、掌握状态和复习操作。
+- 题组批量交卷，保证答案、错题和进度原子更新。
+- 学习助教在聊天请求中接收 projectId/stageId/taskId/exerciseId，并由后端校验后组装项目数据与 RAG 上下文。
 
 异步任务状态建议固定为：`pending`、`running`、`succeeded`、`failed`、`cancelled`。返回失败时应提供稳定的错误码和可展示信息。
 
@@ -436,6 +508,8 @@ interface CreateConversationRequest {
 - `POST /api/media/images/:assetId/recognition-jobs`：创建 auto/OCR/question 图片识别任务。
 - `GET /api/media/jobs/:jobId`：查询图片识别任务。
 - `POST /api/chat/stream`：在原请求中增加 `mediaAssetIds: string[]`，引用已上传图片或已转写音频，不直接发送 Base64/二进制。
+- `POST /api/chat/stream`：PPT 快捷入口增加 `clientAction: 'presentation.create'`；PPT 意图返回 `event: presentation-card`，并把同一 PresentationChatCardDto 持久化到助手消息。
+- `POST /api/chat/stream`：电子表格快捷入口增加 `clientAction: 'spreadsheet.create'`；表格意图返回 `event: spreadsheet-card`。
 
 正式接口不得返回公开永久文件 URL；文件访问必须经过权限校验或短期签名 URL。详细字段和错误码见零猜测交接契约第 18 节。
 
@@ -443,14 +517,35 @@ interface CreateConversationRequest {
 
 - `GET /api/presentations/templates`：获取本系统业务模板，不返回讯飞模板 ID。
 - `POST /api/presentations`：创建带上下文和 clientRequestId 的 PPT 草稿。
+- `PUT /api/presentations/:id/draft`：同步工作区配置和对话卡。
 - `POST /api/presentations/:id/outline-jobs`：创建大纲任务。
-- `PUT /api/presentations/:id/outline`：保存用户确认或自动流程产生的大纲。
+- `PUT /api/presentations/:id/outline`：保存用户确认后的大纲。
 - `POST /api/presentations/:id/generation-jobs`：创建或重试 PPT 生成任务。
 - `GET /api/presentations/jobs/:jobId`、`POST /api/presentations/jobs/:jobId/cancel`：查询和取消任务。
 - `GET /api/presentations/:id`、`GET /api/presentations/:id/download`：刷新恢复和下载权威文件。
-- `POST /api/presentations/:id/library`：把 ready PPT 关联到当前用户资料库。
 
-前端不接讯飞 API；正式后端必须隐藏 Provider 密钥、任务 ID、模板 ID 和文件 URL。详细约束见零猜测交接契约第 19 节。
+生成 ready 时后端自动创建资料库资源，不存在手动保存接口。前端不接讯飞 API；正式后端必须隐藏 Provider 密钥、任务 ID、模板 ID 和文件 URL。详细约束见零猜测交接契约第 19 节。
+
+### 7.7 电子表格接口
+
+- `POST /api/spreadsheets/generation-jobs`：提交完整用户要求和可选资源/媒体/知识库/项目上下文，创建实体并立即启动 XLSX 生成。
+- `POST /api/spreadsheets/:id/generation-jobs`：在原实体上重试生成。
+- `GET /api/spreadsheets/jobs/:jobId`、`POST /api/spreadsheets/jobs/:jobId/cancel`：查询和取消任务。
+- `GET /api/spreadsheets/:id`、`GET /api/spreadsheets/:id/download`：刷新恢复和下载。
+
+生成 ready 时自动创建资料库资源；详细约束见零猜测交接契约第 20 节。
+
+### 7.11 统一资源预览工作区
+
+- 路由固定为 `/resources/:resourceId/preview`，资料库、知识库详情、智能学习资源包和对话生成文件都只传 `resourceId` 后进入该页面。
+- 页面采用全页只读预览：保留学生侧边栏，顶部显示关闭、来源、文件名和下载，中间显示文件内容；不显示底部对话框，不创建文件问答会话。
+- 资料库网格卡片和横向列表行点击打开文件预览。删除/批量操作选择只能由网格卡片的圆形选择区或列表行的方形选择区触发，点击卡片正文不得切换勾选。
+- 知识库卡片点击进入知识库详情；详情中的 ready 文件整行和眼睛按钮都进入统一预览。
+- 智能学习资源操作顺序固定为“预览、下载、生成/重试”。未生成、生成中或失败资源的预览和下载按状态禁用。
+- PPT 工作区第 4 步预览属于生成流程，必须保留；生成完成后从资料库、学习资源包或聊天卡片打开 PPT 时进入统一资源预览。
+- 统一页面覆盖加载、处理中、失败、不支持、超限、资源不存在和无权限状态，并提供下载兜底。
+- 文本/思维导图上限 10MB、图片 20MB、PDF/Word/PPT/Excel/音频 30MB；压缩包和视频不在线预览。
+- Mock 只在当前标签页保留上传文件 Blob，sessionStorage 只保存元数据；正式模式只调用 `/api/resources/:resourceId/preview`，失败不回退 Mock。
 
 ## 8. 文件夹重构与文件清单
 
@@ -468,10 +563,11 @@ interface CreateConversationRequest {
 
 - `views/student/chat/StudentChatView.vue`
 - `views/student/presentation/PresentationWorkspaceView.vue`
+- `views/student/spreadsheet/SpreadsheetWorkspaceView.vue`
+- `views/student/resource/ResourcePreviewView.vue`
 - `views/student/library/LibraryHomeView.vue`
 - `views/student/library/LibraryDetailView.vue`
 - `views/student/learning/LearningProjectsView.vue`
-- `views/student/learning/LearningHomeView.vue`
 - `views/student/learning/LearningPlanView.vue`
 - `views/student/learning/LearningStudyView.vue`
 - `views/student/learning/LearningResourcesView.vue`
@@ -489,6 +585,7 @@ src/
       library/
       learning/
       presentation/
+      resource/
     admin/
     legacy/
   components/
@@ -499,6 +596,7 @@ src/
     library/
     learning/
     presentation/
+    spreadsheet/
     legacy/
   composables/
     useLearningPlanRoute.ts
@@ -519,8 +617,9 @@ src/
 | `components/chat` | 消息渲染、输入附件、思维导图和分段面板 |
 | `components/library` | `LibraryKnowledgeCreateModal.vue`、`UploadMaterialModal.vue` |
 | `components/learning` | `LearningQuestionCard.vue`、`LearningTutorPanel.vue`、`LearningRouteState.vue`、`LearningPlanDocument.vue`、`LearningProfileCard.vue`、`LearningProfileMenu.vue`、`LearningProjectResourceChips.vue`、`LearningMindMapPreview.vue` |
-| `components/presentation` | `PresentationOutlineEditor.vue`、`PresentationSlidePreview.vue`，只负责 PPT 业务交互和展示 |
-| `components/common` | 经过检查后确实不依赖业务字段的按钮、弹窗、状态和图标组件 |
+| `components/presentation` | `PresentationChatCard.vue`、`PresentationOutlineEditor.vue`、`PresentationSlidePreview.vue`，只负责 PPT 业务交互和展示 |
+| `components/spreadsheet` | `SpreadsheetChatCard.vue`，负责电子表格生成中/成功/失败任务卡；ready 文件预览进入统一资源预览 view |
+| `components/common` | `AppSelectMenu.vue` 及经过检查后确实不依赖业务字段的按钮、弹窗、状态和图标组件 |
 | `components/legacy` | 当前主线零引用但仍有参考或复用价值的旧组件 |
 
 原 `main-area/mode3-chat/*` 已迁移到 `components/chat`。旧版组合容器和欢迎页已移入 `components/legacy/chat`。
@@ -529,7 +628,6 @@ src/
 
 以下文件目前仍有路由或其他页面引用，不能直接删除：
 
-- `views/KnowledgeBaseView.vue`
 - `views/ResourceCenterView.vue`
 - `components/sidebar/*`
 
@@ -538,12 +636,12 @@ src/
 - `views/legacy/ChatView.vue`
 - `views/legacy/LearningWorkspaceView.vue`
 
-完整文件归属和删除判断见 `docs/frontend-file-inventory.md`。当前没有已经确认可以删除的源文件。
+完整文件归属和删除判断见 `docs/frontend-file-inventory.md`。本轮已确认并删除旧 `DocumentPreviewModal.vue`，其余旧知识库文件继续保留待后续分类。
 
 建议执行顺序：
 
 1. 建立完整的路由、动态 import、静态 import 和测试引用清单。
-2. 将当前主线页面按 `chat/library/learning/presentation` 分组，逐项修正 import。
+2. 将当前主线页面按 `chat/library/learning/presentation/spreadsheet` 分组，逐项修正 import。
 3. 将可复用组件按业务域迁移，并保持组件 API 不变。
 4. 将仍有参考价值的旧文件迁入 `legacy`，同时移除主线路由引用。
 5. 运行类型检查、单元测试和主流程页面检查。
@@ -551,8 +649,8 @@ src/
 
 ## 9. 后续实施清单
 
-- [x] 修复资料库首页“开始智能学习”跳转到 `/learning/new?libraryId=:id`。
-- [x] 修复资料库详情“用于智能学习”跳转到 `/learning/new?libraryId=:id`。
+- [x] 修复资料库首页“开始智能学习”跳转到 `/learning/new?knowledgeBaseId=:id`。
+- [x] 修复资料库详情“用于智能学习”跳转到 `/learning/new?knowledgeBaseId=:id`。
 - [x] 明确当前规则生成属于 Mock，正式方案和题目由后端 AI/业务服务生成。
 - [x] 明确 Mock 阶段与正式环境的存储职责。
 - [x] 明确页面、业务组件、通用组件、归档文件和可删除文件的标准。
@@ -584,9 +682,28 @@ src/
 - [x] 通用附件增加 DOC、Excel、PPT、ZIP 和音频，明确拒绝视频；音频复用 MediaRepository Mock/API 转写。
 - [x] 移动端附件菜单改为竖向 pill，侧边栏折叠 pill 增加平滑动画、反馈和路由选中态。
 - [x] 建立 Presentation 共享类型、Mock/API Repository 和用户隔离的 Mock 任务存储。
-- [x] 完成 PPT 配置、大纲编辑、异步生成、取消/重试、预览、真实 PPTX 下载和资料库关联。
+- [x] 完成 PPT 配置、大纲编辑、异步生成、取消/重试、预览、真实 PPTX 下载和自动资料库归档。
 - [x] 新对话、智能学习资源和资料库统一接入 PPT 工作区，不再用聊天提示词或普通学习资源逻辑代替。
 - [x] 补齐 PPT 零猜测后端接口、状态机、幂等、权限、讯飞 Provider 隐藏和错误码。
+- [x] 新对话 PPT 快捷入口改为对话确认卡，并统一自然语言意图卡、sourceMessageId、结果回写和正式 SSE 契约。
+- [x] PPT、知识库上传和智能学习主线原生下拉统一为共用选择浮层，保留原业务字段、弹窗和接口行为。
+- [x] 统一全局资料资源为 `resourceId`，知识库和项目只使用可选 `knowledgeBaseId`、`projectId` 关联。
+- [x] 资料库增加来源/文件类型组合筛选，并移除“最近删除”分类。
+- [x] PPT 删除双模式，固定为 AI 生成大纲、用户确认、再生成最终文件。
+- [x] 建立 Spreadsheet 共享类型、Mock/API Repository、对话直达生成卡、只读预览、异步生成和真实 XLSX 下载。
+- [x] PPT、电子表格和智能学习生成文件统一自动进入资料库，并按上下文关联知识库和项目。
+- [x] 智能学习新建/待完善入口统一从 `/learning/new` 开始；历史方案制定会话进入 `/learning/setup/:conversationId`，两者共用 `StudentChatView.vue` 的画像 Card 和确认文档流程，旧独立大表单页面已删除。
+- [x] 智能学习允许 knowledgeBaseId 为空，移除 `relatedProjectId/libraryId` 同义字段并固定 resourceId/knowledgeBaseId/projectId 语义。
+- [x] 智能学习创建草稿、活动生成任务和 API 答案草稿支持 sessionStorage 刷新恢复，正式业务结果仍以后端为权威。
+- [x] 学习项目状态改为 draft/configuring/ready/in_progress/completed，生成完成不会在首次学习前误判为进行中。
+- [x] 默认生成学习方案和思维导图，其他学习资源按需生成；全部生成文件自动进入资料库并按上下文关联。
+- [x] 题组交卷改为批量原子接口；学习行为按任务聚合上报，正式接口失败撤回乐观状态并展示错误。
+- [x] 智能学习正式项目响应改为共享 DTO，补齐 locked/needs_review、答题进度字段和最终方案 mediaAssetIds，并删除零引用的前端手动完成、相似题和旧题组生成方法。
+- [x] 学习助教 API 只传项目/阶段/任务/题目 ID，正式后端负责项目数据库上下文与知识库 RAG 组装。
+- [x] 增加智能学习 Mock 工作流测试，覆盖空知识库、项目状态、默认资源、题量和任务题目关联。
+- [x] 建立统一资源预览路由和 Mock/API 契约，资料库、知识库详情、资源包及对话生成文件使用同一只读页面。
+- [x] 资料库卡片/列表正文点击预览，圆形/方形选择区独立触发批量选择；学习资源操作顺序统一为预览、下载、生成/重试。
+- [x] 保留 PPT 生成工作区第 4 步预览，删除旧文档预览弹窗和学习资源页重复预览弹窗。
 - [ ] 对完全无引用、无独有逻辑的文件二次确认后删除。
 
 后续每一项涉及代码或目录调整时，应单独确认范围后执行，避免一次性移动造成大量不可控变更。

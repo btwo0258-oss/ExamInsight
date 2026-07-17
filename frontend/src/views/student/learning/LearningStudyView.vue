@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { LockKeyhole } from 'lucide-vue-next'
 import AppIcon from '@/components/common/AppIcon.vue'
+import AppSelectMenu from '@/components/common/AppSelectMenu.vue'
 import LearningDetailShell from '@/components/layout/LearningDetailShell.vue'
 import LearningQuestionCard from '@/components/learning/LearningQuestionCard.vue'
 import LearningTutorPanel from '@/components/learning/LearningTutorPanel.vue'
@@ -18,21 +20,23 @@ const { plan, hasPlan, isLoading, loadError, loadPlan } = useLearningPlanRoute()
 const activeStage = computed(() => {
   const stageId = Number(route.query.stage)
   if (stageId) return plan.value.stages.find((stage) => stage.id === stageId) ?? plan.value.stages[0]
-  return plan.value.stages.find((stage) => stage.tasks.some((task) => !task.done)) ?? plan.value.stages[0]
+  return plan.value.stages.find((stage) => stage.tasks.some((task) => !task.done && task.status !== '已锁定')) ?? plan.value.stages[0]
 })
 const activeTaskId = ref<number | null>(null)
 const activeTask = computed(() => {
   const tasks = activeStage.value?.tasks ?? []
-  return tasks.find((task) => task.id === activeTaskId.value) ?? tasks.find((task) => !task.done) ?? tasks[0]
+  return tasks.find((task) => task.id === activeTaskId.value && task.status !== '已锁定')
+    ?? tasks.find((task) => !task.done && task.status !== '已锁定')
+    ?? tasks.find((task) => task.status !== '已锁定')
 })
 const orderedTasks = computed(() =>
-  plan.value.stages.flatMap((stage) => stage.tasks.map((task) => ({ stage, task }))),
+  plan.value.stages.flatMap((stage) => stage.tasks.filter((task) => task.status !== '已锁定').map((task) => ({ stage, task }))),
 )
 const currentTaskIndex = computed(() => orderedTasks.value.findIndex((item) => item.task.id === activeTask.value?.id))
 const previousTask = computed(() => orderedTasks.value[currentTaskIndex.value - 1])
 const nextTask = computed(() => orderedTasks.value[currentTaskIndex.value + 1])
 const relatedResource = computed(() => {
-  const linkedResource = plan.value.resources.find((resource) => resource.id === activeTask.value?.resourceId)
+  const linkedResource = plan.value.resources.find((resource) => resource.id === activeTask.value?.learningResourceId)
   if (linkedResource) return linkedResource
   const preferredGroups: Record<string, string[]> = {
     讲解: ['个性化学习手册', '思维导图', 'PPT'],
@@ -56,8 +60,14 @@ const groupResult = ref<Awaited<ReturnType<typeof learningStore.submitExerciseGr
 const followupMode = ref<'repeat' | 'reinforce' | null>(null)
 const followupCount = ref(10)
 const followupDifficulty = ref<'保持难度' | '逐步提升'>('保持难度')
+const followupDifficultyOptions: Array<{ value: '保持难度' | '逐步提升'; label: string }> = [
+  { value: '保持难度', label: '保持难度' },
+  { value: '逐步提升', label: '逐步提升' },
+]
 const operationPending = ref(false)
 const actionError = ref('')
+const displayedActionError = computed(() => actionError.value || learningStore.errorMessage || '')
+const caseOutput = ref('')
 const groupSubmitted = computed(() => taskExercises.value.length > 0 && taskExercises.value.every((item) => item.submitted))
 const visibleGroupResult = computed(() => {
   if (groupResult.value) return groupResult.value
@@ -93,12 +103,22 @@ const stageProgress = computed(() => {
 })
 let readingTimer: number | undefined
 
-function markCurrentDone() {
-  const task = activeTask.value
-  if (task) learningStore.markTaskDone(plan.value.id, task.id, true)
+function flushReadingActivity() {
+  void learningStore.flushLearningActivities(plan.value.id, activeTask.value?.id)
+}
+
+function handleVisibilityChange() {
+  if (document.visibilityState === 'hidden') flushReadingActivity()
+}
+
+function clearActionError() {
+  actionError.value = ''
+  learningStore.clearError()
 }
 
 function openTask(stageId: number, taskId: number) {
+  const task = plan.value.stages.find((stage) => stage.id === stageId)?.tasks.find((item) => item.id === taskId)
+  if (!task || task.status === '已锁定') return
   activeTaskId.value = taskId
   router.replace({ query: { stage: stageId, task: taskId } })
 }
@@ -106,11 +126,6 @@ function openTask(stageId: number, taskId: number) {
 function moveTask(offset: -1 | 1) {
   const target = offset === -1 ? previousTask.value : nextTask.value
   if (target) openTask(target.stage.id, target.task.id)
-}
-
-function completeAndContinue() {
-  markCurrentDone()
-  moveTask(1)
 }
 
 function selectAnswer(answer: string) {
@@ -183,16 +198,18 @@ function recordReading(secondsDelta = 0) {
 }
 
 function runCase() {
-  if (activeTask.value) learningStore.completeTaskAction(plan.value.id, activeTask.value.id, 'run-case')
+  if (!activeTask.value) return
+  caseOutput.value = 'Dog.sound() -> 汪汪'
+  learningStore.completeTaskAction(plan.value.id, activeTask.value.id, 'run-case')
 }
 
 watch(
   activeStage,
   (stage) => {
     const queryTaskId = Number(route.query.task)
-    activeTaskId.value = stage?.tasks.find((task) => task.id === queryTaskId)?.id
-      ?? stage?.tasks.find((task) => !task.done)?.id
-      ?? stage?.tasks[0]?.id
+    activeTaskId.value = stage?.tasks.find((task) => task.id === queryTaskId && task.status !== '已锁定')?.id
+      ?? stage?.tasks.find((task) => !task.done && task.status !== '已锁定')?.id
+      ?? stage?.tasks.find((task) => task.status !== '已锁定')?.id
       ?? null
   },
   { immediate: true },
@@ -200,6 +217,7 @@ watch(
 
 watch(activeTask, (task) => {
   if (task) learningStore.startTask(plan.value.id, task.id)
+  caseOutput.value = task?.completedActions?.includes('run-case') ? 'Dog.sound() -> 汪汪' : ''
   currentExerciseId.value = taskExercises.value.find((item) => !item.submitted)?.id ?? taskExercises.value[0]?.id
   selectedAnswer.value = exercise.value?.draftAnswer ?? exercise.value?.userAnswer ?? ''
   groupResult.value = undefined
@@ -215,10 +233,13 @@ onMounted(() => {
   readingTimer = window.setInterval(() => {
     if (document.visibilityState === 'visible') recordReading(1)
   }, 1000)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
 })
 
 onBeforeUnmount(() => {
   if (readingTimer) window.clearInterval(readingTimer)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
+  flushReadingActivity()
 })
 </script>
 
@@ -241,10 +262,6 @@ onBeforeUnmount(() => {
     :show-footer="!isExerciseTask"
     @back="router.push(`/learning/${plan.id}`)"
   >
-    <template #actions>
-      <button v-if="!isExerciseTask" class="primary-btn" type="button" @click="markCurrentDone">手动完成</button>
-    </template>
-
     <template #navigation>
       <aside class="task-panel panel">
         <header class="task-nav-head">
@@ -264,6 +281,7 @@ onBeforeUnmount(() => {
             class="task-row"
             :class="{ active: task.id === activeTask?.id }"
             type="button"
+            :disabled="task.status === '已锁定'"
             @click="openTask(stage.id, task.id)"
           >
             <i :class="{ done: task.done, running: task.status === '进行中' }" />
@@ -279,11 +297,16 @@ onBeforeUnmount(() => {
     </template>
 
     <section ref="contentPanel" class="content-panel panel" @scroll.passive="recordReading()">
-      <div v-if="actionError" class="study-error" role="alert">
-        <span>{{ actionError }}</span>
-        <button type="button" @click="actionError = ''">关闭</button>
+      <div v-if="displayedActionError" class="study-error" role="alert">
+        <span>{{ displayedActionError }}</span>
+        <button type="button" @click="clearActionError">关闭</button>
       </div>
-      <div class="content-context">
+      <div v-if="!activeTask" class="locked-task-state">
+        <LockKeyhole :size="22" />
+        <strong>当前阶段任务尚未解锁</strong>
+        <p>完成前置任务后，系统会根据后端返回的学习路径开放后续内容。</p>
+      </div>
+      <div v-else class="content-context">
         <span>{{ activeTask?.type ?? '任务' }}</span>
         <p>{{ activeTask?.completionSource ?? (activeTask?.status === '进行中' ? '正在记录有效学习行为' : '切换任务不会修改完成状态') }}</p>
       </div>
@@ -332,7 +355,7 @@ onBeforeUnmount(() => {
                 <small v-else>默认每道错题生成 2 道变式题，单次最多 15 题。</small>
               </div>
               <label><span>题量</span><input v-model.number="followupCount" type="number" min="3" :max="followupMode === 'reinforce' ? 15 : 40" /></label>
-              <label><span>难度</span><select v-model="followupDifficulty"><option>保持难度</option><option>逐步提升</option></select></label>
+              <label><span>难度</span><AppSelectMenu v-model="followupDifficulty" :options="followupDifficultyOptions" aria-label="选择追加练习难度" :min-menu-width="150" /></label>
               <button class="primary-btn" type="button" :disabled="operationPending" @click="createFollowupTask">
                 {{ operationPending ? '生成中…' : '创建并开始' }}
               </button>
@@ -368,6 +391,10 @@ onBeforeUnmount(() => {
 animal.sound();
 
 // 运行时对象是 Dog，所以调用 Dog.sound()</code></pre>
+            <output v-if="caseOutput" class="case-output" aria-live="polite">
+              <strong>运行结果</strong>
+              <code>{{ caseOutput }}</code>
+            </output>
           </section>
 
           <section v-else-if="activeTask?.type === '讲解'" class="lesson-card">
@@ -434,7 +461,7 @@ class Dog extends Animal {
     <template #footer>
       <span class="footer-hint">{{ activeTask?.done ? activeTask.completionSource ?? '当前任务已完成' : '系统将根据阅读、作答或操作行为自动完成任务' }}</span>
       <button class="outline-btn" type="button" :disabled="!previousTask" @click="moveTask(-1)">上一个任务</button>
-      <button class="primary-btn" type="button" :disabled="!nextTask" @click="activeTask?.done ? moveTask(1) : completeAndContinue()">{{ activeTask?.done ? '下一个任务' : '手动完成并继续' }}</button>
+      <button class="primary-btn" type="button" :disabled="!nextTask || !activeTask?.done" @click="moveTask(1)">{{ activeTask?.done ? '下一个任务' : '完成当前任务后继续' }}</button>
     </template>
   </LearningDetailShell>
 </template>
@@ -763,8 +790,33 @@ textarea {
   background: var(--ui-hover-strong-bg);
 }
 
-.task-row:hover:not(.active) {
+.task-row:hover:not(.active):not(:disabled) {
   background: var(--ui-hover-bg);
+}
+
+.task-row:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.locked-task-state {
+  min-height: 220px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.locked-task-state strong {
+  color: var(--color-text);
+  font-size: 16px;
+}
+
+.locked-task-state p {
+  max-width: 460px;
+  line-height: 1.7;
 }
 
 .today-progress {
@@ -904,6 +956,24 @@ pre {
   color: var(--color-text);
 }
 
+.case-output {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  padding: 12px 16px;
+  color: var(--color-text);
+}
+
+.case-output code {
+  color: var(--color-success);
+  font-family: "Cascadia Code", Consolas, monospace;
+}
+
 .quiz-card {
   margin-top: 18px;
 }
@@ -1015,8 +1085,7 @@ pre {
   font-size: 12px;
 }
 
-.followup-config input,
-.followup-config select {
+.followup-config input {
   min-height: 36px;
   padding: 0 10px;
   border: 1px solid #cbd5e1;

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-vue-next'
+import AppSelectMenu from '@/components/common/AppSelectMenu.vue'
 import type { PresentationSlideLayout, PresentationSlideOutline } from '@/types/contracts/presentation'
 
 const props = defineProps<{
@@ -60,9 +61,16 @@ function addSlide() {
     <article v-for="(slide, index) in slides" :key="slide.id" class="outline-card">
       <header>
         <span>{{ String(index + 1).padStart(2, '0') }}</span>
-        <select :value="slide.layout" :disabled="disabled" aria-label="页面版式" @change="replaceSlide(index, { layout: ($event.target as HTMLSelectElement).value as PresentationSlideLayout })">
-          <option v-for="option in layoutOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-        </select>
+        <AppSelectMenu
+          class="layout-select"
+          :model-value="slide.layout"
+          :options="layoutOptions"
+          :disabled="disabled"
+          aria-label="页面版式"
+          compact
+          :min-menu-width="150"
+          @update:model-value="replaceSlide(index, { layout: $event })"
+        />
         <div class="outline-actions">
           <button type="button" title="上移" :disabled="disabled || index === 0" @click="move(index, -1)"><ArrowUp :size="16" /></button>
           <button type="button" title="下移" :disabled="disabled || index === slides.length - 1" @click="move(index, 1)"><ArrowDown :size="16" /></button>
@@ -163,8 +171,7 @@ function addSlide() {
 }
 
 .outline-card input,
-.outline-card textarea,
-.outline-card select {
+.outline-card textarea {
   width: 100%;
   box-sizing: border-box;
   border: 1px solid var(--color-border);
@@ -174,10 +181,13 @@ function addSlide() {
   font: inherit;
 }
 
-.outline-card input,
-.outline-card select {
+.outline-card input {
   height: 36px;
   padding: 0 10px;
+}
+
+.layout-select {
+  width: 110px;
 }
 
 .outline-card textarea {

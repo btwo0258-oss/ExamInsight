@@ -83,8 +83,8 @@ const mockMediaRepository: MediaRepository = {
       size: file.size,
       status: 'ready',
       conversationId: input.conversationId ?? null,
-      libraryId: input.libraryId ?? null,
-      learningProjectId: input.learningProjectId ?? null,
+      knowledgeBaseId: input.knowledgeBaseId ?? null,
+      projectId: input.projectId ?? null,
       createdAt: timestamp,
       updatedAt: timestamp,
     }
@@ -105,8 +105,8 @@ const mockMediaRepository: MediaRepository = {
       size: file.size,
       status: 'ready',
       conversationId: input.conversationId ?? null,
-      libraryId: input.libraryId ?? null,
-      learningProjectId: input.learningProjectId ?? null,
+      knowledgeBaseId: input.knowledgeBaseId ?? null,
+      projectId: input.projectId ?? null,
       createdAt: timestamp,
       updatedAt: timestamp,
     }

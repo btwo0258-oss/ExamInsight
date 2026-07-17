@@ -20,7 +20,7 @@ export interface UserResourceItem {
   id: number;
   userId: number;
   resourceId: number;
-  kbId: number;
+  knowledgeBaseId: number;
   createTime: string;
 }
 
@@ -64,11 +64,11 @@ export async function downloadResource(id: number): Promise<void> {
     let filename = "download";
     if (contentDisposition) {
       const match = contentDisposition.match(/filename\*=UTF-8''(.+)/);
-      if (match) {
+      if (match?.[1]) {
         filename = decodeURIComponent(match[1]);
       } else {
         const match2 = contentDisposition.match(/filename="?(.+?)"?/);
-        if (match2) {
+        if (match2?.[1]) {
           filename = decodeURIComponent(match2[1]);
         }
       }
@@ -88,12 +88,12 @@ export async function downloadResource(id: number): Promise<void> {
   }
 }
 
-export async function addToKb(resourceId: number, kbId: number): Promise<void> {
-  await request.post("/api/resource/add-to-kb", { resourceId, kbId });
+export async function addToKb(resourceId: number, knowledgeBaseId: number): Promise<void> {
+  await request.post("/api/resource/add-to-kb", { resourceId, kbId: knowledgeBaseId });
 }
 
-export async function moveToKb(resourceId: number, kbId: number): Promise<void> {
-  await request.post("/api/resource/move-to-kb", { resourceId, kbId });
+export async function moveToKb(resourceId: number, knowledgeBaseId: number): Promise<void> {
+  await request.post("/api/resource/move-to-kb", { resourceId, kbId: knowledgeBaseId });
 }
 
 export async function removeFromKb(resourceId: number): Promise<void> {
@@ -102,7 +102,8 @@ export async function removeFromKb(resourceId: number): Promise<void> {
 
 export async function getMyResources(): Promise<UserResourceItem[]> {
   const res = await request.get("/api/resource/my-resources");
-  return res.data?.data ?? res.data ?? [];
+  const items = (res.data?.data ?? res.data ?? []) as Array<UserResourceItem & { kbId?: number }>;
+  return items.map((item) => ({ ...item, knowledgeBaseId: item.knowledgeBaseId ?? item.kbId ?? 0 }));
 }
 
 export async function isResourceAdded(resourceId: number): Promise<boolean> {

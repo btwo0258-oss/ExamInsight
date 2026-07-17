@@ -7,6 +7,7 @@ import type {
   PresentationDto,
   PresentationSlideOutline,
   PresentationTemplateDto,
+  UpdatePresentationDraftRequest,
 } from '@/types/contracts/presentation'
 
 function clientRequestId() {
@@ -59,11 +60,43 @@ export const usePresentationStore = defineStore('presentation', () => {
     return next
   }
 
-  async function createAndGenerateOutline(input: Omit<CreatePresentationRequest, 'clientRequestId'>) {
+  async function createDraft(input: Omit<CreatePresentationRequest, 'clientRequestId'>) {
     isSaving.value = true
     errorMessage.value = ''
     try {
       current.value = await presentationRepository.create({ ...input, clientRequestId: clientRequestId() })
+      return current.value
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : 'PPT 草稿创建失败'
+      throw error
+    } finally {
+      isSaving.value = false
+    }
+  }
+
+  async function updateDraft(input: Omit<UpdatePresentationDraftRequest, 'clientRequestId'>) {
+    if (!current.value) throw new Error('PPT 草稿不存在')
+    isSaving.value = true
+    errorMessage.value = ''
+    try {
+      current.value = await presentationRepository.updateDraft(current.value.id, {
+        ...input,
+        clientRequestId: clientRequestId(),
+      })
+      return current.value
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : 'PPT 草稿保存失败'
+      throw error
+    } finally {
+      isSaving.value = false
+    }
+  }
+
+  async function generateOutline() {
+    if (!current.value) throw new Error('PPT 草稿不存在')
+    isSaving.value = true
+    errorMessage.value = ''
+    try {
       const job = await presentationRepository.startOutlineGeneration(current.value.id, clientRequestId())
       await pollJob(job)
       current.value = await presentationRepository.get(current.value.id)
@@ -74,6 +107,11 @@ export const usePresentationStore = defineStore('presentation', () => {
     } finally {
       isSaving.value = false
     }
+  }
+
+  async function createAndGenerateOutline(input: Omit<CreatePresentationRequest, 'clientRequestId'>) {
+    await createDraft(input)
+    return generateOutline()
   }
 
   async function saveOutline(slides: PresentationSlideOutline[]) {
@@ -154,15 +192,6 @@ export const usePresentationStore = defineStore('presentation', () => {
     return presentationRepository.download(current.value.id)
   }
 
-  async function saveToLibrary(libraryId: number) {
-    if (!current.value) throw new Error('PPT 不存在')
-    current.value = await presentationRepository.saveToLibrary(current.value.id, {
-      libraryId,
-      clientRequestId: clientRequestId(),
-    })
-    return current.value
-  }
-
   function clearError() {
     errorMessage.value = ''
   }
@@ -177,6 +206,9 @@ export const usePresentationStore = defineStore('presentation', () => {
     progress,
     loadTemplates,
     load,
+    createDraft,
+    updateDraft,
+    generateOutline,
     createAndGenerateOutline,
     saveOutline,
     generate,
@@ -184,7 +216,6 @@ export const usePresentationStore = defineStore('presentation', () => {
     retry,
     cancel,
     download,
-    saveToLibrary,
     clearError,
   }
 })

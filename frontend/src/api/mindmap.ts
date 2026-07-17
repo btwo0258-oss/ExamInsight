@@ -3,7 +3,7 @@ import { request } from "./request";
 export interface MindMap {
   id: number;
   userId: number;
-  kbId?: number;
+  knowledgeBaseId?: number;
   title: string;
   content: string;
   createTime: string;
@@ -12,38 +12,40 @@ export interface MindMap {
 
 export interface MindMapCreateReq {
   title: string;
-  kbId?: number | null;
+  knowledgeBaseId?: number | null;
   content: string;
 }
 
 export interface MindMapUpdateReq {
   id: number;
   title?: string;
-  kbId?: number | null;
+  knowledgeBaseId?: number | null;
   content?: string;
 }
 
 export async function createMindMap(data: MindMapCreateReq): Promise<number> {
-  const res = await request.post("/api/mindmap/create", data);
+  const res = await request.post("/api/mindmap/create", { ...data, kbId: data.knowledgeBaseId, knowledgeBaseId: undefined });
   return res.data?.data ?? res.data;
 }
 
 export async function updateMindMap(data: MindMapUpdateReq): Promise<void> {
-  await request.post("/api/mindmap/update", data);
+  await request.post("/api/mindmap/update", { ...data, kbId: data.knowledgeBaseId, knowledgeBaseId: undefined });
 }
 
 export async function deleteMindMap(id: number): Promise<void> {
   await request.post(`/api/mindmap/delete/${id}`);
 }
 
-export async function getMindMapList(kbId?: number | null): Promise<MindMap[]> {
-  const res = await request.get("/api/mindmap/list", { params: { kbId } });
-  return res.data?.data ?? res.data ?? [];
+export async function getMindMapList(knowledgeBaseId?: number | null): Promise<MindMap[]> {
+  const res = await request.get("/api/mindmap/list", { params: { kbId: knowledgeBaseId } });
+  const items = res.data?.data ?? res.data ?? [];
+  return items.map((item: MindMap & { kbId?: number }) => ({ ...item, knowledgeBaseId: item.knowledgeBaseId ?? item.kbId }));
 }
 
 export async function getMindMapDetail(id: number): Promise<MindMap> {
   const res = await request.get(`/api/mindmap/detail/${id}`);
-  return res.data?.data ?? res.data;
+  const item = (res.data?.data ?? res.data) as MindMap & { kbId?: number };
+  return { ...item, knowledgeBaseId: item.knowledgeBaseId ?? item.kbId };
 }
 
 export interface MindMapGenerateResult {

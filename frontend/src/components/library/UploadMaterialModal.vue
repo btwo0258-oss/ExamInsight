@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import AppButton from '@/components/common/AppButton.vue'
+import AppSelectMenu from '@/components/common/AppSelectMenu.vue'
 import AttachmentCard from '@/components/chat/input/AttachmentCard.vue'
+import LibraryKnowledgeCreateModal from '@/components/library/LibraryKnowledgeCreateModal.vue'
 import { useLibraryResourceStore } from '@/stores/libraryResource'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import {
@@ -11,15 +13,20 @@ import {
   isSupportedAttachment,
 } from '@/utils/file'
 
-const props = defineProps<{ open: boolean; libraryId?: number | null }>()
+const props = defineProps<{ open: boolean; knowledgeBaseId?: number | null }>()
 const emit = defineEmits<{ close: [] }>()
 const libraryResourceStore = useLibraryResourceStore()
 const knowledgeBaseStore = useKnowledgeBaseStore()
 const fileEl = ref<HTMLInputElement | null>(null)
 const files = ref<File[]>([])
-const selectedLibraryId = ref<number | null>(props.libraryId ?? null)
+const selectedKnowledgeBaseId = ref<number | null>(props.knowledgeBaseId ?? null)
 const errorMessage = ref('')
 const uploading = ref(false)
+const knowledgeCreateOpen = ref(false)
+const knowledgeBaseOptions = computed(() => [
+  { value: null, label: '无', icon: 'close' },
+  ...knowledgeBaseStore.list.map((item) => ({ value: item.id, label: item.name, icon: item.icon || 'folder' })),
+])
 
 function triggerUpload() {
   fileEl.value?.click()
@@ -66,7 +73,7 @@ async function startUpload() {
   uploading.value = true
   errorMessage.value = ''
   try {
-    await libraryResourceStore.uploadFiles(files.value, '资料库上传', null, selectedLibraryId.value)
+    await libraryResourceStore.uploadFiles(files.value, 'resource-library', null, selectedKnowledgeBaseId.value)
     files.value = []
     emit('close')
   } catch (error) {
@@ -78,16 +85,22 @@ async function startUpload() {
 
 function close() {
   if (uploading.value) return
+  knowledgeCreateOpen.value = false
   files.value = []
   errorMessage.value = ''
   emit('close')
+}
+
+function handleKnowledgeCreated(id: number) {
+  selectedKnowledgeBaseId.value = id
+  knowledgeCreateOpen.value = false
 }
 
 watch(() => props.open, async (open) => {
   if (!open) return
   files.value = []
   errorMessage.value = ''
-  selectedLibraryId.value = props.libraryId ?? null
+  selectedKnowledgeBaseId.value = props.knowledgeBaseId ?? null
   if (!knowledgeBaseStore.isInitialized) {
     try {
       await knowledgeBaseStore.fetchList()
@@ -118,16 +131,14 @@ watch(() => props.open, async (open) => {
       <p v-if="errorMessage" class="upload-error">{{ errorMessage }}</p>
 
       <label class="field">
-        <span>归属资料库</span>
-        <select v-model="selectedLibraryId">
-          <option :value="null">无</option>
-          <option v-for="item in knowledgeBaseStore.list" :key="item.id" :value="item.id">{{ item.name }}</option>
-        </select>
-      </label>
-
-      <label class="check">
-        <input type="checkbox" checked />
-        <span>上传后立即用于本次智能学习分析</span>
+        <span>归属知识库</span>
+        <AppSelectMenu
+          v-model="selectedKnowledgeBaseId"
+          :options="knowledgeBaseOptions"
+          aria-label="选择归属知识库"
+          create-label="新建知识库"
+          @create="knowledgeCreateOpen = true"
+        />
       </label>
 
       <footer>
@@ -138,6 +149,12 @@ watch(() => props.open, async (open) => {
       </footer>
     </section>
   </div>
+
+  <LibraryKnowledgeCreateModal
+    :open="knowledgeCreateOpen"
+    @close="knowledgeCreateOpen = false"
+    @created="handleKnowledgeCreated"
+  />
 </template>
 
 <style scoped>
@@ -209,8 +226,7 @@ header button:hover {
 .upload-error { margin: -4px 0 14px; color: var(--color-danger); font-size: 13px; }
 
 .drop-zone span,
-.field span,
-.check {
+.field span {
   color: var(--color-text-muted);
   font-size: 13px;
 }
@@ -218,21 +234,6 @@ header button:hover {
 .field {
   display: grid;
   gap: 8px;
-}
-
-select {
-  width: 100%;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 10px 12px;
-  background: var(--color-bg);
-}
-
-.check {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 14px 0 18px;
 }
 
 footer {

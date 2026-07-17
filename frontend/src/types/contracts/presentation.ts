@@ -10,15 +10,15 @@ export type PresentationStatus =
   | 'cancelled'
 
 export type PresentationAspectRatio = '16:9' | '4:3'
-export type PresentationOutlineMode = 'confirm' | 'auto'
 export type PresentationStyle = 'academic' | 'minimal' | 'vibrant' | 'professional'
 export type PresentationAudience = 'student' | 'teacher' | 'general' | 'business'
 export type PresentationSlideLayout = 'cover' | 'section' | 'content' | 'comparison' | 'summary'
 
 export type PresentationContext = {
   conversationId?: EntityId | null
-  libraryId?: EntityId | null
-  learningProjectId?: EntityId | null
+  sourceMessageId?: EntityId | string | null
+  knowledgeBaseId?: EntityId | null
+  projectId?: EntityId | null
   learningResourceId?: EntityId | null
 }
 
@@ -54,7 +54,6 @@ export type PresentationConfig = {
   topic: string
   title: string
   pageCount: number
-  outlineMode: PresentationOutlineMode
   templateId: string
   aspectRatio: PresentationAspectRatio
   style: PresentationStyle
@@ -63,6 +62,18 @@ export type PresentationConfig = {
   sourceText?: string
   sourceFileNames?: string[]
   mediaAssetIds?: string[]
+}
+
+export type PresentationChatCardDto = PresentationContext & {
+  cardType: 'presentation'
+  view: 'proposal' | 'result'
+  status: PresentationStatus
+  presentationId?: string
+  config: PresentationConfig
+  fileName?: string
+  previewPageCount?: number
+  resourceId?: string
+  errorMessage?: string
 }
 
 export type PresentationDto = PresentationContext & {
@@ -74,7 +85,7 @@ export type PresentationDto = PresentationContext & {
   activeJobId?: string
   fileName?: string
   fileSize?: number
-  libraryResourceId?: string
+  resourceId?: string
   errorCode?: string
   errorMessage?: string
   createdAt: string
@@ -85,17 +96,17 @@ export type CreatePresentationRequest = PresentationContext & PresentationConfig
   clientRequestId: string
 }
 
+export type UpdatePresentationDraftRequest = PresentationContext & {
+  config: PresentationConfig
+  clientRequestId: string
+}
+
 export type UpdatePresentationOutlineRequest = {
   slides: PresentationSlideOutline[]
   clientRequestId: string
 }
 
 export type StartPresentationGenerationRequest = {
-  clientRequestId: string
-}
-
-export type SavePresentationToLibraryRequest = {
-  libraryId: EntityId
   clientRequestId: string
 }
 

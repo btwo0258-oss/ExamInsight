@@ -85,17 +85,17 @@ export const useLearningTutorStore = defineStore('learningTutor', () => {
     const storedId = conversationIds.value[plan.id]
       ?? (isMockDataSource ? Number(sessionStorage.getItem(storageKey(plan.id))) : 0)
     let matched = conversationStore.list.find((item) => item.id === storedId)
-      ?? conversationStore.list.find((item) => item.learningProjectId === plan.id && item.title === title)
+      ?? conversationStore.list.find((item) => item.projectId === plan.id && item.title === title)
     if (isMockDataSource && !matched && Number.isFinite(storedId) && storedId > 0) {
-      conversationStore.restoreLearningConversation(storedId, plan.id, plan.title, plan.libraryId || null, title)
+      conversationStore.restoreLearningConversation(storedId, plan.id, plan.title, plan.knowledgeBaseId || null, title)
       matched = conversationStore.list.find((item) => item.id === storedId)
     }
     const conversationId = matched?.id ?? await conversationStore.create({
-      kbId: plan.libraryId || null,
+      knowledgeBaseId: plan.knowledgeBaseId || null,
       title,
       navigate: false,
-      learningProjectId: plan.id,
-      learningProjectName: plan.title,
+      projectId: plan.id,
+      projectName: plan.title,
       conversationType: 'learning-tutor',
     })
     conversationIds.value[plan.id] = conversationId
@@ -115,7 +115,14 @@ export const useLearningTutorStore = defineStore('learningTutor', () => {
       undefined,
       files,
       false,
-      { tutorContext: buildContext(plan, context), tutorSource: buildSource(plan, context) },
+      {
+        tutorContext: isMockDataSource ? buildContext(plan, context) : undefined,
+        tutorSource: buildSource(plan, context),
+        projectId: plan.id,
+        stageId: context.stage?.id ?? null,
+        taskId: context.task?.id ?? null,
+        exerciseId: context.exercise?.id ?? null,
+      },
     )
     conversationStore.linkLearningProject(conversationId, plan.id, plan.title, 'learning-tutor')
     return conversationId

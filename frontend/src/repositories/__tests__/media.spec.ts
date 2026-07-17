@@ -11,7 +11,7 @@ describe('MockMediaRepository', () => {
     const asset = await mediaRepository.uploadImage(file, {
       source: 'camera',
       purpose: 'learning-input',
-      libraryId: 1,
+      knowledgeBaseId: 1,
       clientRequestId: 'image-request-1',
     })
 
@@ -21,7 +21,7 @@ describe('MockMediaRepository', () => {
 
     const created = await mediaRepository.createImageRecognitionJob(asset.id, {
       mode: 'question',
-      libraryId: 1,
+      knowledgeBaseId: 1,
       clientRequestId: 'recognition-request-1',
     })
     const completed = await mediaRepository.getImageRecognitionJob(created.jobId)
@@ -49,12 +49,12 @@ describe('MockMediaRepository', () => {
     const result = await mediaRepository.transcribeAudio(file, {
       source: 'upload',
       purpose: 'library-resource',
-      libraryId: 7,
+      knowledgeBaseId: 7,
       clientRequestId: 'audio-upload-request-1',
     })
 
     expect(result.asset.source).toBe('upload')
     expect(result.asset.purpose).toBe('library-resource')
-    expect(result.asset.libraryId).toBe(7)
+    expect(result.asset.knowledgeBaseId).toBe(7)
   })
 })

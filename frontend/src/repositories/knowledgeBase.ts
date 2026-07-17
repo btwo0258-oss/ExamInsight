@@ -1,6 +1,6 @@
 import { request } from '@/api/request'
 import { isMockDataSource } from '@/config/dataSource'
-import { courseLibraries } from '@/mock'
+import { courseKnowledgeBases } from '@/mock'
 import { mockSession } from '@/mock/storage'
 import type { KnowledgeBaseDto } from '@/types/contracts/library'
 
@@ -16,7 +16,7 @@ export interface KnowledgeBaseRepository {
 const DOMAIN = 'knowledge-bases'
 
 function initialKnowledgeBases(): KnowledgeBaseDto[] {
-  return courseLibraries.map((library) => ({
+  return courseKnowledgeBases.map((library) => ({
     id: library.id,
     name: library.name,
     description: library.description,

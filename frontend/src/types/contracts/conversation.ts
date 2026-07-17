@@ -11,16 +11,16 @@ export type ConversationDto = {
   totalTokens?: number
   updateTime?: string
   createTime?: string
-  learningProjectId?: EntityId | null
-  learningProjectName?: string
+  projectId?: EntityId | null
+  projectName?: string
   conversationType?: ConversationType
 }
 
 export type CreateConversationRequest = {
-  kbId?: EntityId | null
+  knowledgeBaseId?: EntityId | null
   title?: string
-  learningProjectId?: EntityId | null
-  learningProjectName?: string
+  projectId?: EntityId | null
+  projectName?: string
   conversationType?: ConversationType
 }
 
@@ -29,7 +29,7 @@ export type UpdateConversationRequest = {
   status?: number
   isPinned?: boolean
   knowledgeBaseId?: EntityId | null
-  learningProjectId?: EntityId | null
-  learningProjectName?: string
+  projectId?: EntityId | null
+  projectName?: string
   conversationType?: ConversationType
 }

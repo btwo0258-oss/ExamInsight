@@ -8,24 +8,24 @@ export const useDocumentStore = defineStore('document', () => {
   const documents = ref<docApi.Document[]>([])
   const uploading = ref(false)
 
-  async function fetchByKbId(kbId: number) {
-    documents.value = await docApi.getDocuments(kbId)
+  async function fetchByKnowledgeBaseId(knowledgeBaseId: number) {
+    documents.value = await docApi.getDocuments(knowledgeBaseId)
   }
 
-  async function getDocuments(kbId: number) {
-    documents.value = await docApi.getDocuments(kbId)
+  async function getDocuments(knowledgeBaseId: number) {
+    documents.value = await docApi.getDocuments(knowledgeBaseId)
     return documents.value
   }
 
-  async function upload(kbId: number, file: File) {
+  async function upload(knowledgeBaseId: number, file: File) {
     uploading.value = true
     try {
-      const doc = await docApi.uploadDocument(kbId, file)
+      const doc = await docApi.uploadDocument(knowledgeBaseId, file)
       documents.value.unshift(doc)
       
       // 更新知识库 store 中的文档数量
       const kbStore = useKnowledgeBaseStore()
-      const kb = kbStore.list.find(x => x.id === kbId)
+      const kb = kbStore.list.find(x => x.id === knowledgeBaseId)
       try {
         if (kb) {
           kb.documentCount = (kb.documentCount || 0) + 1
@@ -50,7 +50,7 @@ export const useDocumentStore = defineStore('document', () => {
 
     // 更新知识库 store 中的文档数量
     const kbStore = useKnowledgeBaseStore()
-    const kb = kbStore.list.find(x => x.id === doc.kbId)
+    const kb = kbStore.list.find(x => x.id === doc.knowledgeBaseId)
     if (kb) {
       kb.documentCount = Math.max(0, (kb.documentCount || 0) - 1)
       kbStore.saveToStorage()
@@ -74,24 +74,14 @@ export const useDocumentStore = defineStore('document', () => {
     await docApi.downloadDocument(id, fileName)
   }
 
-  async function getPreview(id: number) {
-    return await docApi.getDocumentPreview(id)
-  }
-
-  async function saveContent(id: number, content: string | Blob) {
-    await docApi.saveDocumentContent(id, content)
-  }
-
   return {
     documents,
     uploading,
-    fetchByKbId,
+    fetchByKnowledgeBaseId,
     getDocuments,
     upload,
     remove,
     pollStatus,
     download,
-    getPreview,
-    saveContent,
   }
 })

@@ -38,13 +38,13 @@ const mockConversationRepository: ConversationRepository = {
     const next: ConversationDto = {
       id: Date.now(),
       title: payload.title || '新对话',
-      knowledgeBaseId: payload.kbId ?? null,
+      knowledgeBaseId: payload.knowledgeBaseId ?? null,
       isPinned: false,
       messageCount: 0,
       updateTime: now,
       createTime: now,
-      learningProjectId: payload.learningProjectId ?? null,
-      learningProjectName: payload.learningProjectName,
+      projectId: payload.projectId ?? null,
+      projectName: payload.projectName,
       conversationType: payload.conversationType ?? 'general',
     }
     list.unshift(next)
@@ -75,7 +75,13 @@ const apiConversationRepository: ConversationRepository = {
   },
 
   async create(payload = {}) {
-    const response = await request.post('/api/conversation/create', payload)
+    const response = await request.post('/api/conversation/create', {
+      ...payload,
+      kbId: payload.knowledgeBaseId,
+      knowledgeBaseId: undefined,
+      learningProjectName: payload.projectName,
+      projectName: undefined,
+    })
     return normalizeConversation((response.data?.data ?? response.data) as Record<string, unknown>)
   },
 

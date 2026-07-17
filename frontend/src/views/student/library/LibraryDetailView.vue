@@ -5,12 +5,14 @@ import AppIcon from '@/components/common/AppIcon.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import StudentShell from '@/components/layout/StudentShell.vue'
 import UploadMaterialModal from '@/components/library/UploadMaterialModal.vue'
-import { courseLibraries } from '@/mock'
+import { courseKnowledgeBases } from '@/mock'
 import { isMockDataSource } from '@/config/dataSource'
 import { useLibraryResourceStore } from '@/stores/libraryResource'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import type { LibraryResource } from '@/stores/libraryResource'
 import { presentationRepository } from '@/repositories/presentation'
+import { spreadsheetRepository } from '@/repositories/spreadsheet'
+import { resourcePreviewRoute } from '@/utils/resourcePreview'
 
 const route = useRoute()
 const router = useRouter()
@@ -22,16 +24,16 @@ const detailError = ref('')
 const actionError = ref('')
 const searchQuery = ref('')
 const deleteTarget = ref<LibraryResource | null>(null)
-const libraryId = computed(() => Number(route.params.id))
+const knowledgeBaseId = computed(() => Number(route.params.id))
 const library = computed(() => {
-  if (!Number.isFinite(libraryId.value) || libraryId.value <= 0) return null
-  const stored = knowledgeBaseStore.current?.id === libraryId.value
+  if (!Number.isFinite(knowledgeBaseId.value) || knowledgeBaseId.value <= 0) return null
+  const stored = knowledgeBaseStore.current?.id === knowledgeBaseId.value
     ? knowledgeBaseStore.current
-    : knowledgeBaseStore.list.find((item) => item.id === libraryId.value)
+    : knowledgeBaseStore.list.find((item) => item.id === knowledgeBaseId.value)
   if (!stored) return null
-  const preset = isMockDataSource ? courseLibraries.find((item) => item.id === libraryId.value) : undefined
+  const preset = isMockDataSource ? courseKnowledgeBases.find((item) => item.id === knowledgeBaseId.value) : undefined
   return {
-    id: libraryId.value,
+    id: knowledgeBaseId.value,
     name: stored.name,
     description: stored.description || '暂无说明',
     tags: preset?.tags || [],
@@ -45,11 +47,11 @@ const files = computed(() => {
   if (!library.value) return []
   const query = searchQuery.value.trim().toLocaleLowerCase()
   return libraryResourceStore.resources.filter((item) => {
-    if (item.libraryId !== library.value?.id) return false
-    return !query || `${item.name} ${item.type} ${fileStatusLabel(item.status)}`.toLocaleLowerCase().includes(query)
+    if (item.knowledgeBaseId !== library.value?.id) return false
+    return !query || `${item.name} ${item.format} ${fileStatusLabel(item.status)}`.toLocaleLowerCase().includes(query)
   })
 })
-const fileCount = computed(() => library.value ? Math.max(library.value.fileCount, libraryResourceStore.resources.filter((item) => item.libraryId === library.value?.id).length) : 0)
+const fileCount = computed(() => library.value ? Math.max(library.value.fileCount, libraryResourceStore.resources.filter((item) => item.knowledgeBaseId === library.value?.id).length) : 0)
 
 function fileStatusLabel(status: LibraryResource['status']) {
   return { waiting: '等待解析', processing: '向量化中', ready: '解析完成', failed: '解析失败' }[status]
@@ -59,25 +61,29 @@ function presentationId(file: LibraryResource) {
   return file.externalKey?.startsWith('presentation:') ? file.externalKey.slice('presentation:'.length) : ''
 }
 
+function spreadsheetId(file: LibraryResource) {
+  return file.externalKey?.startsWith('spreadsheet:') ? file.externalKey.slice('spreadsheet:'.length) : ''
+}
+
 function openFile(file: LibraryResource) {
-  const id = presentationId(file)
-  if (id) void router.push({ path: `/presentations/${id}`, query: { returnTo: route.fullPath } })
+  if (file.status !== 'ready') return
+  void router.push(resourcePreviewRoute(file.resourceId, route.fullPath, 'knowledge'))
 }
 
 async function loadDetail() {
   detailLoading.value = true
   detailError.value = ''
-  if (!Number.isFinite(libraryId.value) || libraryId.value <= 0) {
+  if (!Number.isFinite(knowledgeBaseId.value) || knowledgeBaseId.value <= 0) {
     detailLoading.value = false
     return
   }
   try {
     await Promise.all([
-      knowledgeBaseStore.getDetail(libraryId.value),
-      libraryResourceStore.fetchList(libraryId.value),
+      knowledgeBaseStore.getDetail(knowledgeBaseId.value),
+      libraryResourceStore.fetchList(knowledgeBaseId.value),
     ])
   } catch (error) {
-    detailError.value = error instanceof Error ? error.message : '获取资料库详情失败'
+    detailError.value = error instanceof Error ? error.message : '获取知识库详情失败'
   } finally {
     detailLoading.value = false
   }
@@ -86,7 +92,7 @@ async function loadDetail() {
 async function retryFile(file: LibraryResource) {
   try {
     actionError.value = ''
-    await libraryResourceStore.retry(file.id)
+    await libraryResourceStore.retry(file.resourceId)
   } catch (error) {
     actionError.value = error instanceof Error ? error.message : '重试解析失败'
   }
@@ -96,8 +102,19 @@ async function downloadFile(file: LibraryResource) {
   try {
     actionError.value = ''
     const id = presentationId(file)
+    const sheetId = spreadsheetId(file)
     if (!id) {
-      await libraryResourceStore.download(file.id, file.name)
+      if (sheetId) {
+        const blob = await spreadsheetRepository.download(sheetId)
+        const url = URL.createObjectURL(blob)
+        const anchor = document.createElement('a')
+        anchor.href = url
+        anchor.download = file.name
+        anchor.click()
+        URL.revokeObjectURL(url)
+        return
+      }
+      await libraryResourceStore.download(file.resourceId, file.name)
       return
     }
     const blob = await presentationRepository.download(id)
@@ -118,7 +135,7 @@ async function confirmDeleteFile() {
   if (!target) return
   try {
     actionError.value = ''
-    await libraryResourceStore.remove(target.id)
+    await libraryResourceStore.remove(target.resourceId)
   } catch (error) {
     actionError.value = error instanceof Error ? error.message : '删除失败'
   }
@@ -128,22 +145,22 @@ onMounted(() => {
   void loadDetail()
 })
 
-watch(libraryId, () => void loadDetail())
+watch(knowledgeBaseId, () => void loadDetail())
 </script>
 
 <template>
   <StudentShell>
     <div class="detail-page">
       <section v-if="detailLoading" class="detail-state" aria-live="polite">
-        <strong>正在加载资料库…</strong>
+        <strong>正在加载知识库…</strong>
       </section>
       <section v-else-if="detailError" class="detail-state detail-state--error" role="alert">
-        <strong>资料库加载失败</strong>
+        <strong>知识库加载失败</strong>
         <span>{{ detailError }}</span>
         <button type="button" @click="loadDetail">重试</button>
       </section>
       <section v-else-if="!library" class="detail-state">
-        <strong>资料库不存在或已被删除</strong>
+        <strong>知识库不存在或已被删除</strong>
         <button type="button" @click="router.push('/library')">返回资料库</button>
       </section>
       <template v-else>
@@ -168,7 +185,7 @@ watch(libraryId, () => void loadDetail())
             <button
               class="primary-btn"
               type="button"
-              @click="router.push({ path: '/learning/new', query: { libraryId: library.id } })"
+              @click="router.push({ path: '/learning/new', query: { knowledgeBaseId: library.id } })"
             >
               <AppIcon name="graduation" :size="18" />
               用于智能学习
@@ -217,12 +234,12 @@ watch(libraryId, () => void loadDetail())
               </tr>
             </thead>
             <tbody>
-              <tr v-for="file in files" :key="file.id">
+              <tr v-for="file in files" :key="file.resourceId" :class="{ 'file-row--ready': file.status === 'ready' }" @click="openFile(file)">
                 <td>
-                  <AppIcon :name="presentationId(file) ? 'presentation' : 'file'" :size="18" />
+                  <AppIcon :name="presentationId(file) ? 'presentation' : spreadsheetId(file) ? 'grid' : 'file'" :size="18" />
                   {{ file.name }}
                 </td>
-                <td>{{ file.type }}</td>
+                <td>{{ file.format }}</td>
                 <td>
                   <span
                     class="status"
@@ -236,7 +253,7 @@ watch(libraryId, () => void loadDetail())
                   </span>
                 </td>
                 <td>{{ file.updatedAt }}</td>
-                <td>
+                <td @click.stop>
                   <button
                     v-if="file.status === 'failed'"
                     class="text-btn"
@@ -244,7 +261,7 @@ watch(libraryId, () => void loadDetail())
                     :disabled="libraryResourceStore.isMutating"
                     @click="retryFile(file)"
                   >重试</button>
-                  <button class="icon-btn" type="button" aria-label="预览" :title="presentationId(file) ? '打开 PPT' : '文件预览将在后端预览接口接入后开放'" :disabled="!presentationId(file)" @click="openFile(file)"><AppIcon name="eye" :size="17" /></button>
+                  <button class="icon-btn" type="button" aria-label="预览" title="预览文件" :disabled="file.status !== 'ready'" @click="openFile(file)"><AppIcon name="eye" :size="17" /></button>
                   <button class="icon-btn" type="button" aria-label="下载" @click="downloadFile(file)"><AppIcon name="download" :size="17" /></button>
                   <button class="icon-btn danger" type="button" aria-label="删除" @click="deleteTarget = file"><AppIcon name="trash" :size="17" /></button>
                 </td>
@@ -259,9 +276,9 @@ watch(libraryId, () => void loadDetail())
         <aside class="panel summary-panel">
           <div class="panel-title">
             <AppIcon name="book" :size="22" />
-            <h2>资料库摘要</h2>
+            <h2>知识库摘要</h2>
           </div>
-          <p>该资料库适合用于画像分析、知识库问答、个性化学习手册生成、思维导图和代码案例生成。</p>
+          <p>该知识库适合用于画像分析、知识问答、个性化学习手册生成、思维导图和代码案例生成。</p>
           <div class="summary-list">
             <article>
               <span>主要知识点</span>
@@ -281,7 +298,7 @@ watch(libraryId, () => void loadDetail())
       </template>
     </div>
 
-    <UploadMaterialModal :open="uploadOpen" :library-id="library?.id ?? null" @close="uploadOpen = false" />
+    <UploadMaterialModal :open="uploadOpen" :knowledge-base-id="library?.id ?? null" @close="uploadOpen = false" />
 
     <ConfirmDialog
       :open="Boolean(deleteTarget)"
@@ -570,6 +587,9 @@ th {
   color: var(--color-text-muted);
   font-size: 13px;
 }
+
+.file-row--ready { cursor: pointer; }
+.file-row--ready:hover td { background: var(--color-hover); }
 
 td:first-child {
   display: flex;

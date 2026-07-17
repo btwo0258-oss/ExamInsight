@@ -8,7 +8,7 @@ export type RecentConversation = {
   sourceType: 'chat' | 'learning'
 }
 
-export type CourseLibrary = {
+export type CourseKnowledgeBase = {
   id: number
   name: string
   course: string
@@ -45,10 +45,10 @@ export type LearningTask = {
   duration: string
   done: boolean
   type: '讲解' | '资料' | '练习' | '测验' | '案例'
-  resourceId?: number
+  learningResourceId?: number
   exerciseIds?: number[]
-  status?: '未开始' | '进行中' | '已完成'
-  completionMode?: 'content' | 'resource' | 'exercise' | 'assessment' | 'case' | 'manual'
+  status?: '未开始' | '进行中' | '已完成' | '需复习' | '已锁定'
+  completionMode?: 'content' | 'resource' | 'exercise' | 'assessment' | 'case'
   completionSource?: string
   readProgress?: number
   validStudySeconds?: number
@@ -65,6 +65,7 @@ export type LearningStage = {
 
 export type LearningResource = {
   id: number
+  resourceId?: string
   group: '学习方案' | '个性化学习手册' | 'PPT' | '思维导图' | '代码案例' | '图片'
   title: string
   desc: string
@@ -207,13 +208,12 @@ export type WrongReviewSet = {
 
 export type LearningPlan = {
   id: number
-  relatedProjectId?: number | null
   title: string
   icon?: string
   iconColor?: string
   goal: string
   updatedAt: string
-  libraryId: number
+  knowledgeBaseId: number | null
   status: LearningProjectStatus
   period: string
   targetType: string
@@ -248,7 +248,7 @@ export const recentConversations: RecentConversation[] = [
   { id: 105, title: 'PPT 制作方案调整', desc: '汇报结构与页面标题', sourceLabel: '普通对话', sourceType: 'chat' },
 ]
 
-export const courseLibraries: CourseLibrary[] = [
+export const courseKnowledgeBases: CourseKnowledgeBase[] = [
   {
     id: 1,
     name: 'Java 面向对象资料库',
@@ -495,7 +495,7 @@ export const learningPlans: LearningPlan[] = [
     title: 'Java OOP 继承与多态强化计划',
     goal: '3 天内补齐继承、多态、接口相关薄弱点，完成考试前专项复习。',
     updatedAt: '今天 10:30',
-    libraryId: 1,
+    knowledgeBaseId: 1,
     status: '进行中',
     period: '3 天复习计划',
     targetType: '考试复习',
@@ -701,7 +701,7 @@ export const learningPlans: LearningPlan[] = [
     title: '数据结构期末复习',
     goal: '7 天梳理树、图、排序与查找，完成期末考试前系统复习。',
     updatedAt: '今天 09:12',
-    libraryId: 2,
+    knowledgeBaseId: 2,
     status: '已生成',
     period: '7 天计划',
     targetType: '期末考试',
@@ -736,7 +736,7 @@ export const learningPlans: LearningPlan[] = [
     title: 'Python 实验报告辅助',
     goal: '基于实验资料生成文件处理实验报告、代码案例和导出报告。',
     updatedAt: '昨天 18:45',
-    libraryId: 3,
+    knowledgeBaseId: 3,
     status: '已完成',
     period: '项目实战',
     targetType: '课程作业',
@@ -769,7 +769,7 @@ export const learningPlans: LearningPlan[] = [
     title: '计算机网络错题强化',
     goal: '基于错题诊断网络层、传输层薄弱点，生成同类题和复习路径。',
     updatedAt: '昨天 16:20',
-    libraryId: 2,
+    knowledgeBaseId: 2,
     status: '待完善',
     period: '错题诊断',
     targetType: '补弱',

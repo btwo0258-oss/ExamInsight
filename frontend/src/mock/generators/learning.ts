@@ -1,4 +1,4 @@
-import { courseLibraries, createCodeLanguageOptions, learningPlans as mockPlans } from '@/mock/student'
+import { courseKnowledgeBases, createCodeLanguageOptions, learningPlans as mockPlans } from '@/mock/student'
 import type { CodeLanguageKey, Exercise, LearningPlan, LearningResource } from '@/mock/student'
 import type { CreateLearningDraftInput, CreateLearningPlanInput } from '@/types/contracts/learning'
 
@@ -10,6 +10,47 @@ export type MockExerciseResult = {
   correctAnswer: string
   score?: number
   feedback?: string
+}
+
+export function createMockLearningMindMap(plan: LearningPlan, resource: LearningResource) {
+  return {
+    id: Date.now(),
+    title: resource.title,
+    treeData: {
+      data: { text: resource.title },
+      children: plan.stages.map((stage) => ({
+        data: { text: stage.title },
+        children: stage.tasks.map((task) => ({
+          data: { text: task.title },
+          children: [],
+        })),
+      })),
+    },
+  }
+}
+
+export function buildMockLearningPlanMarkdown(plan: LearningPlan) {
+  const profile = plan.profile.map((item) => `- ${item.label}：${item.value}`).join('\n')
+  const stages = plan.stages.map((stage) => {
+    const tasks = stage.tasks.map((task) => `- [ ] ${task.title}（${task.duration}）`).join('\n')
+    return `## ${stage.title}\n\n${stage.desc}\n\n${stage.scheduleLabel ?? ''}\n\n${tasks}`
+  }).join('\n\n')
+  return `# ${plan.title}\n\n## 学习目标\n\n${plan.goal}\n\n## 学习画像\n\n${profile}\n\n## 学习路径\n\n${stages}\n`
+}
+
+export function createMockLearningResourceContent(plan: LearningPlan, resource: LearningResource) {
+  const stageSummary = plan.stages.map((stage) => {
+    const tasks = stage.tasks.map((task) => `- ${task.title}（${task.duration}）`).join('\n')
+    return `## ${stage.title}\n\n${stage.desc}\n\n${tasks}`
+  }).join('\n\n')
+
+  if (resource.group === '个性化学习手册') {
+    return `# ${resource.title}\n\n## 使用目标\n\n${plan.goal}\n\n${stageSummary}\n\n## 学习建议\n\n- 按阶段完成讲解、练习和测验。\n- 错题进入错题巩固后连续答对两次再视为掌握。\n`
+  }
+  if (resource.group === '代码案例') {
+    return `// ${resource.title}\n// Mock 仅提供可预览的代码示例；正式环境由后端 AI 生成并执行安全检查。\n\npublic final class LearningCase {\n    public static void main(String[] args) {\n        System.out.println(\"${plan.title}\");\n    }\n}\n`
+  }
+  return `# ${resource.title}\n\n${resource.desc}\n\n${stageSummary}\n`
 }
 
 function normalizeAnswer(value: string) {
@@ -155,23 +196,22 @@ function assignQuestionBankToTasks(plan: LearningPlan) {
 
 export function createMockLearningPlan(input: CreateLearningPlanInput, plans: LearningPlan[]): LearningPlan {
   const template = structuredClone(mockPlans[0]!)
-  const library = courseLibraries.find((item) => item.id === input.libraryId)
+  const library = courseKnowledgeBases.find((item) => item.id === input.knowledgeBaseId)
   const draftPlan = input.draftPlanId ? plans.find((plan) => plan.id === input.draftPlanId) : null
   const id = draftPlan?.id ?? Math.max(0, ...plans.map((plan) => plan.id)) + 1
-  const libraryName = input.libraryName || library?.name || '无'
-  const subjectName = library?.course || input.libraryName?.replace(/知识库|资料库/g, '').trim() || '个性化学习'
+  const knowledgeBaseName = input.knowledgeBaseName || library?.name || '无'
+  const subjectName = library?.course || input.knowledgeBaseName?.replace(/知识库|资料库/g, '').trim() || '个性化学习'
   const inferredTopics = input.weakPoints.split(/[、,，/]+/).map((item) => item.trim()).filter(Boolean)
   const topics = library?.tags.length ? library.tags : inferredTopics.length ? inferredTopics : ['核心知识']
   const focus = topics.slice(0, 3).join('、') || subjectName
 
   Object.assign(template, {
     id,
-    relatedProjectId: input.projectId,
     title: draftPlan?.title || `${subjectName}${input.targetType}计划`,
     goal: input.supplementalRequirement ? `${input.prompt}（补充要求：${input.supplementalRequirement}）` : input.prompt,
     updatedAt: '刚刚',
-    libraryId: input.libraryId || library?.id || 0,
-    status: '进行中',
+    knowledgeBaseId: input.knowledgeBaseId ?? library?.id ?? null,
+    status: '已生成',
     period: input.period,
     targetType: input.targetType,
     progress: 0,
@@ -186,7 +226,7 @@ export function createMockLearningPlan(input: CreateLearningPlanInput, plans: Le
     { label: '重点知识', value: input.weakPoints || focus },
     { label: '时间安排', value: `${input.period}，${input.dailyTime}` },
     { label: '学习方式', value: input.preferences.join(' + ') || input.studyDepth },
-    { label: '资料来源', value: libraryName },
+    { label: '资料来源', value: knowledgeBaseName },
     { label: '输出深度', value: input.studyDepth },
   ]
   if (input.supplementalRequirement) template.profile.push({ label: '补充要求', value: input.supplementalRequirement })
@@ -235,13 +275,14 @@ export function createMockLearningPlan(input: CreateLearningPlanInput, plans: Le
   template.wrongQuestions = []
   template.trainingSets = []
   template.dashboard = topics.slice(0, 3).map((label) => ({ label, value: 0 }))
-  template.resources = template.resources.filter((resource) => input.resourceGroups.includes(resource.group))
   template.resources.forEach((resource) => {
     resource.title = `${subjectName}${resource.group}`
-    resource.desc = `基于${libraryName}生成的${resource.group}学习资源。`
-    resource.fileName = `${subjectName}-${resource.group}`
-    resource.status = '已生成'
-    resource.action = '查看'
+    resource.desc = `基于${knowledgeBaseName}生成的${resource.group}学习资源。`
+    resource.fileName = resource.group === '思维导图'
+      ? `${subjectName}-${resource.group}.json`
+      : `${subjectName}-${resource.group}`
+    resource.status = '未选择'
+    resource.action = '生成'
   })
   template.resources.unshift({
     id: Math.max(0, ...template.resources.map((resource) => resource.id)) + 1,
@@ -258,27 +299,45 @@ export function createMockLearningPlan(input: CreateLearningPlanInput, plans: Le
     资料: ['个性化学习手册'],
     案例: ['代码案例'],
   }
+  const completionModes: Record<
+    LearningPlan['stages'][number]['tasks'][number]['type'],
+    NonNullable<LearningPlan['stages'][number]['tasks'][number]['completionMode']>
+  > = {
+    讲解: 'content',
+    资料: 'resource',
+    练习: 'exercise',
+    测验: 'assessment',
+    案例: 'case',
+  }
   template.stages.forEach((stage) => stage.tasks.forEach((task) => {
     const groups = resourcePreferences[task.type] ?? []
-    task.resourceId = template.resources.find((resource) => groups.includes(resource.group))?.id
-    task.completionMode = task.type === '讲解' ? 'content' : task.type === '资料' ? 'resource'
-      : task.type === '练习' ? 'exercise' : task.type === '测验' ? 'assessment' : task.type === '案例' ? 'case' : 'manual'
+    task.learningResourceId = template.resources.find((resource) => groups.includes(resource.group))?.id
+    task.completionMode = completionModes[task.type]
   }))
   assignQuestionBankToTasks(template)
+  const planDocument = template.resources.find((resource) => resource.group === '学习方案')
+  if (planDocument) planDocument.content = buildMockLearningPlanMarkdown(template)
+  const mindMap = template.resources.find((resource) => resource.group === '思维导图')
+  if (mindMap) {
+    const generatedMindMap = createMockLearningMindMap(template, mindMap)
+    mindMap.status = '已生成'
+    mindMap.action = '查看'
+    mindMap.mindMapId = generatedMindMap.id
+    mindMap.mindMapTreeData = generatedMindMap.treeData
+  }
   return template
 }
 
 export function createMockLearningDraft(input: CreateLearningDraftInput, plans: LearningPlan[]): LearningPlan {
   const template = structuredClone(mockPlans[0]!)
-  const library = courseLibraries.find((item) => item.id === input.libraryId)
+  const library = courseKnowledgeBases.find((item) => item.id === input.knowledgeBaseId)
   template.id = Math.max(0, ...plans.map((plan) => plan.id)) + 1
-  template.relatedProjectId = null
   template.title = input.title.trim() || '未命名智能学习'
   template.icon = input.icon || 'folder'
   template.iconColor = input.iconColor || '#000'
   template.goal = '待通过对话确认学习目标、学习约束和学习路径。'
   template.updatedAt = '刚刚'
-  template.libraryId = input.libraryId ?? 0
+  template.knowledgeBaseId = input.knowledgeBaseId ?? null
   template.status = '待开启'
   template.period = '待确认'
   template.targetType = '待确认'
@@ -288,7 +347,7 @@ export function createMockLearningDraft(input: CreateLearningDraftInput, plans: 
   template.correctRate = 0
   template.weeklyHours = '0h'
   template.profile = [
-    { label: '资料来源', value: input.libraryName || library?.name || '无' },
+    { label: '资料来源', value: input.knowledgeBaseName || library?.name || '无' },
     { label: '学习约束', value: '待确认' },
     { label: '重点知识', value: '待确认' },
     { label: '节奏', value: '待确认' },

@@ -256,7 +256,7 @@ async function confirmSaveToKb() {
   try {
     await updateMindMap({
       id: generatedData.value.id,
-      kbId: selectedKbId.value,
+      knowledgeBaseId: selectedKbId.value,
     });
     showKbModal.value = false;
     showSuccessDialog.value = true;

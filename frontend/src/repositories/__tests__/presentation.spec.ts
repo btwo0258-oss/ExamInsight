@@ -25,15 +25,14 @@ describe('MockPresentationRepository', () => {
       topic: 'Java 多态',
       title: 'Java 多态复习',
       pageCount: 6,
-      outlineMode: 'confirm',
       templateId: templates[0]!.id,
       aspectRatio: '16:9',
       style: 'academic',
       audience: 'student',
       language: 'zh-CN',
-      learningProjectId: 21,
+      projectId: 21,
       learningResourceId: 8,
-      libraryId: 3,
+      knowledgeBaseId: 3,
       clientRequestId: 'create-presentation-1',
     })
 
@@ -64,12 +63,11 @@ describe('MockPresentationRepository', () => {
     expect(generated.fileName).toBe('Java 多态复习.pptx')
   })
 
-  it('associates a ready PPT with the library and builds the PPTX only when downloaded', async () => {
+  it('archives a ready PPT resource and builds the PPTX only when downloaded', async () => {
     const created = await presentationRepository.create({
       topic: '数据结构复习',
       title: '数据结构复习',
       pageCount: 3,
-      outlineMode: 'auto',
       templateId: 'ink-focus',
       aspectRatio: '4:3',
       style: 'academic',
@@ -80,14 +78,8 @@ describe('MockPresentationRepository', () => {
     await completeJob(await presentationRepository.startOutlineGeneration(created.id, 'outline-presentation-2'))
     await completeJob(await presentationRepository.startGeneration(created.id, { clientRequestId: 'generate-presentation-2' }))
 
-    const saved = await presentationRepository.saveToLibrary(created.id, {
-      libraryId: 9,
-      clientRequestId: 'save-presentation-2',
-    })
-    expect(saved.libraryId).toBe(9)
-    expect(saved.libraryResourceId).toBe(`presentation:${created.id}`)
-
     const beforeDownload = await presentationRepository.get(created.id)
+    expect(beforeDownload.resourceId).toBe(`presentation:${created.id}`)
     expect(beforeDownload.fileSize).toBeUndefined()
     const blob = await presentationRepository.download(created.id)
     expect(blob.type).toBe('application/vnd.openxmlformats-officedocument.presentationml.presentation')

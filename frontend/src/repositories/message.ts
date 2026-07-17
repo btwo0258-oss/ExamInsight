@@ -1,7 +1,18 @@
 import { request } from '@/api/request'
 import { isMockDataSource } from '@/config/dataSource'
+import type { PresentationChatCardDto } from '@/types/contracts/presentation'
+import type { SpreadsheetChatCardDto } from '@/types/contracts/spreadsheet'
+import type { LearningProfileData } from '@/types/contracts/learning'
 
 export type MessageRole = 'user' | 'assistant' | 'system'
+
+export type LearningMessageData = {
+  loading?: boolean
+  confirmed?: boolean
+  profile?: LearningProfileData
+  content?: string
+  resourceId?: string | null
+}
 
 export type MessageDto = {
   id: number
@@ -18,6 +29,10 @@ export type MessageDto = {
   qVersion?: number | null
   aVersion?: number | null
   files?: string | null
+  kind?: 'learning-profile' | 'learning-document' | 'presentation' | 'spreadsheet' | null
+  learningData?: LearningMessageData | string | null
+  presentationData?: PresentationChatCardDto | string | null
+  spreadsheetData?: SpreadsheetChatCardDto | string | null
 }
 
 export interface MessageRepository {

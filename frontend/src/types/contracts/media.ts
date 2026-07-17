@@ -8,8 +8,8 @@ export type ImageRecognitionMode = 'auto' | 'ocr' | 'question'
 
 export type MediaContext = {
   conversationId?: number | null
-  libraryId?: number | null
-  learningProjectId?: number | null
+  knowledgeBaseId?: number | null
+  projectId?: number | null
 }
 
 export type MediaAssetDto = MediaContext & {

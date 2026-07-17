@@ -15,6 +15,8 @@ import {
   Sparkles,
   X,
 } from 'lucide-vue-next'
+import AppSelectMenu from '@/components/common/AppSelectMenu.vue'
+import LibraryKnowledgeCreateModal from '@/components/library/LibraryKnowledgeCreateModal.vue'
 import PresentationOutlineEditor from '@/components/presentation/PresentationOutlineEditor.vue'
 import PresentationSlidePreview from '@/components/presentation/PresentationSlidePreview.vue'
 import StudentShell from '@/components/layout/StudentShell.vue'
@@ -22,14 +24,16 @@ import { isMockDataSource } from '@/config/dataSource'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import { useLearningStore } from '@/stores/learning'
 import { useLibraryResourceStore } from '@/stores/libraryResource'
+import { useMessageStore } from '@/stores/message'
 import { usePresentationStore } from '@/stores/presentation'
 import type {
   PresentationAspectRatio,
   PresentationAudience,
-  PresentationOutlineMode,
   PresentationSlideOutline,
   PresentationStyle,
 } from '@/types/contracts/presentation'
+import type { PresentationDto } from '@/types/contracts/presentation'
+import { toPresentationChatCard } from '@/utils/presentation'
 
 type WorkspaceStep = 'config' | 'outline' | 'generating' | 'preview'
 
@@ -39,24 +43,28 @@ const presentationStore = usePresentationStore()
 const knowledgeBaseStore = useKnowledgeBaseStore()
 const learningStore = useLearningStore()
 const libraryResourceStore = useLibraryResourceStore()
+const messageStore = useMessageStore()
 
 const step = ref<WorkspaceStep>('config')
 const outline = ref<PresentationSlideOutline[]>([])
 const selectedSlideIndex = ref(0)
-const selectedLibraryId = ref<number | null>(numberQuery('libraryId'))
+const selectedKnowledgeBaseId = ref<number | null>(numberQuery('knowledgeBaseId'))
 const localError = ref('')
 const successMessage = ref('')
+const knowledgeCreateOpen = ref(false)
+const draftSyncing = ref(false)
+let draftSyncTimer: number | undefined
+let hydrating = true
 
 const config = reactive({
   topic: stringQuery('topic'),
   title: stringQuery('title'),
-  pageCount: 8,
-  outlineMode: 'confirm' as PresentationOutlineMode,
-  templateId: 'ink-focus',
-  aspectRatio: '16:9' as PresentationAspectRatio,
-  style: 'academic' as PresentationStyle,
-  audience: 'student' as PresentationAudience,
-  language: 'zh-CN',
+  pageCount: clampPageCount(numberQuery('pageCount') ?? 8),
+  templateId: stringQuery('templateId') || 'ink-focus',
+  aspectRatio: aspectRatioQuery(),
+  style: styleQuery(),
+  audience: audienceQuery(),
+  language: stringQuery('language') || 'zh-CN',
   sourceText: '',
 })
 
@@ -66,13 +74,36 @@ const steps: Array<{ key: WorkspaceStep; label: string }> = [
   { key: 'generating', label: '生成' },
   { key: 'preview', label: '预览' },
 ]
+const audienceOptions: Array<{ value: PresentationAudience; label: string }> = [
+  { value: 'student', label: '学生' },
+  { value: 'teacher', label: '教师' },
+  { value: 'general', label: '通用听众' },
+  { value: 'business', label: '答辩/汇报' },
+]
+const styleOptions: Array<{ value: PresentationStyle; label: string }> = [
+  { value: 'academic', label: '教学清晰' },
+  { value: 'minimal', label: '简洁克制' },
+  { value: 'vibrant', label: '重点鲜明' },
+  { value: 'professional', label: '专业汇报' },
+]
 
 const currentStepIndex = computed(() => steps.findIndex((item) => item.key === step.value))
 const currentPresentation = computed(() => presentationStore.current)
 const selectedTemplate = computed(() => presentationStore.templates.find((item) => item.id === config.templateId))
 const selectedPage = computed(() => currentPresentation.value?.previewPages[selectedSlideIndex.value] ?? null)
-const isLearningSource = computed(() => numberQuery('learningProjectId') !== null)
-const canSaveToLibrary = computed(() => currentPresentation.value?.status === 'ready' && selectedLibraryId.value !== null)
+const canAssociateKnowledgeBase = computed(() => (
+  currentPresentation.value?.status === 'ready'
+  && Boolean(currentPresentation.value.resourceId)
+  && currentPresentation.value.knowledgeBaseId !== selectedKnowledgeBaseId.value
+))
+const knowledgeBaseOptions = computed(() => [
+  { value: null, label: '无', icon: 'close' },
+  ...knowledgeBaseStore.list.map((library) => ({
+    value: library.id,
+    label: displayKnowledgeBaseName(library.name),
+    icon: library.icon || 'folder',
+  })),
+])
 
 function stringQuery(key: string) {
   const value = route.query[key]
@@ -85,6 +116,76 @@ function numberQuery(key: string) {
   return Number.isFinite(number) ? number : null
 }
 
+function clampPageCount(value: number) {
+  return Math.min(30, Math.max(3, Number(value) || 8))
+}
+
+function aspectRatioQuery(): PresentationAspectRatio {
+  return stringQuery('aspectRatio') === '4:3' ? '4:3' : '16:9'
+}
+
+function styleQuery(): PresentationStyle {
+  const value = stringQuery('style')
+  return ['academic', 'minimal', 'vibrant', 'professional'].includes(value)
+    ? value as PresentationStyle
+    : 'academic'
+}
+
+function audienceQuery(): PresentationAudience {
+  const value = stringQuery('audience')
+  return ['student', 'teacher', 'general', 'business'].includes(value)
+    ? value as PresentationAudience
+    : 'student'
+}
+
+function applyQueryConfig() {
+  if (stringQuery('topic')) config.topic = stringQuery('topic')
+  if (stringQuery('title')) config.title = stringQuery('title')
+  if (numberQuery('pageCount') !== null) config.pageCount = clampPageCount(numberQuery('pageCount')!)
+  if (stringQuery('templateId')) config.templateId = stringQuery('templateId')
+  if (stringQuery('aspectRatio')) config.aspectRatio = aspectRatioQuery()
+  if (stringQuery('style')) config.style = styleQuery()
+  if (stringQuery('audience')) config.audience = audienceQuery()
+  if (stringQuery('language')) config.language = stringQuery('language')
+}
+
+async function loadSourceMessageCard() {
+  const conversationId = numberQuery('conversationId')
+  const sourceMessageId = stringQuery('sourceMessageId')
+  if (conversationId === null || !sourceMessageId) return
+  await messageStore.ensureLoaded(conversationId)
+  const sourceMessage = messageStore.getMessages(conversationId)
+    .find((message) => message.id === sourceMessageId)
+  if (!sourceMessage?.presentationData) return
+  Object.assign(config, sourceMessage.presentationData.config)
+  selectedKnowledgeBaseId.value = sourceMessage.presentationData.knowledgeBaseId == null
+    ? selectedKnowledgeBaseId.value
+    : Number(sourceMessage.presentationData.knowledgeBaseId)
+}
+
+async function syncConversationCard(presentation: PresentationDto) {
+  const conversationId = Number(presentation.conversationId ?? numberQuery('conversationId'))
+  if (!Number.isFinite(conversationId) || conversationId <= 0) return
+  await messageStore.ensureLoaded(conversationId)
+  const sourceMessageId = String(presentation.sourceMessageId ?? stringQuery('sourceMessageId'))
+  const messages = messageStore.getMessages(conversationId)
+  const sourceMessage = messages.find((message) => message.id === sourceMessageId)
+    ?? [...messages].reverse().find((message) => (
+      message.presentationData?.presentationId === presentation.id
+      || (message.kind === 'presentation' && message.presentationData?.view === 'proposal')
+    ))
+  if (!sourceMessage) return
+  const card = toPresentationChatCard(presentation)
+  messageStore.updateLocalMessage(conversationId, sourceMessage.id, {
+    kind: 'presentation',
+    presentationData: {
+      ...card,
+      conversationId,
+      sourceMessageId: card.sourceMessageId ?? sourceMessage.id,
+    },
+  })
+}
+
 function showMessage(message: string) {
   successMessage.value = message
   window.setTimeout(() => {
@@ -94,6 +195,11 @@ function showMessage(message: string) {
 
 function displayKnowledgeBaseName(name: string) {
   return name.replace(/资料库/g, '知识库')
+}
+
+function handleKnowledgeCreated(id: number) {
+  selectedKnowledgeBaseId.value = id
+  knowledgeCreateOpen.value = false
 }
 
 function setError(error: unknown, fallback: string) {
@@ -114,30 +220,65 @@ function cloneOutline(slides: PresentationSlideOutline[]) {
   return slides.map((slide) => ({ ...slide, points: [...slide.points] }))
 }
 
-async function createOutline() {
-  if (!config.topic.trim() || presentationStore.isSaving) return
-  localError.value = ''
-  try {
-    const presentation = await presentationStore.createAndGenerateOutline({
+function draftInput() {
+  return {
+    config: {
       topic: config.topic.trim(),
       title: config.title.trim() || config.topic.trim(),
       pageCount: Math.min(30, Math.max(3, Number(config.pageCount) || 8)),
-      outlineMode: config.outlineMode,
       templateId: config.templateId,
       aspectRatio: config.aspectRatio,
       style: config.style,
       audience: config.audience,
       language: config.language,
       sourceText: config.sourceText.trim() || undefined,
-      conversationId: numberQuery('conversationId'),
-      libraryId: selectedLibraryId.value,
-      learningProjectId: numberQuery('learningProjectId'),
-      learningResourceId: numberQuery('learningResourceId'),
-    })
+    },
+    conversationId: numberQuery('conversationId'),
+    sourceMessageId: stringQuery('sourceMessageId') || null,
+    knowledgeBaseId: selectedKnowledgeBaseId.value,
+    projectId: numberQuery('projectId'),
+    learningResourceId: numberQuery('learningResourceId'),
+  }
+}
+
+async function persistDraft() {
+  if (hydrating || draftSyncing.value || step.value !== 'config') return
+  const presentation = currentPresentation.value
+  if (!presentation || !['draft', 'outline_ready', 'cancelled'].includes(presentation.status)) return
+  draftSyncing.value = true
+  try {
+    const updated = await presentationStore.updateDraft(draftInput())
+    await syncConversationCard(updated)
+  } catch (error) {
+    setError(error, 'PPT 草稿保存失败')
+  } finally {
+    draftSyncing.value = false
+  }
+}
+
+function scheduleDraftSync() {
+  if (hydrating) return
+  window.clearTimeout(draftSyncTimer)
+  draftSyncTimer = window.setTimeout(() => void persistDraft(), 500)
+}
+
+async function createOutline() {
+  if (!config.topic.trim() || presentationStore.isSaving) return
+  localError.value = ''
+  try {
+    const input = draftInput()
+    let presentation
+    if (currentPresentation.value) {
+      await presentationStore.updateDraft(input)
+      presentation = await presentationStore.generateOutline()
+    } else {
+      const { config: draftConfig, ...context } = input
+      presentation = await presentationStore.createAndGenerateOutline({ ...draftConfig, ...context })
+    }
     outline.value = cloneOutline(presentation.outline)
+    await syncConversationCard(presentation)
     await router.replace({ path: `/presentations/${presentation.id}`, query: route.query })
-    if (config.outlineMode === 'auto') await generatePresentation()
-    else step.value = 'outline'
+    step.value = 'outline'
   } catch (error) {
     setError(error, 'PPT 大纲生成失败')
   }
@@ -150,10 +291,13 @@ async function generatePresentation() {
   try {
     await presentationStore.saveOutline(outline.value)
     const presentation = await presentationStore.generate()
+    await archivePresentation(presentation)
+    await syncConversationCard(presentation)
     await attachLearningResource(presentation.id, presentation.fileName || `${presentation.config.title}.pptx`)
     selectedSlideIndex.value = 0
     step.value = 'preview'
   } catch (error) {
+    if (presentationStore.current) await syncConversationCard(presentationStore.current)
     setError(error, 'PPT 生成失败')
   }
 }
@@ -163,18 +307,35 @@ async function retryGeneration() {
   step.value = 'generating'
   try {
     const presentation = await presentationStore.retry()
+    await archivePresentation(presentation)
+    await syncConversationCard(presentation)
     await attachLearningResource(presentation.id, presentation.fileName || `${presentation.config.title}.pptx`)
     step.value = 'preview'
   } catch (error) {
+    if (presentationStore.current) await syncConversationCard(presentationStore.current)
     setError(error, 'PPT 重试失败')
   }
 }
 
 async function attachLearningResource(presentationId: string, fileName: string) {
-  const planId = numberQuery('learningProjectId')
+  const planId = numberQuery('projectId')
   const resourceId = numberQuery('learningResourceId')
   if (planId === null || resourceId === null) return
   await learningStore.attachPresentationResult(planId, resourceId, presentationId, fileName)
+}
+
+async function archivePresentation(presentation: PresentationDto) {
+  if (isMockDataSource) {
+    libraryResourceStore.addPresentation(
+      presentation.id,
+      presentation.fileName || `${presentation.config.title}.pptx`,
+      presentation.projectId == null ? null : Number(presentation.projectId),
+      presentation.knowledgeBaseId == null ? null : Number(presentation.knowledgeBaseId),
+      presentation.fileSize ?? 0,
+    )
+    return
+  }
+  await libraryResourceStore.fetchList()
 }
 
 async function downloadPresentation() {
@@ -194,29 +355,25 @@ async function downloadPresentation() {
   }
 }
 
-async function saveToLibrary() {
-  if (selectedLibraryId.value === null || !currentPresentation.value) return
+async function updateKnowledgeBaseAssociation() {
+  const presentation = currentPresentation.value
+  if (!presentation?.resourceId) return
   localError.value = ''
   try {
-    const presentation = await presentationStore.saveToLibrary(selectedLibraryId.value)
-    if (isMockDataSource) {
-      libraryResourceStore.addPresentation(
-        presentation.id,
-        presentation.fileName || `${presentation.config.title}.pptx`,
-        isLearningSource.value ? '智能学习生成' : '聊天生成',
-        selectedLibraryId.value,
-        numberQuery('learningProjectId'),
-      )
-    } else {
-      await libraryResourceStore.fetchList(selectedLibraryId.value)
-    }
-    showMessage('已保存到知识库')
+    await libraryResourceStore.updateAssociations(presentation.resourceId, {
+      projectId: presentation.projectId == null ? null : Number(presentation.projectId),
+      knowledgeBaseId: selectedKnowledgeBaseId.value,
+    })
+    presentation.knowledgeBaseId = selectedKnowledgeBaseId.value
+    await syncConversationCard(presentation)
+    showMessage(selectedKnowledgeBaseId.value === null ? '已取消知识库关联' : '已加入知识库')
   } catch (error) {
-    setError(error, '保存到知识库失败')
+    setError(error, '更新知识库关联失败')
   }
 }
 
-function back() {
+async function back() {
+  await persistDraft()
   const returnTo = stringQuery('returnTo')
   if (returnTo.startsWith('/')) void router.push(returnTo)
   else void router.push('/chat')
@@ -230,8 +387,11 @@ function returnToOutline() {
 async function loadExisting(id: string) {
   const presentation = await presentationStore.load(id)
   Object.assign(config, presentation.config)
-  config.outlineMode = presentation.config.outlineMode ?? 'confirm'
-  selectedLibraryId.value = presentation.libraryId ?? selectedLibraryId.value
+  const archivedResource = presentation.resourceId
+    ? libraryResourceStore.resources.find((resource) => resource.resourceId === presentation.resourceId)
+    : undefined
+  selectedKnowledgeBaseId.value = archivedResource?.knowledgeBaseId ?? presentation.knowledgeBaseId ?? selectedKnowledgeBaseId.value
+  presentation.knowledgeBaseId = selectedKnowledgeBaseId.value
   outline.value = cloneOutline(presentation.outline)
   if (presentation.status === 'ready') step.value = 'preview'
   else if (presentation.status === 'outline_ready' || presentation.status === 'cancelled') step.value = 'outline'
@@ -251,6 +411,8 @@ watch(() => config.topic, (topic) => {
   if (!config.title.trim()) config.title = topic
 })
 
+watch([config, selectedKnowledgeBaseId], scheduleDraftSync, { deep: true })
+
 watch(() => currentPresentation.value?.previewPages.length, () => {
   const count = currentPresentation.value?.previewPages.length ?? 0
   if (selectedSlideIndex.value >= count) selectedSlideIndex.value = Math.max(0, count - 1)
@@ -262,12 +424,17 @@ onMounted(async () => {
     await Promise.all([
       presentationStore.loadTemplates(),
       knowledgeBaseStore.isInitialized ? Promise.resolve() : knowledgeBaseStore.fetchList(),
+      libraryResourceStore.fetchList(),
     ])
+    await loadSourceMessageCard()
+    applyQueryConfig()
     if (!config.title && config.topic) config.title = config.topic
     const id = typeof route.params.id === 'string' ? route.params.id : ''
     if (id) await loadExisting(id)
   } catch (error) {
     setError(error, 'PPT 工作区加载失败')
+  } finally {
+    hydrating = false
   }
 })
 </script>
@@ -306,11 +473,10 @@ onMounted(async () => {
           <label class="field field--wide"><span>PPT 标题</span><input v-model="config.title" maxlength="120" placeholder="默认使用演示主题" /></label>
           <div class="field-grid">
             <label class="field"><span>页数</span><input v-model.number="config.pageCount" type="number" min="3" max="30" /></label>
-            <label class="field"><span>受众</span><select v-model="config.audience"><option value="student">学生</option><option value="teacher">教师</option><option value="general">通用听众</option><option value="business">答辩/汇报</option></select></label>
-            <label class="field"><span>风格</span><select v-model="config.style"><option value="academic">教学清晰</option><option value="minimal">简洁克制</option><option value="vibrant">重点鲜明</option><option value="professional">专业汇报</option></select></label>
-            <label class="field"><span>知识库</span><select v-model="selectedLibraryId"><option :value="null">不关联</option><option v-for="library in knowledgeBaseStore.list" :key="library.id" :value="library.id">{{ displayKnowledgeBaseName(library.name) }}</option></select></label>
+            <label class="field"><span>受众</span><AppSelectMenu v-model="config.audience" :options="audienceOptions" aria-label="选择演示受众" /></label>
+            <label class="field"><span>风格</span><AppSelectMenu v-model="config.style" :options="styleOptions" aria-label="选择演示风格" /></label>
+            <label class="field"><span>知识库</span><AppSelectMenu v-model="selectedKnowledgeBaseId" :options="knowledgeBaseOptions" aria-label="选择关联知识库" create-label="新建知识库" @create="knowledgeCreateOpen = true" /></label>
           </div>
-          <div class="field field--wide"><span>生成方式</span><div class="segmented"><button type="button" :class="{ active: config.outlineMode === 'confirm' }" @click="config.outlineMode = 'confirm'">先确认大纲</button><button type="button" :class="{ active: config.outlineMode === 'auto' }" @click="config.outlineMode = 'auto'">自动生成</button></div></div>
           <div class="field field--wide"><span>页面比例</span><div class="segmented"><button type="button" :class="{ active: config.aspectRatio === '16:9' }" @click="config.aspectRatio = '16:9'">16:9 宽屏</button><button type="button" :class="{ active: config.aspectRatio === '4:3' }" @click="config.aspectRatio = '4:3'">4:3 标准</button></div></div>
           <label class="field field--wide"><span>补充资料或要求</span><textarea v-model="config.sourceText" rows="5" maxlength="6000" placeholder="可以粘贴重点、课程要求、汇报背景或必须覆盖的内容。" /></label>
         </section>
@@ -327,7 +493,7 @@ onMounted(async () => {
           <button class="primary-action" type="button" :disabled="!config.topic.trim() || presentationStore.isSaving" @click="createOutline">
             <LoaderCircle v-if="presentationStore.isSaving" class="spin" :size="18" />
             <Sparkles v-else :size="18" />
-            {{ presentationStore.isSaving ? `正在生成 ${presentationStore.progress}%` : (config.outlineMode === 'auto' ? '自动生成 PPT' : '生成页面大纲') }}
+            {{ presentationStore.isSaving ? `正在生成 ${presentationStore.progress}%` : '生成页面大纲' }}
           </button>
         </aside>
       </main>
@@ -339,7 +505,7 @@ onMounted(async () => {
         </section>
         <aside class="outline-summary">
           <div class="summary-template" :style="{ borderColor: selectedTemplate?.accentColor }"><Presentation :size="24" /><strong>{{ selectedTemplate?.name }}</strong><span>{{ config.aspectRatio }} · {{ outline.length }} 页</span></div>
-          <dl><div><dt>主题</dt><dd>{{ config.topic }}</dd></div><div><dt>受众</dt><dd>{{ config.audience }}</dd></div><div><dt>知识库</dt><dd>{{ displayKnowledgeBaseName(knowledgeBaseStore.list.find((item) => item.id === selectedLibraryId)?.name || '未关联') }}</dd></div></dl>
+          <dl><div><dt>主题</dt><dd>{{ config.topic }}</dd></div><div><dt>受众</dt><dd>{{ config.audience }}</dd></div><div><dt>知识库</dt><dd>{{ displayKnowledgeBaseName(knowledgeBaseStore.list.find((item) => item.id === selectedKnowledgeBaseId)?.name || '未关联') }}</dd></div></dl>
           <button class="primary-action" type="button" :disabled="outline.length < 3 || presentationStore.isSaving" @click="generatePresentation"><Sparkles :size="18" />确认大纲并生成</button>
           <button class="secondary-action" type="button" :disabled="presentationStore.isSaving" @click="step = 'config'">返回配置</button>
         </aside>
@@ -376,8 +542,11 @@ onMounted(async () => {
         <aside class="export-panel">
           <div class="result-status"><span><Check :size="18" /></span><div><strong>生成完成</strong><small>{{ currentPresentation?.fileName }}</small></div></div>
           <button class="primary-action" type="button" @click="downloadPresentation"><Download :size="18" />下载 PPTX</button>
-          <label class="field"><span>保存到知识库</span><select v-model="selectedLibraryId"><option :value="null">选择知识库</option><option v-for="library in knowledgeBaseStore.list" :key="library.id" :value="library.id">{{ displayKnowledgeBaseName(library.name) }}</option></select></label>
-          <button class="secondary-action" type="button" :disabled="!canSaveToLibrary" @click="saveToLibrary"><FolderPlus :size="17" />{{ currentPresentation?.libraryResourceId ? '已保存，重新关联' : '保存到知识库' }}</button>
+          <label class="field"><span>关联知识库</span><AppSelectMenu v-model="selectedKnowledgeBaseId" :options="knowledgeBaseOptions" aria-label="选择关联知识库" create-label="新建知识库" @create="knowledgeCreateOpen = true" /></label>
+          <button class="secondary-action" type="button" :disabled="!canAssociateKnowledgeBase" @click="updateKnowledgeBaseAssociation">
+            <FolderPlus :size="17" />
+            {{ currentPresentation?.knowledgeBaseId === selectedKnowledgeBaseId ? (selectedKnowledgeBaseId === null ? '未关联知识库' : '已加入知识库') : (selectedKnowledgeBaseId === null ? '取消知识库关联' : '更新知识库关联') }}
+          </button>
           <button class="text-action" type="button" @click="returnToOutline">返回修改大纲</button>
         </aside>
       </main>
@@ -385,6 +554,7 @@ onMounted(async () => {
       <p v-if="successMessage" class="workspace-toast">{{ successMessage }}</p>
     </div>
   </StudentShell>
+  <LibraryKnowledgeCreateModal :open="knowledgeCreateOpen" @close="knowledgeCreateOpen = false" @created="handleKnowledgeCreated" />
 </template>
 
 <style scoped>
@@ -628,10 +798,8 @@ onMounted(async () => {
 }
 
 .field input,
-.field select,
 .field textarea,
 .field--wide input,
-.field--wide select,
 .field--wide textarea {
   width: 100%;
   border: 1px solid var(--color-border);
@@ -642,9 +810,7 @@ onMounted(async () => {
 }
 
 .field input,
-.field select,
-.field--wide input,
-.field--wide select {
+.field--wide input {
   height: 40px;
   padding: 0 11px;
 }

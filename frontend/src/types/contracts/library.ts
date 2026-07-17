@@ -16,9 +16,9 @@ export type KnowledgeBaseDto = {
   updateTime: string
 }
 
-export type LibraryDocumentDto = {
+export type KnowledgeBaseDocumentDto = {
   id: EntityId
-  kbId: EntityId
+  knowledgeBaseId: EntityId
   fileName: string
   fileType: string
   fileSize: number
@@ -29,21 +29,64 @@ export type LibraryDocumentDto = {
   createTime: string
 }
 
-export type LibraryResourceSource = '资料库上传' | '智能学习上传' | '聊天上传' | '智能学习生成' | '聊天生成'
-export type LibraryResourceCategory = 'file' | 'image' | 'mindmap'
+export type ResourceSourceType = 'uploaded' | 'generated'
+export type ResourceOrigin = 'resource-library' | 'chat' | 'learning' | 'presentation' | 'spreadsheet' | 'mindmap'
+export type ResourceFileType = 'image' | 'document' | 'spreadsheet' | 'presentation' | 'pdf' | 'audio' | 'archive' | 'mindmap' | 'other'
 export type LibraryResourceProcessingStatus = 'waiting' | 'processing' | 'ready' | 'failed'
+export type ResourcePreviewStatus = 'processing' | 'ready' | 'failed' | 'unsupported' | 'too_large'
+export type ResourcePreviewKind =
+  | 'text'
+  | 'image'
+  | 'pdf'
+  | 'word'
+  | 'presentation'
+  | 'spreadsheet'
+  | 'mindmap'
+  | 'audio'
+  | 'unsupported'
 
 export type LibraryResourceDto = {
-  id: string
+  resourceId: string
   name: string
-  type: string
-  size: string
+  format: string
+  fileType: ResourceFileType
+  mimeType?: string
+  sizeBytes: number
   status: LibraryResourceProcessingStatus
   errorMessage?: string
   updatedAt: string
-  category: LibraryResourceCategory
-  source: LibraryResourceSource
+  sourceType: ResourceSourceType
+  origin: ResourceOrigin
   projectId: number | null
-  libraryId: number | null
+  knowledgeBaseId: number | null
   externalKey?: string
 }
+
+export type ResourceAssociations = {
+  projectId: number | null
+  knowledgeBaseId: number | null
+}
+
+export type ResourcePreviewDto = {
+  resource: LibraryResourceDto
+  status: ResourcePreviewStatus
+  previewKind: ResourcePreviewKind
+  textContent?: string
+  previewUrl?: string
+  transcript?: string
+  presentationId?: string
+  spreadsheetId?: string
+  mindMapId?: number
+  errorMessage?: string
+}
+
+export const RESOURCE_PREVIEW_LIMITS = {
+  text: 10 * 1024 * 1024,
+  mindmap: 10 * 1024 * 1024,
+  image: 20 * 1024 * 1024,
+  document: 30 * 1024 * 1024,
+  pdf: 30 * 1024 * 1024,
+  presentation: 30 * 1024 * 1024,
+  spreadsheet: 30 * 1024 * 1024,
+  audio: 30 * 1024 * 1024,
+} as const

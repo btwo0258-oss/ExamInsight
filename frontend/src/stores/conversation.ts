@@ -63,13 +63,13 @@ export const useConversationStore = defineStore("conversation", () => {
     }
   }
 
-  async function create(payload?: { kbId?: number | null; title?: string; navigate?: boolean; learningProjectId?: number | null; learningProjectName?: string; conversationType?: conversationApi.Conversation['conversationType']; localOnly?: boolean }) {
+  async function create(payload?: { knowledgeBaseId?: number | null; title?: string; navigate?: boolean; projectId?: number | null; projectName?: string; conversationType?: conversationApi.Conversation['conversationType']; localOnly?: boolean }) {
     const shouldNavigate = payload?.navigate !== false;
     const apiPayload = {
-      kbId: payload?.kbId,
+      knowledgeBaseId: payload?.knowledgeBaseId,
       title: payload?.title,
-      learningProjectId: payload?.learningProjectId,
-      learningProjectName: payload?.learningProjectName,
+      projectId: payload?.projectId,
+      projectName: payload?.projectName,
       conversationType: payload?.conversationType ?? 'general',
     };
     const created = await conversationApi.createConversation(apiPayload);
@@ -93,13 +93,13 @@ export const useConversationStore = defineStore("conversation", () => {
     upsertLocal({ ...existing, knowledgeBaseId, updateTime: nowMs(), title: existing.title });
   }
 
-  function linkLearningProject(id: number, learningProjectId: number, learningProjectName: string, conversationType?: conversationApi.Conversation['conversationType']) {
+  function linkLearningProject(id: number, projectId: number, projectName: string, conversationType?: conversationApi.Conversation['conversationType']) {
     const existing = list.value.find((item) => item.id === id);
     if (!existing) return;
-    if (existing.learningProjectId === learningProjectId && existing.learningProjectName === learningProjectName && (!conversationType || existing.conversationType === conversationType)) return;
-    const next = { ...existing, learningProjectId, learningProjectName, conversationType: conversationType ?? existing.conversationType };
+    if (existing.projectId === projectId && existing.projectName === projectName && (!conversationType || existing.conversationType === conversationType)) return;
+    const next = { ...existing, projectId, projectName, conversationType: conversationType ?? existing.conversationType };
     upsertLocal(next);
-    void conversationApi.updateConversation(id, { learningProjectId, learningProjectName, conversationType: next.conversationType })
+    void conversationApi.updateConversation(id, { projectId, projectName, conversationType: next.conversationType })
       .catch((error) => {
         errorMessage.value = error instanceof Error ? error.message : '关联学习项目失败';
       });
@@ -107,10 +107,10 @@ export const useConversationStore = defineStore("conversation", () => {
 
   function restoreLearningConversation(
     id: number,
-    learningProjectId: number,
-    learningProjectName: string,
+    projectId: number,
+    projectName: string,
     knowledgeBaseId: number | null,
-    title = `${learningProjectName} · AI 助教`,
+    title = `${projectName} · AI 助教`,
   ) {
     if (!Number.isFinite(id) || id <= 0 || list.value.some((item) => item.id === id)) return;
     const timestamp = nowMs();
@@ -122,8 +122,8 @@ export const useConversationStore = defineStore("conversation", () => {
       messageCount: 0,
       updateTime: timestamp,
       createTime: timestamp,
-      learningProjectId,
-      learningProjectName,
+      projectId,
+      projectName,
       conversationType: 'learning-tutor',
     });
   }

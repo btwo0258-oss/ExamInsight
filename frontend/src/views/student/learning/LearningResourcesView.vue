@@ -2,15 +2,16 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
-import LearningMindMapPreview from '@/components/learning/LearningMindMapPreview.vue'
 import LearningRouteState from '@/components/learning/LearningRouteState.vue'
 import StudentShell from '@/components/layout/StudentShell.vue'
 import type { LearningResource } from '@/mock'
 import { presentationRepository } from '@/repositories/presentation'
+import { isApiDataSource } from '@/config/dataSource'
 import { useLearningStore } from '@/stores/learning'
 import { useLearningTutorStore } from '@/stores/learningTutor'
-import { renderMarkdownToHtml } from '@/utils/markdown'
+import { useLibraryResourceStore } from '@/stores/libraryResource'
 import { useLearningPlanRoute } from '@/composables/useLearningPlanRoute'
+import { resourcePreviewRoute } from '@/utils/resourcePreview'
 
 type ResourceWithMeta = LearningResource & {
   source?: 'default' | 'ai-conversation'
@@ -21,18 +22,54 @@ const route = useRoute()
 const router = useRouter()
 const learningStore = useLearningStore()
 const tutorStore = useLearningTutorStore()
+const libraryResourceStore = useLibraryResourceStore()
 const { plan, hasPlan, isLoading, loadError, loadPlan } = useLearningPlanRoute()
 const query = ref('')
-const previewResource = ref<ResourceWithMeta | null>(null)
 const toastMsg = ref('')
 const actionError = ref('')
+const displayedActionError = computed(() => actionError.value || learningStore.errorMessage || '')
 const operationPendingId = ref<number | null>(null)
 const sourceTaskId = computed(() => Number(route.query.task) || undefined)
 const sourceStageId = computed(() => plan.value.stages.find((stage) => stage.tasks.some((task) => task.id === sourceTaskId.value))?.id)
 let readingTimer: number | undefined
+let resourceRefreshTimer: number | undefined
+let resourceRefreshAttempts = 0
+
+function flushReadingActivity() {
+  if (sourceTaskId.value) void learningStore.flushLearningActivities(plan.value.id, sourceTaskId.value)
+}
+
+function handleVisibilityChange() {
+  if (document.visibilityState === 'hidden') flushReadingActivity()
+}
+
+async function refreshGeneratingResources() {
+  if (!isApiDataSource || !hasPlan.value) return
+  if (!resources.value.some((resource) => resource.status === '生成中')) {
+    resourceRefreshAttempts = 0
+    return
+  }
+  if (resourceRefreshAttempts >= 40) {
+    if (resourceRefreshTimer) window.clearInterval(resourceRefreshTimer)
+    resourceRefreshTimer = undefined
+    actionError.value = '资源仍在生成，可稍后刷新页面继续查看。'
+    return
+  }
+  resourceRefreshAttempts += 1
+  try {
+    await learningStore.fetchPlan(plan.value.id)
+  } catch (error) {
+    actionError.value = error instanceof Error ? error.message : '资源状态刷新失败'
+  }
+}
+
+function clearActionError() {
+  actionError.value = ''
+  learningStore.clearError()
+}
 
 const resources = computed<ResourceWithMeta[]>(() => {
-  return (plan.value.resources as ResourceWithMeta[]).filter((resource) => resource.status !== '未选择' || resource.group === 'PPT')
+  return plan.value.resources as ResourceWithMeta[]
 })
 
 const filteredResources = computed(() => {
@@ -79,27 +116,6 @@ function sourceLabel(resource: ResourceWithMeta) {
   return resource.source === 'ai-conversation' ? 'AI 对话生成' : '项目默认生成'
 }
 
-function getFallbackTree(resource?: ResourceWithMeta) {
-  return {
-    data: { text: resource?.title || plan.value.title },
-    children: plan.value.dashboard.map((item) => ({ data: { text: item.label }, children: [] })),
-  }
-}
-
-function getResourceContent(resource: ResourceWithMeta) {
-  if (resource.group === '学习方案') {
-    return [
-      `# ${plan.value.title}学习方案`, '',
-      '## 学习目标', plan.value.goal, '',
-      '## 个性化画像', plan.value.profile.map((item) => `- ${item.label}：${item.value}`).join('\n'), '',
-      '## 学习路径',
-      plan.value.stages.map((stage) => `### ${stage.title}\n${stage.desc}\n\n${stage.tasks.map((task) => `- ${task.title}（${task.duration}）`).join('\n')}`).join('\n\n'),
-    ].join('\n')
-  }
-  if (resource.content) return resource.content
-  return resource.content || resource.desc
-}
-
 function setToast(message: string) {
   toastMsg.value = message
   window.setTimeout(() => {
@@ -121,8 +137,8 @@ function openPresentationResource(resource: ResourceWithMeta) {
     query: {
       topic: resource.title || plan.value.title,
       title: resource.fileName?.replace(/\.pptx$/i, '') || resource.title,
-      libraryId: String(plan.value.libraryId),
-      learningProjectId: String(plan.value.id),
+      knowledgeBaseId: String(plan.value.knowledgeBaseId),
+      projectId: String(plan.value.id),
       learningResourceId: String(resource.id),
       returnTo: route.fullPath,
     },
@@ -130,16 +146,19 @@ function openPresentationResource(resource: ResourceWithMeta) {
 }
 
 function openResource(resource: ResourceWithMeta) {
-  if (resource.group === 'PPT') {
+  if (resource.status !== '已生成') {
+    if (resource.group === 'PPT') openPresentationResource(resource)
+    return
+  }
+  if (!resource.resourceId) {
+    actionError.value = '该资源尚未同步到资料库，请刷新后重试。'
+    return
+  }
+  if (resource.group === 'PPT' && !resource.presentationId) {
     openPresentationResource(resource)
     return
   }
-  if (resource.status !== '已生成') return
-  if (resource.group === '思维导图' && resource.mindMapId) {
-    void router.push(`/mindmap/${resource.mindMapId}`)
-    return
-  }
-  previewResource.value = resource
+  void router.push(resourcePreviewRoute(resource.resourceId, route.fullPath, 'learning'))
 }
 
 async function exportResource(resource: ResourceWithMeta) {
@@ -195,7 +214,7 @@ async function openTutorChat() {
     const conversationId = await tutorStore.ensureConversation(plan.value)
     await router.push({
       path: `/chat/${conversationId}`,
-      query: { learningProjectId: String(plan.value.id), tutor: '1' },
+      query: { projectId: String(plan.value.id), tutor: '1' },
     })
   } catch (error) {
     actionError.value = error instanceof Error ? error.message : '打开 AI 对话失败'
@@ -212,16 +231,39 @@ watch(
   { immediate: true },
 )
 
+watch(
+  [hasPlan, resources],
+  ([ready, items]) => {
+    if (isApiDataSource || !ready) return
+    items
+      .filter((resource) => resource.status !== '未选择' && !resource.resourceId)
+      .forEach((resource) => {
+        libraryResourceStore.addGeneratedResource(
+          resource,
+          plan.value.id,
+          plan.value.id,
+          plan.value.knowledgeBaseId,
+        )
+      })
+  },
+  { immediate: true },
+)
+
 onMounted(() => {
   readingTimer = window.setInterval(() => {
     if (sourceTaskId.value && document.visibilityState === 'visible') {
       learningStore.recordTaskReading(plan.value.id, sourceTaskId.value, 100, 1)
     }
   }, 1000)
+  resourceRefreshTimer = window.setInterval(() => void refreshGeneratingResources(), 3000)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
 })
 
 onBeforeUnmount(() => {
   if (readingTimer) window.clearInterval(readingTimer)
+  if (resourceRefreshTimer) window.clearInterval(resourceRefreshTimer)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
+  flushReadingActivity()
 })
 </script>
 
@@ -264,9 +306,9 @@ onBeforeUnmount(() => {
         </div>
       </header>
 
-      <div v-if="actionError" class="resource-error" role="alert">
-        <span>{{ actionError }}</span>
-        <button type="button" @click="actionError = ''">关闭</button>
+      <div v-if="displayedActionError" class="resource-error" role="alert">
+        <span>{{ displayedActionError }}</span>
+        <button type="button" @click="clearActionError">关闭</button>
       </div>
 
       <section class="stats">
@@ -278,7 +320,7 @@ onBeforeUnmount(() => {
       <div class="content-grid">
         <section class="panel files-panel">
           <div class="section-head">
-            <div><h2>资源文件</h2><small>已生成内容可查看，PPT 可从这里创建</small></div>
+            <div><h2>资源文件</h2><small>默认生成学习方案和思维导图，其他资源可按需创建</small></div>
             <label>
               <AppIcon name="search" :size="18" />
               <input v-model="query" placeholder="搜索资源" />
@@ -295,10 +337,11 @@ onBeforeUnmount(() => {
                   <td>{{ sourceLabel(resource) }}</td>
                   <td>{{ resource.updatedAt || '刚刚' }}</td>
                   <td class="row-actions" @click.stop>
-                    <button v-if="resource.group === 'PPT' && !resource.presentationId" class="text-btn" type="button" @click="openPresentationResource(resource)">生成</button>
-                    <button v-if="resource.status === '生成失败'" class="text-btn" type="button" :disabled="operationPendingId !== null" @click="retryResource(resource)">重试</button>
-                    <button class="icon-btn" type="button" title="查看" :disabled="resource.status !== '已生成' && resource.group !== 'PPT'" @click="openResource(resource)"><AppIcon name="eye" :size="17" /></button>
+                    <button class="icon-btn" type="button" title="预览" :disabled="resource.status !== '已生成' || !resource.resourceId" @click="openResource(resource)"><AppIcon name="eye" :size="17" /></button>
                     <button class="icon-btn" type="button" title="下载" :disabled="resource.status !== '已生成' || (resource.group === 'PPT' && !resource.presentationId) || operationPendingId !== null" @click="exportResource(resource)"><AppIcon name="download" :size="17" /></button>
+                    <button v-if="resource.group === 'PPT' && !resource.presentationId" class="text-btn" type="button" @click="openPresentationResource(resource)">生成</button>
+                    <button v-else-if="resource.status === '未选择'" class="text-btn" type="button" :disabled="operationPendingId !== null" @click="retryResource(resource)">生成</button>
+                    <button v-if="resource.status === '生成失败'" class="text-btn" type="button" :disabled="operationPendingId !== null" @click="retryResource(resource)">重试</button>
                   </td>
                 </tr>
                 <tr v-if="!filteredResources.length" class="empty-row"><td colspan="6">没有匹配的资源</td></tr>
@@ -317,21 +360,6 @@ onBeforeUnmount(() => {
             <article><span>最近更新</span><strong>{{ latestUpdate }}</strong></article>
           </div>
         </aside>
-      </div>
-
-      <div v-if="previewResource" class="preview-backdrop" @click.self="previewResource = null">
-        <section class="preview-dialog" role="dialog" aria-modal="true">
-          <header>
-            <div><span class="resource-type-icon resource-type-icon--large" :style="resourceStyle(previewResource.group)"><AppIcon :name="iconName(previewResource.group)" :size="22" /></span><span><strong>{{ previewResource.title }}</strong><small>{{ typeLabel(previewResource) }} · {{ sourceLabel(previewResource) }}</small></span></div>
-            <div><button type="button" title="下载" @click="exportResource(previewResource)"><AppIcon name="download" :size="18" /></button><button type="button" title="关闭" @click="previewResource = null"><AppIcon name="close" :size="18" /></button></div>
-          </header>
-          <div class="preview-body">
-            <LearningMindMapPreview v-if="previewResource.group === '思维导图'" :title="previewResource.title" :tree-data="previewResource.mindMapTreeData || getFallbackTree(previewResource)" />
-            <img v-else-if="previewResource.group === '图片' && previewResource.previewUrl" :src="previewResource.previewUrl" :alt="previewResource.title" />
-            <pre v-else-if="previewResource.group === '代码案例'"><code>{{ getResourceContent(previewResource) }}</code></pre>
-            <article v-else class="markdown-body" v-html="renderMarkdownToHtml(getResourceContent(previewResource))" />
-          </div>
-        </section>
       </div>
 
       <p v-if="toastMsg" class="toast">{{ toastMsg }}</p>
@@ -382,7 +410,6 @@ tbody tr:not(.empty-row):hover { background: var(--ui-hover-bg); }
 td:first-child { min-width: 210px; display: flex; align-items: center; gap: 9px; }
 td:first-child span { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .resource-type-icon { width: 30px; height: 30px; flex: 0 0 auto; display: grid !important; place-items: center; border-radius: 8px; background: color-mix(in srgb, var(--resource-color) 12%, var(--color-surface)); color: var(--resource-color); }
-.resource-type-icon--large { width: 38px; height: 38px; }
 .status { padding: 4px 9px; border-radius: 999px; background: color-mix(in srgb, var(--color-success) 15%, var(--color-surface)); color: var(--color-success); white-space: nowrap; }
 .status.active { background: color-mix(in srgb, var(--color-info) 12%, var(--color-surface)); color: var(--color-info); }
 .status.failed { background: color-mix(in srgb, var(--color-danger) 12%, var(--color-surface)); color: var(--color-danger); }
@@ -399,19 +426,7 @@ td:first-child span { max-width: 240px; overflow: hidden; text-overflow: ellipsi
 .summary-list article { border-top: 1px solid var(--color-border); padding-top: 12px; }
 .summary-list span { display: block; margin-bottom: 5px; color: var(--color-text-muted); font-size: 13px; }
 .summary-list strong { line-height: 1.5; }
-.preview-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 30px; background: rgba(15, 23, 42, .34); }
-.preview-dialog { width: min(980px, 94vw); max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; border-radius: 12px; background: var(--color-surface); box-shadow: 0 24px 70px rgba(15, 23, 42, .24); }
-.preview-dialog > header { min-height: 66px; display: flex; align-items: center; justify-content: space-between; gap: 18px; border-bottom: 1px solid var(--color-border); padding: 12px 18px; }
-.preview-dialog > header > div { display: flex; align-items: center; gap: 10px; }
-.preview-dialog header span { display: grid; gap: 3px; }
-.preview-dialog header small { color: var(--color-text-muted); }
-.preview-dialog header button { width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--color-text); cursor: pointer; }
-.preview-dialog header button:hover { background: var(--ui-hover-bg); }
-.preview-body { min-height: 480px; overflow: auto; padding: 28px; }
-.preview-body .markdown-body { max-width: 800px; margin: 0 auto; }
-.preview-body pre { min-height: 430px; margin: 0; border-radius: 8px; background: #0f172a; color: #dbeafe; padding: 24px; overflow: auto; line-height: 1.7; }
-.preview-body img { display: block; max-width: 100%; max-height: 70vh; margin: 0 auto; object-fit: contain; }
 .toast { position: fixed; right: 24px; bottom: 24px; z-index: 90; border-radius: 8px; background: var(--color-primary); color: var(--color-on-primary); padding: 10px 14px; box-shadow: var(--shadow-md); }
 @media (max-width: 980px) { .hero-card, .stats, .content-grid { grid-template-columns: 1fr; } .hero-actions { flex-wrap: wrap; } .summary-panel { order: -1; } }
-@media (max-width: 620px) { .resources-page { padding: 22px 14px 42px; } .hero-card { padding: 18px; } .section-head { align-items: stretch; flex-direction: column; } .section-head label { width: 100%; } .preview-backdrop { padding: 0; } .preview-dialog { width: 100%; max-height: 100vh; height: 100%; border-radius: 0; } }
+@media (max-width: 620px) { .resources-page { padding: 22px 14px 42px; } .hero-card { padding: 18px; } .section-head { align-items: stretch; flex-direction: column; } .section-head label { width: 100%; } }
 </style>

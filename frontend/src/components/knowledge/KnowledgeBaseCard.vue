@@ -32,7 +32,7 @@ const conversationCount = computed(() => {
 })
 
 const mindMapCount = computed(() => {
-  return mindMapStore.mindMapList.filter(map => map.kbId === props.knowledgeBase.id).length
+  return mindMapStore.mindMapList.filter(map => map.knowledgeBaseId === props.knowledgeBase.id).length
 })
 
 function toggleActions(e: Event) {

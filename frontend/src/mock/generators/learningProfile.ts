@@ -101,12 +101,5 @@ export function buildMockLearningConfirmation(input: LearningConfirmationRequest
 
 export function createMockLearningProfileResult(input: LearningProfileRequest): LearningProfileResult {
   const profile = inferMockLearningProfile(input)
-  return {
-    profile,
-    confirmationDocument: buildMockLearningConfirmation({
-      libraryId: input.libraryId,
-      goal: input.text,
-      profile,
-    }),
-  }
+  return { profile }
 }

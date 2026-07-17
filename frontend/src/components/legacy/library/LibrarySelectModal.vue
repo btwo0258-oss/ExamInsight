@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import AppButton from '@/components/common/AppButton.vue'
-import { courseLibraries } from '@/mock'
+import { courseKnowledgeBases } from '@/mock'
 
 const props = defineProps<{
   open: boolean
@@ -14,12 +14,12 @@ const emit = defineEmits<{
 }>()
 
 const keyword = ref('')
-const pickedId = ref<number | null>(props.selectedId ?? courseLibraries[0]?.id ?? null)
+const pickedId = ref<number | null>(props.selectedId ?? courseKnowledgeBases[0]?.id ?? null)
 
 const filteredLibraries = computed(() => {
   const text = keyword.value.trim().toLowerCase()
-  if (!text) return courseLibraries
-  return courseLibraries.filter((item) =>
+  if (!text) return courseKnowledgeBases
+  return courseKnowledgeBases.filter((item) =>
     `${item.name}${item.course}${item.description}`.toLowerCase().includes(text),
   )
 })

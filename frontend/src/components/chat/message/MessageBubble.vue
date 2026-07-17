@@ -1,8 +1,11 @@
 <script setup lang="ts">
 // @ts-nocheck
 import { computed, watch, onMounted, ref } from "vue";
+import { useRoute, useRouter } from 'vue-router'
 import type { ChatMessage } from "@/stores/message";
 import { useMessageStore } from "@/stores/message";
+import { usePresentationStore } from '@/stores/presentation'
+import { useSpreadsheetStore } from '@/stores/spreadsheet'
 import { useAppState } from "@/stores/appState";
 import MarkdownRenderer from "./MarkdownRenderer.vue";
 import SourceChunks from "./SourceChunks.vue";
@@ -12,6 +15,13 @@ import { copyText } from "@/utils/clipboard";
 import LearningProfileCard from "@/components/learning/LearningProfileCard.vue";
 import type { LearningProfileData } from "@/components/learning/LearningProfileCard.vue";
 import LearningPlanDocument from "@/components/learning/LearningPlanDocument.vue";
+import PresentationChatCard from '@/components/presentation/PresentationChatCard.vue'
+import SpreadsheetChatCard from '@/components/spreadsheet/SpreadsheetChatCard.vue'
+import type { PresentationChatCardDto } from '@/types/contracts/presentation'
+import type { SpreadsheetChatCardDto } from '@/types/contracts/spreadsheet'
+import { presentationRouteQuery, toPresentationChatCard } from '@/utils/presentation'
+import { spreadsheetRouteQuery, toSpreadsheetChatCard } from '@/utils/spreadsheet'
+import { resourcePreviewRoute } from '@/utils/resourcePreview'
 
 type Props = {
   message: ChatMessage;
@@ -34,7 +44,15 @@ const emit = defineEmits<{
 
 const isUser = computed(() => props.message.role === "user");
 const messageStore = useMessageStore();
+const presentationStore = usePresentationStore()
+const spreadsheetStore = useSpreadsheetStore()
 const appState = useAppState();
+const route = useRoute()
+const router = useRouter()
+const presentationBusy = ref(false)
+const presentationError = ref('')
+const spreadsheetBusy = ref(false)
+const spreadsheetError = ref('')
 
 const showMarkdown = ref(true);
 
@@ -187,6 +205,191 @@ async function onGenerateMindmap(_messageId?: string, content?: string) {
   if (!props.conversationId) return;
   emit("generateMindmap", props.message.id, content ?? props.message.content);
 }
+
+function patchPresentationCard(data: PresentationChatCardDto) {
+  if (!props.conversationId) return
+  messageStore.updateLocalMessage(props.conversationId, props.message.id, {
+    kind: 'presentation',
+    presentationData: data,
+  })
+}
+
+function updatePresentationCard(data: PresentationChatCardDto) {
+  presentationError.value = ''
+  patchPresentationCard(data)
+}
+
+async function openPresentationSettings(data = props.message.presentationData) {
+  if (!data) return
+  presentationBusy.value = true
+  presentationError.value = ''
+  try {
+    let nextCard = data
+    if (!data.presentationId) {
+      const draft = await presentationStore.createDraft({
+        ...data.config,
+        topic: data.config.topic.trim(),
+        title: data.config.title.trim() || data.config.topic.trim(),
+        conversationId: props.conversationId ?? data.conversationId ?? null,
+        sourceMessageId: data.sourceMessageId ?? props.message.id,
+        knowledgeBaseId: data.knowledgeBaseId ?? null,
+        projectId: data.projectId ?? null,
+        learningResourceId: data.learningResourceId ?? null,
+      })
+      nextCard = toPresentationChatCard(draft)
+      patchPresentationCard(nextCard)
+    } else {
+      patchPresentationCard(data)
+    }
+    await router.push({
+      path: `/presentations/${nextCard.presentationId}`,
+      query: presentationRouteQuery(nextCard, route.fullPath),
+    })
+  } catch (error) {
+    presentationError.value = error instanceof Error ? error.message : 'PPT 配置打开失败'
+  } finally {
+    presentationBusy.value = false
+  }
+}
+
+async function openPresentation(data = props.message.presentationData) {
+  if (!data) return
+  if (data.view === 'result' && data.status === 'ready' && data.resourceId) {
+    await router.push(resourcePreviewRoute(data.resourceId, route.fullPath, 'chat'))
+    return
+  }
+  await openPresentationSettings(data)
+}
+
+function cancelPresentationCard() {
+  if (!props.conversationId) return
+  messageStore.updateLocalMessage(props.conversationId, props.message.id, {
+    kind: undefined,
+    presentationData: undefined,
+    content: '已取消本次 PPT 创建。',
+  })
+}
+
+async function generatePresentationOutline() {
+  const card = props.message.presentationData
+  if (!card || !card.config.topic.trim() || presentationBusy.value) return
+  presentationBusy.value = true
+  presentationError.value = ''
+  try {
+    const presentation = await presentationStore.createAndGenerateOutline({
+      ...card.config,
+      topic: card.config.topic.trim(),
+      title: card.config.title.trim() || card.config.topic.trim(),
+      conversationId: props.conversationId ?? card.conversationId ?? null,
+      sourceMessageId: card.sourceMessageId ?? props.message.id,
+      knowledgeBaseId: card.knowledgeBaseId ?? null,
+      projectId: card.projectId ?? null,
+      learningResourceId: card.learningResourceId ?? null,
+    })
+    const nextCard = toPresentationChatCard(presentation)
+    patchPresentationCard(nextCard)
+    await router.push({
+      path: `/presentations/${presentation.id}`,
+      query: presentationRouteQuery(nextCard, route.fullPath),
+    })
+  } catch (error) {
+    presentationError.value = error instanceof Error ? error.message : 'PPT 大纲生成失败'
+  } finally {
+    presentationBusy.value = false
+  }
+}
+
+async function downloadPresentation() {
+  const card = props.message.presentationData
+  if (!card?.presentationId || presentationBusy.value) return
+  presentationBusy.value = true
+  presentationError.value = ''
+  try {
+    const presentation = await presentationStore.load(card.presentationId)
+    const blob = await presentationStore.download()
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = presentation.fileName || `${presentation.config.title}.pptx`
+    link.click()
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    presentationError.value = error instanceof Error ? error.message : 'PPT 下载失败'
+  } finally {
+    presentationBusy.value = false
+  }
+}
+
+async function retryPresentation() {
+  const card = props.message.presentationData
+  if (!card?.presentationId || presentationBusy.value) return
+  presentationBusy.value = true
+  presentationError.value = ''
+  try {
+    await presentationStore.load(card.presentationId)
+    const presentation = await presentationStore.retry()
+    patchPresentationCard(toPresentationChatCard(presentation))
+  } catch (error) {
+    presentationError.value = error instanceof Error ? error.message : 'PPT 重试失败'
+  } finally {
+    presentationBusy.value = false
+  }
+}
+
+function patchSpreadsheetCard(data: SpreadsheetChatCardDto) {
+  if (!props.conversationId) return
+  messageStore.updateLocalMessage(props.conversationId, props.message.id, {
+    kind: 'spreadsheet',
+    spreadsheetData: data,
+  })
+}
+
+async function openSpreadsheet(data = props.message.spreadsheetData) {
+  if (!data) return
+  if (data.status === 'ready' && data.resourceId) {
+    await router.push(resourcePreviewRoute(data.resourceId, route.fullPath, 'chat'))
+    return
+  }
+  await router.push({
+    path: `/spreadsheets/${data.spreadsheetId}`,
+    query: spreadsheetRouteQuery(data, route.fullPath),
+  })
+}
+
+async function downloadSpreadsheet() {
+  const card = props.message.spreadsheetData
+  if (!card?.spreadsheetId || spreadsheetBusy.value) return
+  spreadsheetBusy.value = true
+  try {
+    const spreadsheet = await spreadsheetStore.load(card.spreadsheetId)
+    const blob = await spreadsheetStore.download()
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = spreadsheet.fileName || `${spreadsheet.config.title}.xlsx`
+    link.click()
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    spreadsheetError.value = error instanceof Error ? error.message : '电子表格下载失败'
+  } finally {
+    spreadsheetBusy.value = false
+  }
+}
+
+async function retrySpreadsheet() {
+  const card = props.message.spreadsheetData
+  if (!card?.spreadsheetId || spreadsheetBusy.value) return
+  spreadsheetBusy.value = true
+  try {
+    await spreadsheetStore.load(card.spreadsheetId)
+    const spreadsheet = await spreadsheetStore.retry()
+    patchSpreadsheetCard(toSpreadsheetChatCard(spreadsheet))
+  } catch (error) {
+    spreadsheetError.value = error instanceof Error ? error.message : '电子表格重试失败'
+  } finally {
+    spreadsheetBusy.value = false
+  }
+}
 </script>
 
 <template>
@@ -245,6 +448,33 @@ async function onGenerateMindmap(_messageId?: string, content?: string) {
             :loading="message.learningData.loading"
             @update="(content) => emit('updateLearningDocument', message.id, content)"
           />
+          <div v-else-if="message.kind === 'presentation' && message.presentationData" class="presentation-message">
+            <MarkdownRenderer v-if="message.content && showMarkdown" :content="message.content" :is-streaming="isStreaming" />
+            <PresentationChatCard
+              :data="message.presentationData"
+              :busy="presentationBusy || isStreaming"
+              :error="presentationError"
+              @update="updatePresentationCard"
+              @cancel="cancelPresentationCard"
+              @more-settings="openPresentationSettings()"
+              @generate-outline="generatePresentationOutline"
+              @open="openPresentation()"
+              @download="downloadPresentation"
+              @associate="openPresentationSettings()"
+              @retry="retryPresentation"
+            />
+          </div>
+          <div v-else-if="message.kind === 'spreadsheet' && message.spreadsheetData" class="presentation-message">
+            <MarkdownRenderer v-if="message.content && showMarkdown" :content="message.content" :is-streaming="isStreaming" />
+            <SpreadsheetChatCard
+              :data="message.spreadsheetData"
+              :busy="spreadsheetBusy || isStreaming"
+              :error="spreadsheetError"
+              @open="openSpreadsheet()"
+              @download="downloadSpreadsheet"
+              @retry="retrySpreadsheet"
+            />
+          </div>
           <MarkdownRenderer v-else-if="showMarkdown" :content="message.content" :is-streaming="isStreaming" />
           <span v-if="isStreaming" class="cursor" />
           <!-- @ts-ignore -->
@@ -504,7 +734,8 @@ async function onGenerateMindmap(_messageId?: string, content?: string) {
 }
 
 .bubble--ai:has(.profile-card),
-.bubble--ai:has(.plan-document) {
+.bubble--ai:has(.plan-document),
+.bubble--ai:has(.presentation-message) {
   width: 100%;
   padding: 0;
   overflow: visible;

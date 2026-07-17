@@ -131,7 +131,23 @@ function normalizePlans(input: LegacyLearningPlan[]): LearningPlan[] {
     plan.totalTasks = stages.reduce((total, stage) => total + stage.tasks.length, 0)
     plan.taskDone = stages.reduce((total, stage) => total + stage.tasks.filter((task) => task.done).length, 0)
     plan.progress = plan.totalTasks ? Math.round((plan.taskDone / plan.totalTasks) * 100) : 0
-    plan.status = plan.progress === 100 ? '已完成' : '进行中'
+    const hasStartedTask = stages.some((stage) => stage.tasks.some((task) =>
+      task.done
+      || task.status === '进行中'
+      || (task.readProgress ?? 0) > 0
+      || (task.validStudySeconds ?? 0) > 0
+      || (task.completedActions?.length ?? 0) > 0,
+    ))
+    const hasSubmittedExercise = plan.exercises.some((exercise) => exercise.submitted)
+    if (!plan.totalTasks && ['待开启', '待完善'].includes(plan.status)) {
+      // Keep setup drafts pending until the generation job replaces them.
+    } else if (plan.progress === 100 && plan.totalTasks > 0) {
+      plan.status = '已完成'
+    } else if (hasStartedTask || hasSubmittedExercise) {
+      plan.status = '进行中'
+    } else {
+      plan.status = '已生成'
+    }
     return plan
   })
 }

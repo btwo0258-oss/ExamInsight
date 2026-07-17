@@ -1,45 +1,23 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { generateMindMapFromAi } from '@/api/mindmap'
-import type { CodeLanguageKey, Exercise, LearningPlan, LearningResource, TrainingSet, WrongQuestion } from '@/mock'
+import type { CodeLanguageKey, Exercise, LearningPlan, WrongQuestion } from '@/mock'
 import { useLibraryResourceStore } from '@/stores/libraryResource'
 import { learningRepository } from '@/repositories/learning'
 import {
   createMockQuestionBatch,
+  createMockLearningMindMap,
+  createMockLearningResourceContent,
   evaluateMockExerciseAnswer,
 } from '@/mock/generators/learning'
 import type {
+  CreateLearningDraftInput,
+  CreateLearningPlanInput,
   LearningConfirmationRequest,
   LearningProfileRequest,
   LearningProfileResult,
 } from '@/types/contracts/learning'
+import type { AsyncJob } from '@/types/contracts/common'
 import { isApiDataSource } from '@/config/dataSource'
-
-export type CreateLearningPlanInput = {
-  prompt: string
-  libraryId: number
-  projectId: number | null
-  targetType: string
-  preferences: string[]
-  resourceGroups: LearningResource['group'][]
-  period: string
-  foundation: string
-  weakPoints: string
-  dailyTime: string
-  studyDepth: string
-  questionCount: number
-  supplementalRequirement: string
-  draftPlanId?: number | null
-  libraryName?: string
-}
-
-export type CreateLearningDraftInput = {
-  title: string
-  libraryId: number | null
-  libraryName?: string
-  icon?: string
-  iconColor?: string
-}
 
 export type UpdateLearningPlanInput = {
   targetType: string
@@ -71,36 +49,108 @@ type DifficultyStrategy = NonNullable<LearningPlan['questionBank']>['difficultyS
 
 export const evaluateExerciseAnswer = evaluateMockExerciseAnswer
 
-function buildMindMapSourceContent(plan: LearningPlan, resource: LearningResource) {
-  const profile = plan.profile.map((item) => `${item.label}: ${item.value}`).join('\n')
-  const stages = plan.stages
-    .map((stage) => {
-      const tasks = stage.tasks.map((task) => `- ${task.type}: ${task.title}`).join('\n')
-      return `## ${stage.title}\n${stage.desc}\n${tasks}`
-    })
-    .join('\n\n')
-  const knowledge = plan.dashboard.map((item) => item.label).join('、')
-
-  return [
-    `学习项目: ${plan.title}`,
-    `目标: ${plan.goal}`,
-    `资源: ${resource.title}`,
-    `重点知识: ${knowledge || '未设置'}`,
-    '',
-    '学习画像:',
-    profile,
-    '',
-    '阶段安排:',
-    stages,
-  ].join('\n')
-}
-
 export const useLearningStore = defineStore('learning', () => {
   const plans = ref<LearningPlan[]>(learningRepository.initialPlans())
   const generatingResourceIds = ref<number[]>([])
   const isLoading = ref(false)
   const errorMessage = ref<string | null>(null)
   const libraryResourceStore = useLibraryResourceStore()
+  const pendingReadingActivities = new Map<string, Omit<Parameters<typeof learningRepository.recordActivity>[0], 'clientRequestId'>>()
+  const readingFlushTimers = new Map<string, number>()
+  const READING_FLUSH_INTERVAL_MS = 10_000
+  const ACTIVE_PLAN_JOB_STORAGE_KEY = 'examinsight.learning.active-plan-job.v1'
+
+  type ActivePlanGeneration = {
+    jobId: string
+    draftPlanId: number | null
+    sourceResourceIds: string[]
+    knowledgeBaseId: number | null
+    startedAt: number
+  }
+
+  function readActivePlanGeneration(): ActivePlanGeneration | null {
+    try {
+      const raw = sessionStorage.getItem(ACTIVE_PLAN_JOB_STORAGE_KEY)
+      return raw ? JSON.parse(raw) as ActivePlanGeneration : null
+    } catch {
+      sessionStorage.removeItem(ACTIVE_PLAN_JOB_STORAGE_KEY)
+      return null
+    }
+  }
+
+  const activePlanGeneration = ref<ActivePlanGeneration | null>(readActivePlanGeneration())
+
+  function setActivePlanGeneration(value: ActivePlanGeneration | null) {
+    activePlanGeneration.value = value
+    if (value) sessionStorage.setItem(ACTIVE_PLAN_JOB_STORAGE_KEY, JSON.stringify(value))
+    else sessionStorage.removeItem(ACTIVE_PLAN_JOB_STORAGE_KEY)
+  }
+
+  async function waitForGenerationJob<T>(
+    initialJob: AsyncJob<T>,
+    fallbackMessage: string,
+  ): Promise<AsyncJob<T> & { result: T }> {
+    let job = initialJob
+    for (let attempt = 0; ['pending', 'running'].includes(job.status) && attempt < 120; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1000))
+      job = await learningRepository.getGenerationJob<T>(job.jobId)
+    }
+    if (job.status !== 'succeeded' || !job.result) {
+      throw new Error(job.errorMessage || (['pending', 'running'].includes(job.status) ? '生成任务仍在处理中，请稍后重试' : fallbackMessage))
+    }
+    return job as AsyncJob<T> & { result: T }
+  }
+
+  type ApiExerciseDraft = { answer: string; language?: CodeLanguageKey }
+
+  function exerciseDraftStorageKey(projectId: number) {
+    return `examinsight.learning.answer-drafts.v1.${projectId}`
+  }
+
+  function readExerciseDrafts(projectId: number) {
+    if (!isApiDataSource) return {} as Record<string, ApiExerciseDraft>
+    try {
+      const raw = sessionStorage.getItem(exerciseDraftStorageKey(projectId))
+      return raw ? JSON.parse(raw) as Record<string, ApiExerciseDraft> : {}
+    } catch {
+      sessionStorage.removeItem(exerciseDraftStorageKey(projectId))
+      return {} as Record<string, ApiExerciseDraft>
+    }
+  }
+
+  function writeExerciseDraft(planId: number, exercise: Exercise) {
+    if (!isApiDataSource) return
+    const drafts = readExerciseDrafts(planId)
+    drafts[String(exercise.id)] = {
+      answer: exercise.draftAnswer ?? '',
+      language: exercise.selectedLanguage,
+    }
+    sessionStorage.setItem(exerciseDraftStorageKey(planId), JSON.stringify(drafts))
+  }
+
+  function clearExerciseDrafts(planId: number, exerciseIds: number[]) {
+    if (!isApiDataSource) return
+    const drafts = readExerciseDrafts(planId)
+    exerciseIds.forEach((id) => delete drafts[String(id)])
+    if (Object.keys(drafts).length) sessionStorage.setItem(exerciseDraftStorageKey(planId), JSON.stringify(drafts))
+    else sessionStorage.removeItem(exerciseDraftStorageKey(planId))
+  }
+
+  function restoreExerciseDrafts(plan: LearningPlan) {
+    const drafts = readExerciseDrafts(plan.id)
+    plan.exercises.forEach((exercise) => {
+      if (exercise.submitted) return
+      const draft = drafts[String(exercise.id)]
+      if (!draft) return
+      exercise.draftAnswer = draft.answer
+      if (exercise.type === '代码题' && draft.language) {
+        exercise.selectedLanguage = draft.language
+        exercise.codeDrafts ??= {}
+        exercise.codeDrafts[draft.language] = draft.answer
+      }
+    })
+    return plan
+  }
 
   const projectCount = computed(() => plans.value.length)
 
@@ -113,17 +163,72 @@ export const useLearningStore = defineStore('learning', () => {
   }
 
   function replacePlanFromServer(plan: LearningPlan) {
+    restoreExerciseDrafts(plan)
     const index = plans.value.findIndex((item) => item.id === plan.id)
     if (index >= 0) plans.value.splice(index, 1, plan)
     else plans.value.unshift(plan)
   }
 
-  function syncLearningActivity(input: Omit<Parameters<typeof learningRepository.recordActivity>[0], 'clientRequestId'>) {
+  function activityKey(projectId: number, taskId: number) {
+    return `${projectId}:${taskId}`
+  }
+
+  async function sendLearningActivity(
+    input: Omit<Parameters<typeof learningRepository.recordActivity>[0], 'clientRequestId'>,
+    applyServerPlan = true,
+    rollbackPlan?: LearningPlan,
+  ) {
     if (!isApiDataSource) return
-    void learningRepository.recordActivity({
-      ...input,
-      clientRequestId: crypto.randomUUID(),
-    }).then(replacePlanFromServer)
+    try {
+      const updated = await learningRepository.recordActivity({
+        ...input,
+        clientRequestId: crypto.randomUUID(),
+      })
+      if (applyServerPlan) replacePlanFromServer(updated)
+    } catch (error) {
+      if (rollbackPlan) replacePlanFromServer(rollbackPlan)
+      errorMessage.value = error instanceof Error ? `学习进度同步失败：${error.message}` : '学习进度同步失败'
+    }
+  }
+
+  function syncLearningActivity(
+    input: Omit<Parameters<typeof learningRepository.recordActivity>[0], 'clientRequestId'>,
+    rollbackPlan?: LearningPlan,
+  ) {
+    void sendLearningActivity(input, true, rollbackPlan)
+  }
+
+  async function flushLearningActivities(projectId?: number, taskId?: number) {
+    const keys = [...pendingReadingActivities.keys()].filter((key) => {
+      if (projectId === undefined) return true
+      if (!key.startsWith(`${projectId}:`)) return false
+      return taskId === undefined || key === activityKey(projectId, taskId)
+    })
+    await Promise.all(keys.map(async (key) => {
+      const pending = pendingReadingActivities.get(key)
+      pendingReadingActivities.delete(key)
+      const timer = readingFlushTimers.get(key)
+      if (timer !== undefined) window.clearTimeout(timer)
+      readingFlushTimers.delete(key)
+      if (pending) await sendLearningActivity(pending, false)
+    }))
+  }
+
+  function queueReadingActivity(projectId: number, taskId: number, progress: number, secondsDelta: number) {
+    if (!isApiDataSource) return
+    const key = activityKey(projectId, taskId)
+    const existing = pendingReadingActivities.get(key)
+    pendingReadingActivities.set(key, {
+      projectId,
+      taskId,
+      eventType: 'reading',
+      progress: Math.max(existing?.progress ?? 0, progress),
+      secondsDelta: (existing?.secondsDelta ?? 0) + secondsDelta,
+    })
+    if (readingFlushTimers.has(key)) return
+    readingFlushTimers.set(key, window.setTimeout(() => {
+      void flushLearningActivities(projectId, taskId)
+    }, READING_FLUSH_INTERVAL_MS))
   }
 
   async function fetchPlans() {
@@ -131,7 +236,7 @@ export const useLearningStore = defineStore('learning', () => {
     isLoading.value = true
     errorMessage.value = null
     try {
-      plans.value = await learningRepository.listPlans()
+      plans.value = (await learningRepository.listPlans()).map(restoreExerciseDrafts)
       return plans.value
     } catch (error) {
       errorMessage.value = error instanceof Error ? error.message : '获取学习项目失败'
@@ -145,7 +250,7 @@ export const useLearningStore = defineStore('learning', () => {
     isLoading.value = true
     errorMessage.value = null
     try {
-      const plan = await learningRepository.getPlan(id)
+      const plan = restoreExerciseDrafts(await learningRepository.getPlan(id))
       replacePlanFromServer(plan)
       return plan
     } catch (error) {
@@ -161,56 +266,114 @@ export const useLearningStore = defineStore('learning', () => {
   }
 
   async function generateLearningProfile(input: LearningProfileRequest): Promise<LearningProfileResult> {
-    let job = await learningRepository.startProfileGeneration(input)
-    for (let attempt = 0; ['pending', 'running'].includes(job.status) && attempt < 120; attempt += 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, 1000))
-      job = await learningRepository.getGenerationJob<LearningProfileResult>(job.jobId)
-    }
-    if (job.status !== 'succeeded' || !job.result) {
-      throw new Error(job.errorMessage || '学习画像生成失败')
-    }
+    const job = await waitForGenerationJob(await learningRepository.startProfileGeneration(input), '学习画像生成失败')
     return job.result
   }
 
-  function generateLearningConfirmation(input: LearningConfirmationRequest) {
-    return learningRepository.generateConfirmation(input)
+  async function generateLearningConfirmation(input: LearningConfirmationRequest) {
+    const result = await learningRepository.generateConfirmation(input)
+    if (isApiDataSource) return result
+    const archived = libraryResourceStore.addGeneratedFile({
+      resourceId: input.confirmationResourceId ?? undefined,
+      externalKey: `learning-confirmation:${input.projectId ?? input.setupId}`,
+      name: `${input.profile.subject || '智能学习'}-方案确认稿.md`,
+      format: 'Markdown',
+      fileType: 'document',
+      origin: 'learning',
+      projectId: input.projectId ?? null,
+      knowledgeBaseId: input.knowledgeBaseId,
+    })
+    return { content: result.content, resourceId: archived.resourceId }
   }
 
-  function renamePlan(id: number, title: string) {
+  async function renamePlan(id: number, title: string) {
     const plan = getPlan(id)
     if (!plan || !title.trim()) return false
+    if (isApiDataSource) {
+      replacePlanFromServer(await learningRepository.updatePlan(id, { title: title.trim() }))
+      return true
+    }
     plan.title = title.trim()
     plan.updatedAt = '刚刚'
     persist()
     return true
   }
 
-  async function createPlan(input: CreateLearningPlanInput) {
-    let job = await learningRepository.startPlanGeneration(input)
-    for (let attempt = 0; ['pending', 'running'].includes(job.status) && attempt < 120; attempt += 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, 1000))
-      job = await learningRepository.getGenerationJob<{ projectId: number }>(job.jobId)
+  async function removePlan(id: number) {
+    await learningRepository.removePlan(id)
+    plans.value = plans.value.filter((plan) => plan.id !== id)
+    libraryResourceStore.detachProject(id)
+    sessionStorage.removeItem(exerciseDraftStorageKey(id))
+    persist()
+  }
+
+  function archiveMockPlanResources(plan: LearningPlan) {
+    if (isApiDataSource) return
+    plan.resources.filter((resource) => resource.status !== '未选择').forEach((resource) => {
+      libraryResourceStore.addGeneratedResource(resource, plan.id, plan.id, plan.knowledgeBaseId)
+    })
+  }
+
+  async function finishPlanGeneration(
+    job: AsyncJob<{ projectId: number }>,
+    draftPlanId: number | null,
+    sourceResourceIds: string[] = [],
+    knowledgeBaseId: number | null = null,
+  ) {
+    let completed: AsyncJob<{ projectId: number }> & { result: { projectId: number } }
+    try {
+      completed = await waitForGenerationJob(job, '学习方案生成失败')
+    } catch (error) {
+      try {
+        const latest = await learningRepository.getGenerationJob<{ projectId: number }>(job.jobId)
+        if (['failed', 'cancelled'].includes(latest.status)) setActivePlanGeneration(null)
+      } catch {
+        // Keep the job id for a later resume when the status endpoint is temporarily unavailable.
+      }
+      throw error
     }
-    if (job.status !== 'succeeded' || !job.result) {
-      throw new Error(job.errorMessage || '学习方案生成失败')
-    }
-    const plan = await learningRepository.getPlan(job.result.projectId)
-    const draftIndex = plans.value.findIndex((item) => item.id === input.draftPlanId)
+    const plan = await learningRepository.getPlan(completed.result.projectId)
+    const draftIndex = plans.value.findIndex((item) => item.id === draftPlanId)
     if (draftIndex >= 0) plans.value.splice(draftIndex, 1, plan)
-    else plans.value.unshift(plan)
-    if (!isApiDataSource) {
-      plan.resources.forEach((resource) => {
-        libraryResourceStore.addGeneratedResource(
-          resource,
-          '智能学习生成',
-          plan.id,
-          input.projectId,
-          plan.libraryId,
-        )
-      })
+    else replacePlanFromServer(plan)
+    archiveMockPlanResources(plan)
+    if (!isApiDataSource && sourceResourceIds.length) {
+      await Promise.all(sourceResourceIds.map((resourceId) =>
+        libraryResourceStore.updateAssociations(resourceId, { projectId: plan.id, knowledgeBaseId }),
+      ))
     }
+    setActivePlanGeneration(null)
     persist()
     return plan
+  }
+
+  async function createPlan(input: CreateLearningPlanInput) {
+    const job = await learningRepository.startPlanGeneration(input)
+    setActivePlanGeneration({
+      jobId: job.jobId,
+      draftPlanId: input.draftPlanId ?? null,
+      sourceResourceIds: input.sourceResourceIds ?? [],
+      knowledgeBaseId: input.knowledgeBaseId,
+      startedAt: Date.now(),
+    })
+    return finishPlanGeneration(
+      job,
+      input.draftPlanId ?? null,
+      input.sourceResourceIds ?? [],
+      input.knowledgeBaseId,
+    )
+  }
+
+  async function resumePlanGeneration(draftPlanId?: number | null) {
+    const active = activePlanGeneration.value
+    if (!active || (draftPlanId !== undefined && active.draftPlanId !== draftPlanId)) return null
+    const job = await learningRepository.getGenerationJob<{ projectId: number }>(active.jobId)
+    return finishPlanGeneration(
+      job,
+      active.draftPlanId,
+      active.sourceResourceIds ?? [],
+      active.knowledgeBaseId ?? null,
+    )
   }
 
   async function createDraftPlan(input: CreateLearningDraftInput) {
@@ -246,9 +409,14 @@ export const useLearningStore = defineStore('learning', () => {
     })
   }
 
-  function updatePlanConfig(planId: number, input: UpdateLearningPlanInput) {
+  async function updatePlanConfig(planId: number, input: UpdateLearningPlanInput) {
     const plan = getPlan(planId)
     if (!plan) return false
+
+    if (isApiDataSource) {
+      replacePlanFromServer(await learningRepository.updatePlan(planId, input))
+      return true
+    }
 
     plan.targetType = input.targetType
     plan.period = input.period
@@ -289,21 +457,21 @@ export const useLearningStore = defineStore('learning', () => {
     )
     plan.totalTasks = plan.stages.reduce((total, stage) => total + stage.tasks.length, 0)
     plan.progress = plan.totalTasks ? Math.round((plan.taskDone / plan.totalTasks) * 100) : 0
-    plan.status = plan.progress === 100 ? '已完成' : '进行中'
+    const hasStarted = plan.stages.some((stage) => stage.tasks.some((task) =>
+      task.done
+      || task.status === '进行中'
+      || task.status === '需复习'
+      || (task.readProgress ?? 0) > 0
+      || (task.completedActions?.length ?? 0) > 0,
+    )) || plan.exercises.some((exercise) => exercise.submitted)
+    if (!plan.totalTasks && ['待开启', '待完善'].includes(plan.status)) {
+      // Setup drafts do not become active projects until generation succeeds.
+    } else if (plan.progress === 100 && plan.totalTasks > 0) {
+      plan.status = '已完成'
+    } else {
+      plan.status = hasStarted ? '进行中' : '已生成'
+    }
     plan.updatedAt = '刚刚'
-  }
-
-  function markTaskDone(planId: number, taskId: number, done: boolean) {
-    const plan = getPlan(planId)
-    const task = plan?.stages.flatMap((stage) => stage.tasks).find((item) => item.id === taskId)
-    if (!plan || !task) return
-
-    task.done = done
-    task.status = done ? '已完成' : '进行中'
-    task.completionSource = done ? '手动标记完成' : undefined
-    updateProgress(plan)
-    persist()
-    syncLearningActivity({ projectId: planId, taskId, eventType: 'complete', action: done ? 'complete' : 'reopen' })
   }
 
   function getTask(plan: LearningPlan, taskId: number) {
@@ -312,7 +480,7 @@ export const useLearningStore = defineStore('learning', () => {
 
   function evaluateTaskCompletion(plan: LearningPlan, taskId: number) {
     const task = getTask(plan, taskId)
-    if (!task || task.done) return Boolean(task?.done)
+    if (!task || task.status === '已锁定' || task.done) return Boolean(task?.done)
 
     const exercises = (task.exerciseIds ?? [])
       .map((id) => plan.exercises.find((exercise) => exercise.id === id))
@@ -341,35 +509,41 @@ export const useLearningStore = defineStore('learning', () => {
   function startTask(planId: number, taskId: number) {
     const plan = getPlan(planId)
     const task = plan && getTask(plan, taskId)
-    if (!plan || !task || task.done || task.status === '进行中') return
+    if (!plan || !task || task.done || task.status === '进行中' || task.status === '已锁定') return
+    const rollbackPlan = isApiDataSource ? structuredClone(plan) : undefined
     task.status = '进行中'
+    plan.status = '进行中'
     plan.updatedAt = '刚刚'
     persist()
-    syncLearningActivity({ projectId: planId, taskId, eventType: 'start' })
+    syncLearningActivity({ projectId: planId, taskId, eventType: 'start' }, rollbackPlan)
   }
 
   function recordTaskReading(planId: number, taskId: number, progress: number, secondsDelta = 0) {
     const plan = getPlan(planId)
     const task = plan && getTask(plan, taskId)
-    if (!plan || !task || task.done) return false
+    if (!plan || !task || task.done || task.status === '已锁定') return false
     task.status = '进行中'
+    plan.status = '进行中'
     task.readProgress = Math.max(task.readProgress ?? 0, Math.min(100, Math.round(progress)))
     task.validStudySeconds = (task.validStudySeconds ?? 0) + Math.max(0, secondsDelta)
     const completed = evaluateTaskCompletion(plan, taskId)
     persist()
-    syncLearningActivity({ projectId: planId, taskId, eventType: 'reading', progress, secondsDelta })
+    queueReadingActivity(planId, taskId, progress, secondsDelta)
+    if (completed) void flushLearningActivities(planId, taskId)
     return completed
   }
 
   function completeTaskAction(planId: number, taskId: number, action: 'run-case') {
     const plan = getPlan(planId)
     const task = plan && getTask(plan, taskId)
-    if (!plan || !task || task.done) return false
+    if (!plan || !task || task.done || task.status === '已锁定') return false
+    const rollbackPlan = isApiDataSource ? structuredClone(plan) : undefined
     task.status = '进行中'
+    plan.status = '进行中'
     task.completedActions = Array.from(new Set([...(task.completedActions ?? []), action]))
     const completed = evaluateTaskCompletion(plan, taskId)
     persist()
-    syncLearningActivity({ projectId: planId, taskId, eventType: 'action', action })
+    syncLearningActivity({ projectId: planId, taskId, eventType: 'action', action }, rollbackPlan)
     return completed
   }
 
@@ -384,6 +558,7 @@ export const useLearningStore = defineStore('learning', () => {
     }
     plan.updatedAt = '刚刚'
     persist()
+    writeExerciseDraft(planId, exercise)
   }
 
   function selectExerciseLanguage(planId: number, exerciseId: number, language: CodeLanguageKey, allowSubmitted = false) {
@@ -398,59 +573,8 @@ export const useLearningStore = defineStore('learning', () => {
     exercise.draftAnswer = exercise.codeDrafts[language]
     plan.updatedAt = '刚刚'
     persist()
+    writeExerciseDraft(planId, exercise)
     return exercise.draftAnswer ?? ''
-  }
-
-  function createTrainingSet(
-    planId: number,
-    input: { knowledge: string; difficulty: string; questionType: string; count: number },
-  ): TrainingSet | undefined {
-    const plan = getPlan(planId)
-    if (!plan) return
-    const candidates = plan.exercises.filter((exercise) =>
-      (!exercise.scene || exercise.scene === 'practice') &&
-      (input.knowledge === '全部知识点' || exercise.knowledge === input.knowledge) &&
-      (input.difficulty === '全部难度' || exercise.difficulty === input.difficulty) &&
-      (input.questionType === '全部题型' || exercise.type === input.questionType),
-    )
-    const selected = candidates.slice(0, input.count)
-    if (!selected.length) return
-    selected.forEach((exercise) => {
-      exercise.draftAnswer = undefined
-      exercise.userAnswer = undefined
-      exercise.submitted = false
-    })
-    const trainingSets = plan.trainingSets ??= []
-    const set: TrainingSet = {
-      id: Math.max(0, ...trainingSets.map((item) => item.id)) + 1,
-      title: input.knowledge === '全部知识点' ? `${plan.title}专项训练` : `${input.knowledge}专项训练`,
-      exerciseIds: selected.map((exercise) => exercise.id),
-      status: '答题中',
-      source: '专项训练',
-      knowledge: input.knowledge,
-      difficulty: input.difficulty,
-      questionType: input.questionType,
-      createdAt: '刚刚',
-    }
-    trainingSets.unshift(set)
-    persist()
-    return set
-  }
-
-  function startTrainingSet(planId: number, trainingSetId: number) {
-    const plan = getPlan(planId)
-    const set = plan?.trainingSets?.find((item) => item.id === trainingSetId)
-    if (!plan || !set) return false
-    set.status = '答题中'
-    set.exerciseIds.forEach((id) => {
-      const exercise = plan.exercises.find((item) => item.id === id)
-      if (!exercise) return
-      exercise.draftAnswer = undefined
-      exercise.userAnswer = undefined
-      exercise.submitted = false
-    })
-    persist()
-    return true
   }
 
   async function submitExerciseGroup(planId: number, exerciseIds: number[], trainingSetId?: number): Promise<TrainingSetResult | undefined> {
@@ -462,13 +586,16 @@ export const useLearningStore = defineStore('learning', () => {
     if (!exercises.length || exercises.some((exercise) => !exercise.draftAnswer)) return
 
     if (isApiDataSource) {
-      const results = await Promise.all(exercises.map((exercise) => learningRepository.submitAnswer({
+      const results = await learningRepository.submitAnswers({
         projectId: planId,
-        exerciseId: exercise.id,
-        answer: exercise.draftAnswer!,
-        language: exercise.selectedLanguage,
+        answers: exercises.map((exercise) => ({
+          exerciseId: exercise.id,
+          answer: exercise.draftAnswer!,
+          language: exercise.selectedLanguage,
+        })),
         clientRequestId: crypto.randomUUID(),
-      })))
+      })
+      clearExerciseDrafts(planId, exercises.map((exercise) => exercise.id))
       replacePlanFromServer(await learningRepository.getPlan(planId))
       const correctCount = results.filter((result) => result.correct).length
       return {
@@ -495,49 +622,6 @@ export const useLearningStore = defineStore('learning', () => {
     }
   }
 
-  function generateReinforcementSet(planId: number, sourceExerciseIds: number[]): TrainingSet | undefined {
-    const plan = getPlan(planId)
-    if (!plan || !sourceExerciseIds.length) return
-    let nextExerciseId = Math.max(0, ...plan.exercises.map((item) => item.id)) + 1
-    const generated = sourceExerciseIds.flatMap((id) => {
-      const source = plan.exercises.find((exercise) => exercise.id === id)
-      if (!source) return []
-      return [1, 2].map((sequence) => ({
-        ...source,
-        options: [...source.options],
-        id: nextExerciseId++,
-        title: `巩固题 ${sequence}：${source.title}`,
-        scene: 'practice' as const,
-        sourceExerciseId: source.id,
-        draftAnswer: undefined,
-        userAnswer: undefined,
-        submitted: false,
-        gradingCorrect: undefined,
-        gradingScore: undefined,
-        gradingFeedback: undefined,
-        codeDrafts: source.type === '代码题' ? {} : source.codeDrafts,
-      }))
-    })
-    if (!generated.length) return
-    plan.exercises.push(...generated)
-    plan.totalExercises = plan.exercises.filter((exercise) => !exercise.scene || exercise.scene === 'practice').length
-    const trainingSets = plan.trainingSets ??= []
-    const set: TrainingSet = {
-      id: Math.max(0, ...trainingSets.map((item) => item.id)) + 1,
-      title: `错题巩固练习 · ${generated.length} 题`,
-      exerciseIds: generated.map((exercise) => exercise.id),
-      status: '待练习',
-      source: '错题巩固',
-      knowledge: '错题关联知识点',
-      difficulty: '自适应',
-      questionType: '混合题型',
-      createdAt: '刚刚',
-    }
-    trainingSets.unshift(set)
-    persist()
-    return set
-  }
-
   async function createAdaptivePracticeTask(
     planId: number,
     sourceTaskId: number,
@@ -548,12 +632,10 @@ export const useLearningStore = defineStore('learning', () => {
     const sourceTask = stage?.tasks.find((task) => task.id === sourceTaskId)
     if (!plan || !stage || !sourceTask) return
     if (isApiDataSource) {
-      let job = await learningRepository.startAdaptivePracticeGeneration(planId, sourceTaskId, input)
-      for (let attempt = 0; ['pending', 'running'].includes(job.status) && attempt < 120; attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 1000))
-        job = await learningRepository.getGenerationJob<{ projectId: number }>(job.jobId)
-      }
-      if (job.status !== 'succeeded') throw new Error(job.errorMessage || '自适应练习生成失败')
+      await waitForGenerationJob(
+        await learningRepository.startAdaptivePracticeGeneration(planId, sourceTaskId, input),
+        '自适应练习生成失败',
+      )
       const updated = await learningRepository.getPlan(planId)
       replacePlanFromServer(updated)
       const updatedStage = updated.stages.find((item) => item.tasks.some((task) => task.id === sourceTaskId))
@@ -659,6 +741,7 @@ export const useLearningStore = defineStore('learning', () => {
         language: exercise.selectedLanguage,
         clientRequestId: crypto.randomUUID(),
       })
+      clearExerciseDrafts(planId, [exerciseId])
       replacePlanFromServer(await learningRepository.getPlan(planId))
       return result
     }
@@ -737,6 +820,7 @@ export const useLearningStore = defineStore('learning', () => {
         language: exercise.selectedLanguage,
         clientRequestId: crypto.randomUUID(),
       })
+      clearExerciseDrafts(planId, [exercise.id])
       replacePlanFromServer(await learningRepository.getPlan(planId))
       return result
     }
@@ -765,12 +849,10 @@ export const useLearningStore = defineStore('learning', () => {
   ) {
     const plan = getPlan(planId)
     if (isApiDataSource) {
-      let job = await learningRepository.startWrongReviewGeneration(planId, wrongIds, input)
-      for (let attempt = 0; ['pending', 'running'].includes(job.status) && attempt < 120; attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 1000))
-        job = await learningRepository.getGenerationJob<{ projectId: number }>(job.jobId)
-      }
-      if (job.status !== 'succeeded') throw new Error(job.errorMessage || '错题巩固生成失败')
+      await waitForGenerationJob(
+        await learningRepository.startWrongReviewGeneration(planId, wrongIds, input),
+        '错题巩固生成失败',
+      )
       const updated = await learningRepository.getPlan(planId)
       replacePlanFromServer(updated)
       return updated.wrongReviewSets?.[0]
@@ -848,13 +930,16 @@ export const useLearningStore = defineStore('learning', () => {
       .filter((item): item is Exercise => Boolean(item)) ?? []
     if (!plan || !set || !exercises.length || exercises.some((item) => !item.draftAnswer)) return
     if (isApiDataSource) {
-      const results = await Promise.all(exercises.map((item) => learningRepository.submitAnswer({
+      const results = await learningRepository.submitAnswers({
         projectId: planId,
-        exerciseId: item.id,
-        answer: item.draftAnswer!,
-        language: item.selectedLanguage,
+        answers: exercises.map((item) => ({
+          exerciseId: item.id,
+          answer: item.draftAnswer!,
+          language: item.selectedLanguage,
+        })),
         clientRequestId: crypto.randomUUID(),
-      })))
+      })
+      clearExerciseDrafts(planId, exercises.map((exercise) => exercise.id))
       replacePlanFromServer(await learningRepository.getPlan(planId))
       const correctCount = results.filter((item) => item.correct).length
       return {
@@ -899,93 +984,80 @@ export const useLearningStore = defineStore('learning', () => {
     return { total: exercises.length, correctCount, wrongCount: exercises.length - correctCount, correctRate, wrongExerciseIds }
   }
 
-  function generateSimilarExercise(planId: number, exerciseId: number): Exercise | undefined {
+  async function generateResource(planId: number, learningResourceId: number) {
     const plan = getPlan(planId)
-    const source = plan?.exercises.find((item) => item.id === exerciseId)
-    if (!plan || !source) return
-
-    const exercise = structuredClone(source)
-    exercise.id = Math.max(0, ...plan.exercises.map((item) => item.id)) + 1
-    exercise.title = `同类题：${source.title}`
-    exercise.userAnswer = undefined
-    exercise.draftAnswer = undefined
-    exercise.submitted = false
-    exercise.gradingCorrect = undefined
-    exercise.gradingScore = undefined
-    exercise.gradingFeedback = undefined
-    if (exercise.type === '代码题') exercise.codeDrafts = {}
-    plan.exercises.push(exercise)
-    plan.totalExercises = plan.exercises.length
-    plan.updatedAt = '刚刚'
-    persist()
-    return exercise
-  }
-
-  async function generateResource(planId: number, resourceId: number) {
-    const plan = getPlan(planId)
-    const resource = plan?.resources.find((item) => item.id === resourceId)
-    if (!plan || !resource || generatingResourceIds.value.includes(resourceId)) return
+    const resource = plan?.resources.find((item) => item.id === learningResourceId)
+    if (!plan || !resource || generatingResourceIds.value.includes(learningResourceId)) return
 
     if (isApiDataSource) {
-      generatingResourceIds.value.push(resourceId)
+      generatingResourceIds.value.push(learningResourceId)
+      resource.status = '生成中'
+      resource.errorMessage = undefined
       try {
-        let job = await learningRepository.startResourceGeneration(planId, resourceId)
-        for (let attempt = 0; ['pending', 'running'].includes(job.status) && attempt < 120; attempt += 1) {
-          await new Promise((resolve) => window.setTimeout(resolve, 1000))
-          job = await learningRepository.getGenerationJob<{ projectId: number }>(job.jobId)
-        }
-        if (job.status !== 'succeeded') throw new Error(job.errorMessage || '学习资源生成失败')
+        await waitForGenerationJob(
+          await learningRepository.startResourceGeneration(planId, learningResourceId),
+          '学习资源生成失败',
+        )
         replacePlanFromServer(await learningRepository.getPlan(planId))
+      } catch (error) {
+        resource.status = '生成失败'
+        resource.errorMessage = error instanceof Error ? error.message : '学习资源生成失败'
+        throw error
       } finally {
-        generatingResourceIds.value = generatingResourceIds.value.filter((id) => id !== resourceId)
+        generatingResourceIds.value = generatingResourceIds.value.filter((id) => id !== learningResourceId)
       }
       return
     }
 
-    generatingResourceIds.value.push(resourceId)
+    generatingResourceIds.value.push(learningResourceId)
     resource.status = '生成中'
     libraryResourceStore.addGeneratedResource(
       resource,
-      '智能学习生成',
       plan.id,
-      plan.relatedProjectId ?? null,
-      plan.libraryId,
+      plan.id,
+      plan.knowledgeBaseId,
     )
     persist()
     try {
       if (resource.group === '思维导图') {
-        const result = await generateMindMapFromAi(buildMindMapSourceContent(plan, resource), resource.title)
+        await new Promise((resolve) => window.setTimeout(resolve, 650))
+        const result = createMockLearningMindMap(plan, resource)
         resource.mindMapId = result.id
         resource.mindMapTreeData = result.treeData
       } else {
         await new Promise((resolve) => window.setTimeout(resolve, 900))
+        resource.content = createMockLearningResourceContent(plan, resource)
       }
       resource.status = '已生成'
       resource.action = '查看'
       libraryResourceStore.addGeneratedResource(
         resource,
-        '智能学习生成',
         plan.id,
-        plan.relatedProjectId ?? null,
-        plan.libraryId,
+        plan.id,
+        plan.knowledgeBaseId,
       )
       plan.updatedAt = '刚刚'
+    } catch (error) {
+      resource.status = '生成失败'
+      resource.errorMessage = error instanceof Error ? error.message : '学习资源生成失败'
+      libraryResourceStore.addGeneratedResource(resource, plan.id, plan.id, plan.knowledgeBaseId)
+      throw error
     } finally {
-      generatingResourceIds.value = generatingResourceIds.value.filter((id) => id !== resourceId)
+      generatingResourceIds.value = generatingResourceIds.value.filter((id) => id !== learningResourceId)
       persist()
     }
   }
 
-  function downloadResource(planId: number, resourceId: number) {
-    return learningRepository.downloadResource(planId, resourceId)
+  function downloadResource(planId: number, learningResourceId: number) {
+    return learningRepository.downloadResource(planId, learningResourceId)
   }
 
-  async function attachPresentationResult(planId: number, resourceId: number, presentationId: string, fileName: string) {
+  async function attachPresentationResult(planId: number, learningResourceId: number, presentationId: string, fileName: string) {
     if (isApiDataSource) {
       return fetchPlan(planId)
     }
     const plan = getPlan(planId)
-    const resource = plan?.resources.find((item) => item.id === resourceId)
+    const resource = plan?.resources.find((item) => item.id === learningResourceId)
     if (!plan || !resource || resource.group !== 'PPT') return
     resource.presentationId = presentationId
     resource.fileName = fileName
@@ -993,19 +1065,20 @@ export const useLearningStore = defineStore('learning', () => {
     resource.action = '查看'
     resource.errorMessage = undefined
     plan.updatedAt = '刚刚'
-    libraryResourceStore.addPresentation(
+    const archived = libraryResourceStore.addPresentation(
       presentationId,
       fileName,
-      '智能学习生成',
-      plan.libraryId,
-      plan.relatedProjectId ?? null,
+      plan.id,
+      plan.knowledgeBaseId,
     )
+    resource.resourceId = archived.resourceId
     persist()
     return plan
   }
 
   return {
     plans,
+    activePlanGeneration,
     isLoading,
     errorMessage,
     projectCount,
@@ -1016,28 +1089,26 @@ export const useLearningStore = defineStore('learning', () => {
     generateLearningConfirmation,
     getPlan,
     renamePlan,
+    removePlan,
     createPlan,
+    resumePlanGeneration,
     createDraftPlan,
     updatePlanConfig,
-    markTaskDone,
     startTask,
     recordTaskReading,
     completeTaskAction,
     saveExerciseDraft,
     selectExerciseLanguage,
-    createTrainingSet,
-    startTrainingSet,
     submitExerciseGroup,
-    generateReinforcementSet,
     createAdaptivePracticeTask,
     submitExercise,
     reviewWrongQuestion,
     createWrongReviewSet,
     startWrongReviewSet,
     submitWrongReviewSet,
-    generateSimilarExercise,
     generateResource,
     downloadResource,
     attachPresentationResult,
+    flushLearningActivities,
   }
 })

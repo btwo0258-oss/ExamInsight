@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import AppSelectMenu from '@/components/common/AppSelectMenu.vue'
 import type { CodeLanguageKey, Exercise } from '@/mock'
 
 type QuestionResult = {
@@ -49,6 +50,10 @@ type CodeRunState = {
 const codeRun = ref<CodeRunState>({ status: 'idle', title: '', message: '' })
 const multiAnswers = computed(() => props.modelValue ? props.modelValue.split('||') : [])
 const codeLanguage = computed(() => props.exercise.codeLanguages?.find((item) => item.key === props.exercise.selectedLanguage) ?? props.exercise.codeLanguages?.[0])
+const codeLanguageOptions = computed(() => (props.exercise.codeLanguages ?? []).map((language) => ({
+  value: language.key,
+  label: `${language.label} · ${language.runtime}`,
+})))
 const starterCode = computed(() => codeLanguage.value?.starterCode ?? props.exercise.starterCode ?? '')
 const referenceAnswer = computed(() => codeLanguage.value?.referenceAnswer ?? props.exercise.answer)
 
@@ -104,8 +109,9 @@ function runSampleCode() {
   }
 }
 
-function changeLanguage(event: Event) {
-  emit('updateLanguage', (event.target as HTMLSelectElement).value as CodeLanguageKey)
+function changeLanguage(value: CodeLanguageKey | null) {
+  if (!value) return
+  emit('updateLanguage', value)
 }
 
 watch([() => props.exercise.id, () => props.exercise.selectedLanguage], () => {
@@ -164,9 +170,16 @@ watch([() => props.exercise.id, () => props.exercise.selectedLanguage], () => {
         <div class="code-toolbar">
           <label>
             <span>语言</span>
-            <select :value="exercise.selectedLanguage ?? codeLanguage?.key" :disabled="submitted" @change="changeLanguage">
-              <option v-for="language in exercise.codeLanguages" :key="language.key" :value="language.key">{{ language.label }} · {{ language.runtime }}</option>
-            </select>
+            <AppSelectMenu
+              class="code-language-select"
+              :model-value="exercise.selectedLanguage ?? codeLanguage?.key ?? null"
+              :options="codeLanguageOptions"
+              :disabled="submitted"
+              aria-label="选择代码语言"
+              compact
+              :min-menu-width="190"
+              @update:model-value="changeLanguage"
+            />
           </label>
           <small>运行公开示例不会提交答案</small>
         </div>
@@ -387,17 +400,8 @@ pre {
   font-size: 11px;
 }
 
-.code-toolbar select {
-  height: 32px;
-  max-width: 190px;
-  border: 1px solid var(--color-border);
-  border-radius: 7px;
-  background: var(--color-surface);
-  color: var(--color-text);
-  padding: 0 28px 0 9px;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 700;
+.code-language-select {
+  width: min(190px, 48vw);
 }
 
 .code-answer textarea {

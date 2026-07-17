@@ -1,5 +1,5 @@
 import { libraryResourceRepository } from '@/repositories/libraryResource'
-import type { LibraryResourceDto } from '@/types/contracts/library'
+import type { LibraryResourceDto, ResourceAssociations, ResourceOrigin } from '@/types/contracts/library'
 
 export function getLibraryResources(): LibraryResourceDto[] {
   return libraryResourceRepository.initial()
@@ -9,12 +9,16 @@ export function saveLibraryResources(resources: LibraryResourceDto[]) {
   libraryResourceRepository.saveMock(resources)
 }
 
-export function listLibraryResources(libraryId?: number): Promise<LibraryResourceDto[]> {
-  return libraryResourceRepository.list(libraryId)
+export function listLibraryResources(knowledgeBaseId?: number): Promise<LibraryResourceDto[]> {
+  return libraryResourceRepository.list(knowledgeBaseId)
 }
 
-export function uploadLibraryResource(file: File, libraryId: number | null, projectId?: number | null) {
-  return libraryResourceRepository.upload(file, libraryId, projectId)
+export function uploadLibraryResource(
+  file: File,
+  origin: Extract<ResourceOrigin, 'resource-library' | 'chat' | 'learning'>,
+  associations: ResourceAssociations,
+) {
+  return libraryResourceRepository.upload(file, origin, associations)
 }
 
 export function deleteLibraryResource(id: string) {
@@ -29,8 +33,12 @@ export function renameLibraryResource(id: string, name: string) {
   return libraryResourceRepository.rename(id, name)
 }
 
-export function moveLibraryResource(id: string, libraryId: number | null) {
-  return libraryResourceRepository.move(id, libraryId)
+export function updateLibraryResourceAssociations(resourceId: string, associations: ResourceAssociations) {
+  return libraryResourceRepository.updateAssociations(resourceId, associations)
+}
+
+export function previewLibraryResource(id: string) {
+  return libraryResourceRepository.preview(id)
 }
 
 export function downloadLibraryResource(id: string) {

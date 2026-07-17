@@ -1,5 +1,4 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import KnowledgeBaseView from '@/views/KnowledgeBaseView.vue'
 import { getStoredToken } from '@/api/request'
 import { useAuthStore as useAdminAuthStore } from '@/stores/adminAuth'
 
@@ -11,8 +10,15 @@ const router = createRouter({
     { path: '/chat/:id', name: 'chat-detail', component: () => import('@/views/student/chat/StudentChatView.vue'), props: true },
     { path: '/presentations/new', name: 'presentation-new', component: () => import('@/views/student/presentation/PresentationWorkspaceView.vue') },
     { path: '/presentations/:id', name: 'presentation-detail', component: () => import('@/views/student/presentation/PresentationWorkspaceView.vue'), props: true },
+    {
+      path: '/spreadsheets/new',
+      name: 'spreadsheet-new',
+      redirect: (to) => ({ path: '/chat', query: { ...to.query, intent: 'spreadsheet' } }),
+    },
+    { path: '/spreadsheets/:id', name: 'spreadsheet-detail', component: () => import('@/views/student/spreadsheet/SpreadsheetWorkspaceView.vue'), props: true },
     { path: '/learning', redirect: '/learning/projects' },
-    { path: '/learning/new', name: 'learning-new', component: () => import('@/views/student/learning/LearningHomeView.vue') },
+    { path: '/learning/new', name: 'learning-new', component: () => import('@/views/student/chat/StudentChatView.vue') },
+    { path: '/learning/setup/:id', name: 'learning-setup', component: () => import('@/views/student/chat/StudentChatView.vue'), props: true },
     { path: '/learning/projects', name: 'learning-projects', component: () => import('@/views/student/learning/LearningProjectsView.vue') },
     { path: '/learning/:id', name: 'learning-plan', component: () => import('@/views/student/learning/LearningPlanView.vue'), props: true },
     { path: '/learning/:id/study', name: 'learning-study', component: () => import('@/views/student/learning/LearningStudyView.vue'), props: true },
@@ -21,11 +27,12 @@ const router = createRouter({
     { path: '/learning/:id/resources', name: 'learning-resources', component: () => import('@/views/student/learning/LearningResourcesView.vue'), props: true },
     { path: '/library', name: 'library-home', component: () => import('@/views/student/library/LibraryHomeView.vue') },
     { path: '/library/:id', name: 'library-detail', component: () => import('@/views/student/library/LibraryDetailView.vue'), props: true },
+    { path: '/resources/:resourceId/preview', name: 'resource-preview', component: () => import('@/views/student/resource/ResourcePreviewView.vue'), props: true },
     { path: '/resource', name: 'resource-center', component: () => import('@/views/ResourceCenterView.vue') },
     { path: '/exam-analysis', name: 'exam-analysis-list', component: () => import('@/views/ExamAnalysisListView.vue') },
     { path: '/exam-analysis/:id', name: 'exam-analysis-detail', component: () => import('@/views/ExamAnalysisView.vue'), props: true },
-    { path: '/knowledge', name: 'knowledge', component: KnowledgeBaseView },
-    { path: '/knowledge/:id', name: 'knowledge-detail', component: KnowledgeBaseView, props: true },
+    { path: '/knowledge', redirect: '/library' },
+    { path: '/knowledge/:id', redirect: (to) => `/library/${String(to.params.id)}` },
     { path: '/mindmap', name: 'mindmap-list', component: () => import('@/views/mindmap/MindMapListView.vue') },
     { path: '/mindmap/:id', name: 'mindmap-detail', component: () => import('@/views/mindmap/MindMapView.vue') },
     // Admin routes
@@ -87,6 +94,8 @@ router.beforeEach((to, from, next) => {
     to.path === '/learning' ||
     to.path.startsWith('/learning/') ||
     to.path.startsWith('/presentations/') ||
+    to.path.startsWith('/spreadsheets/') ||
+    to.path.startsWith('/resources/') ||
     to.path === '/library' ||
     to.path.startsWith('/library/')
 

@@ -8,6 +8,7 @@ import { useThemeStore } from '@/stores/theme'
 import { useConversationStore } from '@/stores/conversation'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import { useExamAnalysisStore } from '@/stores/examAnalysis'
+import { isMockDataSource } from '@/config/dataSource'
 
 const authStore = useAuthStore()
 const themeStore = useThemeStore()
@@ -18,12 +19,15 @@ const examAnalysisStore = useExamAnalysisStore()
 onMounted(async () => {
   authStore.init()
   
-  // 如果用户已登录，加载对话、知识库和考试分析数据
-  if (authStore.isAuthed) {
-    await themeStore.syncFromServer()
-    await conversationStore.fetchList()
-    await knowledgeBaseStore.fetchList()
-    await examAnalysisStore.fetchList()
+  if (authStore.isAuthed) await themeStore.syncFromServer()
+
+  // Mock guest data is scoped to the current tab and must also be restored on refresh.
+  if (authStore.isAuthed || isMockDataSource) {
+    await Promise.all([
+      conversationStore.fetchList(),
+      knowledgeBaseStore.fetchList(),
+      examAnalysisStore.fetchList(),
+    ])
   }
 })
 

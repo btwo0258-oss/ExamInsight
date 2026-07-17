@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
 import LearningProjectResourceChips from '@/components/learning/LearningProjectResourceChips.vue'
 import StudentShell from '@/components/layout/StudentShell.vue'
-import { courseLibraries } from '@/mock'
+import { courseKnowledgeBases } from '@/mock'
 import { useLearningStore } from '@/stores/learning'
 
 type ViewMode = 'grid' | 'list'
@@ -30,11 +30,12 @@ const averageCorrectRate = computed(() => learningPlans.value.length
   : 0)
 const completedTaskCount = computed(() => learningPlans.value.reduce((sum, plan) => sum + plan.taskDone, 0))
 
-function libraryName(id: number) {
-  const plan = learningPlans.value.find((item) => item.libraryId === id)
+function knowledgeBaseName(id: number | null) {
+  if (id === null) return '未关联知识库'
+  const plan = learningPlans.value.find((item) => item.knowledgeBaseId === id)
   return plan?.profile.find((item) => item.label === '资料来源')?.value
-    ?? courseLibraries.find((item) => item.id === id)?.name
-    ?? '未选择资料库'
+    ?? courseKnowledgeBases.find((item) => item.id === id)?.name
+    ?? '未关联知识库'
 }
 
 function selectStatus(value: string) {
@@ -54,12 +55,12 @@ function statusIcon(value: string) {
   return iconMap[value] ?? 'list-filter'
 }
 
-function metaText(plan: { period: string; libraryId: number; targetType: string }) {
-  return `${plan.period}｜${libraryName(plan.libraryId)}｜${plan.targetType}`
+function metaText(plan: { period: string; knowledgeBaseId: number | null; targetType: string }) {
+  return `${plan.period}｜${knowledgeBaseName(plan.knowledgeBaseId)}｜${plan.targetType}`
 }
 
 function primaryAction(plan: { id: number; status: string }) {
-  if (plan.status === '待开启' || plan.status === '待完善') router.push(`/chat?learningProjectId=${plan.id}`)
+  if (plan.status === '待开启' || plan.status === '待完善') router.push(`/learning/new?projectId=${plan.id}`)
   else router.push(`/learning/${plan.id}/study`)
 }
 
@@ -128,7 +129,7 @@ onMounted(() => void loadPlans())
               <AppIcon name="list" :size="17" />
             </button>
           </div>
-          <button type="button" @click="router.push('/chat?learning=1')">新建学习</button>
+          <button type="button" @click="router.push('/learning/new')">新建学习</button>
         </div>
       </header>
 
@@ -163,7 +164,7 @@ onMounted(() => void loadPlans())
         <section v-else-if="!filteredPlans.length" class="project-state">
           <strong>{{ keyword || status !== '全部状态' ? '没有匹配的学习项目' : '还没有学习项目' }}</strong>
           <span>{{ keyword || status !== '全部状态' ? '请调整搜索词或状态筛选' : '从新建学习开始制定第一份学习方案' }}</span>
-          <button v-if="!keyword && status === '全部状态'" type="button" @click="router.push('/chat?learning=1')">新建学习</button>
+          <button v-if="!keyword && status === '全部状态'" type="button" @click="router.push('/learning/new')">新建学习</button>
         </section>
 
         <div v-else class="project-list" :class="`project-list--${viewMode}`">

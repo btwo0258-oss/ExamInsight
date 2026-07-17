@@ -1,10 +1,10 @@
 # 学生端前后端零猜测交接契约
 
-> 版本：1.1
+> 版本：1.2
 >
-> 更新日期：2026-07-16
+> 更新日期：2026-07-17
 >
-> 适用范围：新对话、资料库、智能学习、PPT 生成、语音输入、拍照/图片上传及其关联的思维导图、登录与用户设置。
+> 适用范围：新对话、资料库、智能学习、PPT/电子表格生成、语音输入、拍照/图片上传及其关联的思维导图、登录与用户设置。
 >
 > 本文以当前 Spring Boot 后端和当前前端 API Repository 为基线。后端不得参考 Mock Generator 设计正式算法。
 
@@ -43,13 +43,13 @@
 - 学习项目、画像、确认稿、方案、任务、题目、答题、错题和资源生成。
 - 学习助教复用会话与聊天接口。
 - 麦克风/上传音频转文字、拍照/图片上传、图片 OCR/题目识别和聊天多模态引用。
-- PPT 配置、大纲、异步生成、任务恢复、预览、下载和保存到资料库。
+- PPT 配置、大纲、异步生成、任务恢复、预览、下载和自动归档资料库。
+- 电子表格基于对话、附件、知识库和项目上下文直接异步生成、预览、下载并自动归档资料库。
+- 资料库、知识库、学习资源包和对话生成文件的统一只读在线预览。
 
 首期不包含：
 
-- 通用文档在线预览专用接口；PPT 逐页预览按第 19 节实现。
 - 选中多个资料后直接创建聊天上下文。
-- 资料库高级筛选。
 - 视频上传、识别或抽帧。
 
 ## 1. 现有后端复用矩阵
@@ -68,6 +68,7 @@
 | 智能学习 | 不存在 | NEW | 新增项目、任务、题目、答题、错题、资源与生成任务 |
 | 语音、图片与识别任务 | 不存在 | NEW | 新增 media_asset、麦克风/上传音频转写和图片识别任务；聊天只引用媒体资产 ID |
 | PPT 生成 | 不存在 | NEW | 新增 presentation 聚合、异步任务和文件资产；讯飞只作为后端内部 Provider，不向前端暴露 |
+| 电子表格生成 | 不存在 | NEW | 新增对话直达生成任务、只读工作簿预览、XLSX 下载和资料库资源 |
 
 ## 2. 通用协议
 
@@ -200,7 +201,7 @@ type ApiResult<T> = {
 - learning_project.userId。
 - 所有阶段、任务、题目、答案、错题、资源必须通过所属 projectId 反查用户。
 
-前端路由参数、libraryId、projectId、conversationId 均不构成授权。
+前端路由参数、knowledgeBaseId、projectId、conversationId 均不构成授权。
 
 ## 3. 用户与认证
 
@@ -320,7 +321,7 @@ type ConversationDto = {
   totalTokens?: number
   updateTime: string
   createTime: string
-  learningProjectId: number | null
+  projectId: number | null
   learningProjectName?: string | null
   conversationType: ConversationType
 }
@@ -328,7 +329,7 @@ type ConversationDto = {
 type CreateConversationRequest = {
   title?: string
   kbId?: number | null
-  learningProjectId?: number | null
+  projectId?: number | null
   learningProjectName?: string
   conversationType?: ConversationType
 }
@@ -337,7 +338,7 @@ type UpdateConversationRequest = {
   title?: string
   isPinned?: boolean
   knowledgeBaseId?: number | null
-  learningProjectId?: number | null
+  projectId?: number | null
   learningProjectName?: string
   conversationType?: ConversationType
 }
@@ -348,11 +349,13 @@ type UpdateConversationRequest = {
 - 创建请求沿用现有字段 kbId。
 - 更新请求当前前端使用 knowledgeBaseId；后端将其写入 conversation.kb_id。
 - 响应沿用 kbId，前端 Repository 会映射为 knowledgeBaseId。
-- learningProjectName 只用于兼容展示，后端有 learningProjectId 时应从项目表读取权威名称。
+- learningProjectName 只用于兼容展示，后端有 projectId 时应从项目表读取权威名称。
 - title 缺失或空白时后端使用“新对话”，最长 200。
 - conversationType 缺失时默认为 general。
-- learning-setup 和 learning-tutor 必须提供有效 learningProjectId。
-- general 的 learningProjectId 必须为 null。
+- learning-setup 和 learning-tutor 必须提供有效 projectId。
+- general 的 projectId 必须为 null。
+- `/learning/new` 是纯前端初始路由。用户首次提交目标后，前端先创建 draft 项目，再创建 `conversationType=learning-setup` 的会话，并进入 `/learning/setup/:conversationId?projectId=:projectId`。
+- 后端不需要实现 `/learning/setup/*` 页面路由，但必须持久化该会话中的学习画像 Card 和确认文档消息，保证 `GET /api/message/conversation/{conversationId}` 可以恢复方案制定历史。
 
 ### 4.3 接口
 
@@ -366,8 +369,8 @@ type UpdateConversationRequest = {
 
 后端步骤：
 
-1. 校验 kbId 和 learningProjectId 归属。
-2. 校验 conversationType 与 learningProjectId 组合。
+1. 校验 kbId 和 projectId 归属。
+2. 校验 conversationType 与 projectId 组合。
 3. 创建会话，messageCount=0、totalTokens=0、isPinned=false。
 4. 返回 ConversationDto，不返回 userId 和内部 status。
 
@@ -412,10 +415,27 @@ type MessageDto = {
   qVersion: number | null
   aVersion: number | null
   files: string | null
+  kind: "learning-profile" | "learning-document" | "presentation" | "spreadsheet" | null
+  learningData: string | null
+  presentationData: string | null
+  spreadsheetData: string | null
+}
+
+type LearningMessageData = {
+  loading: boolean
+  confirmed?: boolean
+  profile?: LearningProfileData
+  content?: string
+  resourceId?: string | null
 }
 ~~~
 
-sourceChunks 必须是 JSON.stringify(MessageSourceDto[])；files 必须是 JSON.stringify(MessageAttachmentDto[])。这是现有数据库兼容格式，前端会解析。无值时返回 null，不返回非法 JSON。
+sourceChunks 必须是 JSON.stringify(MessageSourceDto[])；files 必须是 JSON.stringify(MessageAttachmentDto[])；学习画像/确认文档、PPT 卡片和电子表格卡片分别使用 learningData、presentationData、spreadsheetData 保存对应 DTO 的 JSON。无值时返回 null，不返回非法 JSON。普通消息 kind 和三个结构化字段均返回 null。
+
+- `kind=learning-profile` 时，learningData 必须包含 `loading=false`、`confirmed` 和完整 profile。
+- `kind=learning-document` 时，learningData 必须包含 `loading=false`、content 和确认稿 resourceId。
+- `loading=true` 只用于前端即时生成占位；后端不得把中断的占位消息伪装成已完成结果。
+- 同一个 setupId 重新生成画像或确认稿时更新该会话内最新的同类 Card，避免刷新后出现重复确认文档。
 
 消息按 createTime ASC、id ASC 返回，只返回 status=1。
 
@@ -462,6 +482,11 @@ type ChatStreamRequest = {
   editMsgId?: number | null
   files?: string
   mediaAssetIds?: string[]
+  projectId?: number | null
+  stageId?: number | string | null
+  taskId?: number | string | null
+  exerciseId?: number | string | null
+  clientAction?: "presentation.create" | "spreadsheet.create"
 }
 ~~~
 
@@ -476,7 +501,11 @@ type ChatStreamRequest = {
 - files 必须是合法 MessageAttachmentDto[] JSON 字符串。
 - mediaAssetIds 只承载第 18 节已上传图片或已转写音频资产 ID；最多 5 个，后端逐个校验所有权、状态和 conversationId 关联。
 - 同一媒体同时出现在 files 元数据和 mediaAssetIds 时，以 mediaAssetIds 作为模型输入，files 只用于消息展示，禁止重复上传、重复识别或重复转写。
-- 学习助教必须通过 conversation.learningProjectId 加载权威项目上下文，不能只信任前端拼接的 tutorContext。
+- 学习助教必须通过 conversation.projectId 加载权威项目上下文，不能只信任前端拼接的 tutorContext。
+- stageId、taskId、exerciseId 只用于声明当前学习页面位置；提供时必须属于 conversation.projectId，任一不匹配返回 409 CONTEXT_MISMATCH。
+- `presentation.create` 和 `spreadsheet.create` 是前端快捷入口的明确动作，不需要后端再次猜测功能类型；后端仍须校验 conversationId、conversation.projectId 和知识库权限。
+- projectId 只用于前端声明当前页面上下文；后端必须与 conversation.projectId 交叉校验，冲突返回 409 CONTEXT_MISMATCH。
+- 未传 clientAction 时，用户自然语言是否要生成 PPT 或电子表格由后端 AI 意图层结合当前问题和会话上下文判断。前端不做正式关键词判断；后端不得照抄 Mock 的正则表达式作为正式意图算法。
 
 ### 5.2 SSE 协议
 
@@ -506,6 +535,36 @@ data: [{"docId":12,"docName":"继承与多态.pdf","chunkIndex":3,"content":"...
 - finish 后立即完成 SSE 响应。
 - 前端当前通过流结束判断完成，并在结束后重新拉取消息，获取 messageId、durationMs 和 sourceChunks。
 
+#### PPT 确认卡事件
+
+快捷动作或后端 AI 判断用户需要创建 PPT 时，在文本增量之后、finish 之前发送一次：
+
+~~~text
+event: presentation-card
+data: {"cardType":"presentation","view":"proposal","status":"draft","conversationId":102,"sourceMessageId":9081,"knowledgeBaseId":1,"projectId":null,"config":{"topic":"Java 多态","title":"Java 多态","pageCount":8,"templateId":"ink-focus","aspectRatio":"16:9","style":"academic","audience":"student","language":"zh-CN"}}
+
+~~~
+
+- data 必须是第 19.3 节 PresentationChatCardDto 的完整 JSON，不得只返回按钮文案或讯飞字段。
+- 同一回答最多发送一个 presentation-card；前端收到后把当前助手消息渲染为确认卡。
+- 后端必须在完成 SSE 前保存该助手消息，kind=presentation，presentationData 为同一份卡片 JSON；sourceMessageId 必须等于该助手消息 id。
+- 仅返回普通文本“请去生成 PPT”不算成功；刷新后 GET messages 必须仍能恢复同一张卡。
+
+#### 电子表格任务卡事件
+
+快捷动作或后端 AI 判断用户明确要求创建电子表格、且生成信息已经充分时，后端立即创建 Spreadsheet 和生成任务，并发送任务卡：
+
+~~~text
+event: spreadsheet-card
+data: {"cardType":"spreadsheet","status":"generating","spreadsheetId":"sheet_01J...","conversationId":102,"sourceMessageId":9082,"knowledgeBaseId":11,"projectId":null,"config":{"topic":"考试成绩统计","title":"考试成绩统计","sheetCount":1,"language":"zh-CN"}}
+
+~~~
+
+- data 必须是第 20.2 节 SpreadsheetChatCardDto 的完整 JSON。
+- 后端在完成 SSE 前保存当前助手消息，固定 `kind=spreadsheet`，`spreadsheetData` 为同一份卡片 JSON；任务完成后必须把同一消息更新为 `ready` 或 `failed`，刷新后可恢复。
+- 生成信息不足时只发送普通追问，不创建 Spreadsheet，不返回空配置卡，也不让前端弹出配置表单。
+- 同一回答只允许一种功能卡；需求不明确时先返回普通追问，不同时创建 PPT 和表格任务。
+
 #### 错误事件
 
 ~~~text
@@ -521,6 +580,7 @@ data: AI 服务暂不可用，请稍后重试
 ### 5.3 持久化与停止
 
 - 正常发送：保存用户消息，AI 完成后保存助手消息。
+- PPT 意图回答：保存普通文本内容和结构化卡片；结构化字段不得拼进 content。
 - 重新生成：保留旧版本，新助手消息递增 aVersion。
 - 编辑问题：创建同 turnId 的新 qVersion，不覆盖原消息。
 - 前端停止使用 AbortController 中断 HTTP。
@@ -572,6 +632,8 @@ type KnowledgeBaseDto = {
 | EXTEND | PUT /api/kb/{id} | { name?, description?, avatar?, color? } | KnowledgeBaseDto |
 | KEEP | DELETE /api/kb/{id} | 无 | null |
 | KEEP | GET /api/kb/by-exam-analysis/{examAnalysisId} | 无 | KnowledgeBaseDto 或 null |
+
+前端知识库选择器中的“无”、知识库列表和“新建知识库”是展示与交互组合，不新增选择器接口。“新建知识库”继续调用 `POST /api/kb/create`，成功后前端使用返回的 `KnowledgeBaseDto.id` 作为当前 `knowledgeBaseId`；取消选择时前端值为 `null`，只有对应业务 DTO 允许 `knowledgeBaseId=null` 时才可提交。
 
 校验：
 
@@ -662,154 +724,121 @@ multipart 字段 file。成功：ApiResult<string>。
 - Content-Disposition 同时提供 filename 和 filename*。
 - /api/doc/download 可以继续 inline；资料库聚合下载必须 attachment。
 
-## 7. 资料库聚合资源
+## 7. 资料库统一资源
 
-### 7.1 复用方式
+### 7.1 权威模型
 
-NEW。该模块不是重新存一份文件，而是统一查询和操作：
+状态：NEW。本节是资料库、知识库和智能学习文件关联的唯一规则。
 
-- document：用户上传文档。
-- mind_map：思维导图。
-- learning_resource：智能学习生成资源。
-- media_asset：图片上传/拍照、音频上传/转写及其识别或索引结果。
-
-公共资源中心 resource、user_resource 不直接混入学生私人资料库列表；用户把公共资源加入知识库时，可以生成 document 或新的资源关联。
-
-### 7.2 DTO 与聚合 ID
+- 资料库是当前用户全部文件的全局入口；上传文件和 AI 生成文件成功创建后都必须出现于资料库。
+- 知识库和学习项目不是第二份文件，只是同一资源的可选关联。
+- `resourceId` 是资料库资源唯一 ID；`knowledgeBaseId` 是可选知识库关联；`projectId` 是可选学习项目关联。
+- 三个字段不得互相代替，不再提供 `libraryId`、`libraryResourceId`、`learningProjectId` 等同义字段。
+- `knowledgeBaseId=null` 且 `projectId=null` 合法，表示文件只进入资料库。
+- 用户在生成或上传时选择知识库、项目后，后端必须在创建资源的同一事务中写入对应关联。
+- 智能学习项目内生成的资源必须写入当前 `projectId` 及该项目的 `knowledgeBaseId`。
+- 重命名、关联或取消关联只更新元数据，不复制物理文件。
 
 ~~~ts
-type LibraryResourceStatus = "waiting" | "processing" | "ready" | "failed"
-type LibraryResourceCategory = "file" | "image" | "mindmap"
-type LibraryResourceSource =
-  | "资料库上传"
-  | "智能学习上传"
-  | "聊天上传"
-  | "智能学习生成"
-  | "聊天生成"
+type ResourceSourceType = "uploaded" | "generated"
+type ResourceOrigin =
+  | "resource-library" | "chat" | "learning"
+  | "presentation" | "spreadsheet" | "mindmap"
+type ResourceFileType =
+  | "image" | "document" | "spreadsheet" | "presentation"
+  | "pdf" | "audio" | "archive" | "mindmap" | "other"
+type ResourceStatus = "waiting" | "processing" | "ready" | "failed"
 
 type LibraryResourceDto = {
-  id: string
+  resourceId: string
   name: string
-  type: string
-  size: string
-  status: LibraryResourceStatus
+  format: string
+  fileType: ResourceFileType
+  mimeType?: string
+  sizeBytes: number
+  status: ResourceStatus
   errorMessage?: string
   updatedAt: string
-  category: LibraryResourceCategory
-  source: LibraryResourceSource
+  sourceType: ResourceSourceType
+  origin: ResourceOrigin
   projectId: number | null
-  libraryId: number | null
+  knowledgeBaseId: number | null
   externalKey?: string
+}
+
+type ResourceAssociations = {
+  projectId: number | null
+  knowledgeBaseId: number | null
 }
 ~~~
 
-id 是不可猜测的聚合路由键：
+字段约束：
 
-- document:123
-- mindmap:45
-- learning-resource:78
-- media:550e8400-e29b-41d4-a716-446655440000
+- `resourceId` 必须稳定且不可猜测。允许使用带业务前缀的 ID，例如 `presentation:{id}`、`spreadsheet:{id}`、`media:{id}`。
+- `externalKey` 仅用于后端聚合去重和排障，前端操作一律使用 `resourceId`。
+- `updatedAt` 返回 ISO 8601；`sizeBytes` 返回原始字节数，展示单位由前端计算。
+- PPT/PPTX 的 `fileType=presentation`，XLS/XLSX/CSV 的 `fileType=spreadsheet`。
+- 上传入口必须提供真实 `origin`。AI 生成服务按自身模块写入 `presentation`、`spreadsheet`、`learning` 或 `mindmap`。
+- 同一生成实体重试成功时更新原资源，不新建重复资源；通过 `externalKey` 建唯一约束。
 
-后端必须解析前缀并分发到对应 Service。不存在的前缀返回 400，实体不存在返回 404。
+### 7.2 统一创建规则
 
-展示字段规则：
+| 场景 | sourceType | 必须进入资料库 | 关联规则 |
+| --- | --- | --- | --- |
+| 资料库页面上传 | uploaded | 是 | 按用户选择写入知识库；项目为空 |
+| 对话附件 | uploaded | 是 | 关联当前对话知识库；学习助教同时关联项目 |
+| 智能学习上传 | uploaded | 是 | 关联当前项目和项目知识库 |
+| PPT/电子表格生成 | generated | 是 | 按创建 DTO 中选择的项目、知识库关联；均未选择则都为空 |
+| 智能学习资源生成 | generated | 是 | 必须关联当前项目和项目知识库 |
+| 思维导图生成 | generated | 是 | 按创建上下文关联 |
 
-- updatedAt 始终返回 ISO 8601，前端负责转为“刚刚/今天”等文案。
-- size 根据原始 byte 计算：小于 1024 显示 N B；小于 1 MB 四舍五入显示 N KB；其余保留 1 位显示 N.N MB。
-- document.type 映射为 PDF、Word、Excel、PPT、Markdown、TXT、ZIP。
-- mind_map.type 固定为“思维导图”，没有物理文件时 size 为“--”。
-- externalKey 返回底层实体数字 ID 的字符串形式，主要用于排障；前端操作必须继续使用聚合 id。
-
-映射规则：
-
-| 来源实体 | category | status |
-| --- | --- | --- |
-| document status=0 | file | processing |
-| document status=1 | file | ready |
-| document status=2 | file | failed |
-| mind_map | mindmap | ready |
-| learning_resource generating | file、image 或 mindmap | processing |
-| learning_resource ready | file、image 或 mindmap | ready |
-| learning_resource failed | file、image 或 mindmap | failed |
-| media_asset uploaded/processing | image | processing |
-| media_asset ready | image | ready |
-| media_asset failed | image | failed |
-| audio media_asset uploaded/processing | file | processing |
-| audio media_asset ready | file | ready |
-| audio media_asset failed | file | failed |
+图片和音频仍通过第 18 节媒体接口上传，但媒体服务成功创建资产时必须同时创建本节资源记录。普通文档通过本节上传接口。聊天现有文档提取接口在保存附件时也必须创建同一资源记录，不能只返回提取文本。
 
 ### 7.3 接口
 
-#### GET /api/library/resources
+#### GET /api/resources
 
-状态：NEW。
+Query：`knowledgeBaseId?: number`。不传返回当前用户全部资源；传入时只返回关联该知识库的资源。成功返回 `ApiResult<LibraryResourceDto[]>`，按 `updatedAt DESC`。
 
-Query：
+来源和文件类型筛选当前由前端对已加载列表执行：来源单选、文件类型单选，两组条件可同时生效。后端不得返回“最近删除”伪分类。
 
-- libraryId?: number。不传时返回当前用户全部资源。
-
-成功：ApiResult<LibraryResourceDto[]>，按 updatedAt DESC。
-
-#### POST /api/library/resources/upload
-
-状态：NEW。
+#### POST /api/resources/upload
 
 multipart：
 
-- file：必填。
-- libraryId：可选 number。
-- projectId：可选 number。
+- `file`：必填。
+- `origin`：`resource-library | chat | learning`，必填。
+- `knowledgeBaseId`：可选。
+- `projectId`：可选。
 
-至少提供 libraryId 或 projectId；两者都提供时必须属于同一用户，且项目关联该知识库。
+两个关联字段都允许为空。若同时提供，后端必须校验项目和知识库属于当前用户且关联关系一致。成功先返回资源记录；需要解析时状态为 `waiting` 或 `processing`。
 
-首期该接口支持 PDF、DOC、DOCX、XLS、XLSX、PPT、PPTX、MD、TXT、ZIP，格式、安全和 21 MB 限制与第 6.4 节一致。图片必须调用第 18 节 `POST /api/media/images`，音频必须调用 `POST /api/media/audio/transcriptions`，并在 metadata 中使用 `purpose=library-resource`；成功后同一媒体资产必须出现在聚合资源列表中，不能重复上传文件。
+#### PATCH /api/resources/{resourceId}
 
-#### PATCH /api/library/resources/{id}
+请求：`{ name: string }`。只修改展示名，不直接拼接物理存储路径。
 
-状态：NEW。WebConfig 必须增加 PATCH 到 CORS allowedMethods。
+#### PUT /api/resources/{resourceId}/associations
 
-请求：{ name: string }，长度 1 至 200。
+请求为 `ResourceAssociations`。两个字段都是全量值，`null` 表示取消该关联。后端校验权限和项目/知识库一致性，成功返回更新后的 `LibraryResourceDto`。
 
-后端按资源类型更新原文件展示名、思维导图标题或学习资源标题，不重命名物理安全文件名。
+#### POST /api/resources/{resourceId}/retry
 
-#### POST /api/library/resources/{id}/move
+只允许 `failed` 资源。重复请求使用新的 `clientRequestId` 或后端任务幂等键，成功返回 `waiting` 或 `processing` 的资源。
 
-状态：NEW。
+#### GET /api/resources/{resourceId}/download
 
-请求：{ libraryId: number | null }。
+返回文件流，使用真实 MIME，并设置 `Content-Disposition: attachment`。无权访问返回 403，不存在返回 404，未就绪返回 409 `RESOURCE_NOT_READY`。
 
-- document：更新 kbId，并重新归属向量索引；无法原子完成时返回异步任务，不允许只改 MySQL。
-- mindmap：更新 kbId。
-- learning-resource：更新 libraryId。
-- 目标知识库必须属于当前用户。
+#### DELETE /api/resources/{resourceId}
 
-#### POST /api/library/resources/{id}/retry
+删除资源及其全部关联。后端负责清理解析数据、生成文件和对象存储；不得级联删除学习项目、知识库、会话或生成实体。
 
-状态：NEW。
+### 7.4 权限、幂等与错误
 
-- 仅 failed 的 document 或 learning-resource 可重试。
-- 已在 processing 返回 409。
-- ready 返回 409。
-- mindmap 返回 409。
-
-成功返回更新后的 LibraryResourceDto，状态 waiting 或 processing。
-
-#### GET /api/library/resources/{id}/download
-
-状态：NEW。返回 Blob/文件流：
-
-- Content-Type 使用真实 MIME。
-- Content-Disposition: attachment。
-- mindmap 没有物理文件时导出 UTF-8 JSON 或 Markdown，文件名使用标题。
-
-#### DELETE /api/library/resources/{id}
-
-状态：NEW。
-
-- document：复用 DocumentService 删除文件、分块和向量。
-- mindmap：复用 MindMapService。
-- learning-resource：删除生成文件和关联记录，但不删除学习项目。
-
+- 每次查询、下载、修改和删除都必须按 `resourceId` 反查当前用户。
+- `projectId`、`knowledgeBaseId` 来自前端上下文，不构成授权。
+- 上传可使用 `clientRequestId` 或文件上传会话防止重复创建；生成资源以生成实体 ID 建唯一索引。
+- 错误码至少包含：`RESOURCE_NOT_FOUND`、`RESOURCE_FORBIDDEN`、`RESOURCE_NOT_READY`、`RESOURCE_CONTEXT_MISMATCH`、`RESOURCE_TYPE_UNSUPPORTED`、`RESOURCE_TOO_LARGE`、`RESOURCE_PROCESSING_FAILED`。
 ## 8. 思维导图
 
 现有 /api/mindmap 接口继续保留：
@@ -859,6 +888,8 @@ type LearningTaskStatus =
   | "not_started"
   | "in_progress"
   | "completed"
+  | "needs_review"
+  | "locked"
 
 type LearningResourceStatus =
   | "not_selected"
@@ -870,6 +901,10 @@ type WrongQuestionStatus = "needs_review" | "mastered"
 type TrainingSetStatus = "pending" | "answering" | "submitted"
 type WrongReviewSetStatus = "pending" | "answering" | "completed"
 ~~~
+
+- `status=locked` 时 done 必须为 false，后端拒绝该任务的学习行为、答题和资源完成请求；前端只展示锁定状态。
+- `status=needs_review` 表示任务可进入但需要复习，done 必须为 false；用户产生新学习行为后由后端决定继续保持或转为 in_progress/completed。
+- `status=completed` 时 done 必须为 true，其他任务状态 done 必须为 false。返回未声明的状态属于契约错误，前端 Repository 只回落到安全默认状态，不把未知字符串直接展示。
 
 ### 9.2 画像和创建请求
 
@@ -887,7 +922,8 @@ type LearningProfileData = {
 }
 
 type LearningProfileRequest = {
-  libraryId: number
+  conversationId?: number | null
+  knowledgeBaseId: number | null
   text: string
   currentProfile?: LearningProfileData
   source?: string
@@ -899,11 +935,12 @@ type LearningProfileRequest = {
 
 type LearningProfileResult = {
   profile: LearningProfileData
-  confirmationDocument: string
 }
 
 type LearningConfirmationRequest = {
-  libraryId: number
+  setupId: string
+  conversationId?: number | null
+  knowledgeBaseId: number | null
   goal: string
   profile: LearningProfileData
   uploadedFileNames?: string[]
@@ -911,20 +948,27 @@ type LearningConfirmationRequest = {
   relatedProjectName?: string
   questionCount?: number
   difficultyStrategy?: string
+  projectId?: number | null
+  confirmationResourceId?: string | null
+  clientRequestId: string
+}
+
+type LearningConfirmationResult = {
+  content: string
+  resourceId: string
 }
 
 type CreateLearningDraftRequest = {
   title: string
-  libraryId: number | null
-  libraryName?: string
+  knowledgeBaseId: number | null
+  knowledgeBaseName?: string
   icon?: string
   iconColor?: string
 }
 
 type CreateLearningPlanRequest = {
   prompt: string
-  libraryId: number
-  projectId: number | null
+  knowledgeBaseId: number | null
   targetType: string
   preferences: string[]
   resourceGroups: Array<
@@ -938,21 +982,26 @@ type CreateLearningPlanRequest = {
   studyDepth: string
   questionCount: number
   supplementalRequirement: string
+  sourceResourceIds?: string[]
+  mediaAssetIds?: string[]
+  confirmationResourceId?: string | null
   draftPlanId?: number | null
-  libraryName?: string
+  knowledgeBaseName?: string
 }
 ~~~
 
 字段语义：
 
 - draftPlanId：正在配置并将被生成结果替换的草稿项目 ID。
-- projectId：可选的关联项目上下文 ID，生成结果写入 relatedProjectId；不表示直接覆盖该项目。
-- 两者相同且项目状态为 draft/configuring 时，按 draftPlanId 原地完成该草稿。
-- 两者都为空时创建全新项目。
-- libraryName 只用于兼容展示，权威名称由 libraryId 查询。
-- questionCount 范围 1 至 500。
-- 生成前 libraryId 必须存在、属于当前用户且 availableForAi=true。
-- mediaAssetIds 最多 5 个，只接受 purpose=learning-input 且已关联当前 libraryId/projectId 的 ready 图片或音频；后端读取图片内容或音频转写，uploadedFileNames 只用于展示，不能替代媒体引用。
+- draftPlanId 有值且项目状态为 draft/configuring 时，生成结果原地替换该草稿并保留同一个项目 id。
+- draftPlanId 为空时创建全新项目；本请求不再提供同义 projectId。
+- knowledgeBaseName 只用于兼容展示，权威名称由 knowledgeBaseId 查询。
+- questionCount 范围 10 至 200。
+- knowledgeBaseId 可空；非空时必须存在、属于当前用户且 availableForAi=true。为空时只使用用户输入、sourceResourceIds 和 mediaAssetIds。
+- sourceResourceIds 最多 20 个，必须属于当前用户且状态为 ready。生成成功后这些资源继续保留在全局资料库，并关联 result.projectId；knowledgeBaseId 非空时同时关联该知识库，不复制文件。
+- mediaAssetIds 最多 5 个，必须属于当前用户且状态为 ready；它们与画像请求使用同一批媒体资产，并继续参与最终学习方案、阶段和题目生成。
+- confirmationResourceId 非空时必须包含在 sourceResourceIds；后端用 prompt 覆盖该 Markdown 资源的最终确认版本，再开始生成项目。
+- mediaAssetIds 最多 5 个，只接受 purpose=learning-input 且属于当前用户的 ready 图片或音频；后端读取图片内容或音频转写，uploadedFileNames 只用于展示，不能替代媒体引用。
 
 ### 9.3 项目聚合 DTO
 
@@ -961,13 +1010,12 @@ GET 项目列表和详情当前都返回同一个 LearningProjectDto。列表暂
 ~~~ts
 type LearningProjectDto = {
   id: number
-  relatedProjectId?: number | null
   title: string
   icon?: string
   iconColor?: string
   goal: string
   updatedAt: string
-  libraryId: number
+  knowledgeBaseId: number | null
   status: LearningProjectStatus
   period: string
   targetType: string
@@ -1008,12 +1056,12 @@ type LearningTaskDto = {
   duration: string
   done: boolean
   type: "讲解" | "资料" | "练习" | "测验" | "案例"
-  resourceId?: number
+  learningResourceId?: number
   exerciseIds?: number[]
   status: LearningTaskStatus
   completionMode?:
     | "content" | "resource" | "exercise"
-    | "assessment" | "case" | "manual"
+    | "assessment" | "case"
   completionSource?: string
   readProgress?: number
   validStudySeconds?: number
@@ -1022,6 +1070,7 @@ type LearningTaskDto = {
 
 type LearningResourceDto = {
   id: number
+  resourceId?: string
   group:
     | "学习方案" | "个性化学习手册" | "PPT"
     | "思维导图" | "代码案例" | "图片"
@@ -1034,6 +1083,7 @@ type LearningResourceDto = {
   previewUrl?: string
   mindMapId?: number
   mindMapTreeData?: unknown
+  presentationId?: string
   errorMessage?: string
 }
 ~~~
@@ -1094,6 +1144,8 @@ type ExerciseDto = {
   sourceTaskId?: number
 }
 ~~~
+
+`draftAnswer` 和各语言 `codeDrafts` 是前端 sessionStorage 中的未提交草稿，不属于 ExerciseDto，后端不得在项目详情中返回或保存为正式答案。`selectedLanguage` 只有已提交答案存在时才作为权威结果返回；未提交时前端可用本地草稿覆盖显示。
 
 答案安全规则：
 
@@ -1190,11 +1242,11 @@ type WrongReviewSetDto = {
 - status=draft。
 - progress=0。
 - stages、resources、exercises、wrongQuestions、dashboard、agents 为空数组。
-- libraryId 可以为 null；生成画像和方案前必须关联有效知识库。
+- knowledgeBaseId 可以为 null；没有知识库也允许继续画像和方案生成。
 
 #### PATCH /api/learning/projects/{id}
 
-状态：NEW，前端后续接入。
+状态：NEW，当前 API Repository 已接入。
 
 请求：
 
@@ -1203,17 +1255,26 @@ type UpdateLearningProjectRequest = {
   title?: string
   icon?: string
   iconColor?: string
-  libraryId?: number
+  knowledgeBaseId?: number | null
+  targetType?: string
+  period?: string
+  dailyTime?: string
+  weakPoints?: string
+  preferences?: string[]
+  keepExercises?: boolean
+  keepProgress?: boolean
 }
 ~~~
 
-成功返回 LearningProjectDto。
+成功返回 ApiResult<LearningProjectDto>。调整计划时后端根据 keepExercises/keepProgress 决定是否保留题目和进度，并重新计算权威统计；前端不会本地伪造 API 成功结果。
 
 #### DELETE /api/learning/projects/{id}
 
-状态：NEW，前端后续接入。
+状态：NEW，当前 API Repository 已接入。
 
-使用逻辑删除或归档。运行中的生成任务存在时返回 409。项目置顶仍是 localStorage UI 偏好，不需要后端字段。
+成功：`ApiResult<null>`。
+
+使用逻辑删除或归档。运行中的生成任务存在时返回 409。删除项目不删除全局资料库中的文件，只把这些资源的 projectId 解除；原 knowledgeBaseId 关联保持不变。项目置顶仍是 localStorage UI 偏好，不需要后端字段。
 
 ### 10.2 通用生成任务
 
@@ -1258,29 +1319,37 @@ pending/running -> cancelled
 
 后端步骤：
 
-1. 校验知识库权限及 availableForAi。
+1. 校验 conversationId 所属用户、conversationType=learning-setup、projectId 一致性，以及知识库权限和 availableForAi。
 2. 创建 generation_job。
 3. 读取文档解析结果和用户输入。
 4. 调用 AI 并校验结构。
-5. 保存结果，更新任务。
+5. 保存结果并更新任务；conversationId 非空时，在该会话保存或更新 `kind=learning-profile` 的结构化 Card 消息。
 
 #### POST /api/learning/profile-confirmations
 
 请求：LearningConfirmationRequest。
 
-成功：
+成功：ApiResult<LearningConfirmationResult>。
 
 ~~~json
 {
   "code": 200,
   "message": "success",
   "data": {
-    "content": "确认稿 Markdown 内容"
+    "content": "确认稿 Markdown 内容",
+    "resourceId": "resource-confirmation-123"
   }
 }
 ~~~
 
 该接口当前为同步调用，必须在 30 秒内完成。确认稿由后端生成，正式前端不拼装权威确认稿。
+
+- 生成成功必须立即创建全局资料库 Markdown 资源并返回 resourceId。
+- projectId/knowledgeBaseId 非空时建立对应关联；均为空时仍进入资料库。
+- conversationId 非空时必须校验其为当前用户的 learning-setup 会话，并保存或更新 `kind=learning-document` 的结构化消息；learningData.content 和 resourceId 必须与接口结果一致。
+- setupId 由前端为本次配置流程生成并在 sessionStorage 草稿中保持稳定，只用于首次创建项目之前定位同一份确认稿，不是业务实体 ID，也不能用于权限判断。
+- 首次生成 confirmationResourceId 为空；重新生成时前端传回上次 resourceId，后端更新同一资源和版本，不创建重复文件。
+- clientRequestId 用于防止重复点击；同一幂等键必须返回同一个 resourceId 和内容版本。
 
 ### 10.4 学习方案
 
@@ -1292,12 +1361,13 @@ pending/running -> cancelled
 
 后端事务边界：
 
-1. 验证 draftPlanId 或 projectId 归属。
-2. 保存用户确认版本。
+1. 验证 draftPlanId、knowledgeBaseId、sourceResourceIds 和 mediaAssetIds 归属。
+2. 保存用户确认版本，并用 prompt 更新 confirmationResourceId 对应的确认稿文件。
 3. 创建生成任务并立即返回。
 4. 后台生成阶段、任务、题目与资源需求。
-5. 校验引用完整性后事务保存。
-6. 成功任务 result.projectId 必须能立即通过 GET 项目详情读取。
+5. 默认创建 ready 的“学习方案”和“思维导图”；手册、PPT、代码案例和图片按资源描述状态 not_selected 等待用户生成。
+6. 校验任务、题目、资源引用完整性后事务保存，并关联 sourceResourceIds。
+7. 成功任务 result.projectId 必须能立即通过 GET 项目详情读取。
 
 ### 10.5 学习行为
 
@@ -1321,6 +1391,8 @@ type LearningActivityRequest = {
 - progress 范围 0 至 100。
 - secondsDelta 范围 0 至 300，后端校验频率和异常累计。
 - 前端上报行为，后端计算权威 task.status、project.progress。
+- reading 事件前端按 projectId+taskId 聚合，最多约每 10 秒发送一次；任务完成、页面隐藏或离开时立即冲刷。后端仍需按 clientRequestId 幂等并校验异常时长。
+- start/action/complete 接口失败时前端撤回本次乐观状态并展示错误；后端不得返回成功但不保存。
 - Mock 的“阅读 80% + 5 秒”不是正式规则。
 
 ### 10.6 提交答案
@@ -1357,6 +1429,28 @@ type AnswerResult = {
 4. 答错时创建或更新错题。
 5. 更新掌握度、任务和项目进度。
 6. 返回结果。
+
+#### POST /api/learning/projects/{projectId}/answers/batch
+
+~~~ts
+type SubmitAnswerBatchRequest = {
+  projectId: number
+  answers: Array<{
+    exerciseId: number
+    answer: string
+    language?: CodeLanguageKey
+  }>
+  clientRequestId: string
+}
+~~~
+
+成功：ApiResult<AnswerResult[]>，结果顺序必须与 answers 请求顺序一致。
+
+- answers 数量 1 至 200，同一个 exerciseId 不得重复。
+- Path projectId 必须等于 body.projectId，全部题目必须属于该项目。
+- 整组评分、答案保存、错题更新、任务完成和项目进度必须在一个事务或可恢复工作流中提交；任一题校验失败时整组失败，禁止部分成功。
+- 同一 clientRequestId 重试返回原结果；相同幂等键对应不同答案内容时返回 409 IDEMPOTENCY_CONFLICT。
+- 学习页统一交卷和错题巩固题组均调用该接口；单题重新作答仍调用上一接口。
 
 ### 10.7 自适应练习
 
@@ -1397,7 +1491,7 @@ type MistakeReviewRequest = {
 
 #### POST /api/learning/projects/{projectId}/resource-jobs
 
-请求：{ resourceId: number }。
+请求：{ learningResourceId: number }。
 
 成功：ApiResult<GenerationJob<{ projectId: number }>>。
 
@@ -1405,28 +1499,67 @@ type MistakeReviewRequest = {
 - 已 generating 返回 409。
 - 成功后状态 ready，并保存稳定文件、content 或 mindMapId。
 - 失败后状态 failed，保存 errorMessage。
+- 项目初次生成时“学习方案”和“思维导图”直接为 ready；其余可选资源初始为 not_selected。
+- 每个 ready 学习资源必须有 resourceId，并自动出现在全局资料库；knowledgeBaseId/projectId 关联沿用项目上下文，不存在额外“保存到资料库”接口。
+- 页面刷新后如果项目详情仍有 generating 资源，前端每 3 秒重新获取项目详情，最多约 120 秒；后端任务继续运行且状态必须可恢复。
 
-#### GET /api/learning/projects/{projectId}/resources/{resourceId}/download
+#### GET /api/learning/projects/{projectId}/resources/{learningResourceId}/download
 
-返回文件流。必须校验项目和资源关联，Content-Disposition 使用 attachment。
+返回文件流，不使用 ApiResult 包装。必须校验项目和资源关联；`Content-Type` 使用资源真实 MIME，`Content-Length` 为实际字节数，`Content-Disposition` 使用 `attachment; filename*=UTF-8''...` 返回 UTF-8 文件名。
 
 项目详情必须直接返回 resources；当前前端不调用单独资源列表接口。
+
+### 10.10 智能学习错误码与性能约束
+
+| HTTP | errorCode | 触发条件 |
+| --- | --- | --- |
+| 404 | LEARNING_PROJECT_NOT_FOUND | 项目不存在或已删除 |
+| 403 | LEARNING_PROJECT_FORBIDDEN | 项目不属于当前用户 |
+| 409 | LEARNING_PROJECT_STATE_CONFLICT | 当前状态不允许修改、删除或生成 |
+| 404 | LEARNING_TASK_NOT_FOUND | 阶段/任务/题目不属于该项目 |
+| 409 | LEARNING_CONTEXT_MISMATCH | knowledgeBaseId、sourceResourceIds 或上下文层级不一致 |
+| 409 | LEARNING_SOURCE_NOT_READY | 输入资源未解析完成或媒体未 ready |
+| 404 | LEARNING_JOB_NOT_FOUND | 生成任务不存在 |
+| 409 | LEARNING_JOB_CONFLICT | 同类生成任务正在运行 |
+| 422 | LEARNING_GENERATION_FAILED | AI 输出无法校验或生成失败 |
+| 409 | ANSWER_ALREADY_SUBMITTED | 当前题目不允许再次提交 |
+| 409 | ANSWER_BATCH_INVALID | 批量题目重复、跨项目或不满足统一交卷条件 |
+| 409 | IDEMPOTENCY_CONFLICT | 相同 clientRequestId 对应不同请求内容 |
+| 409 | LEARNING_RESOURCE_NOT_READY | 下载资源未 ready |
+
+- 项目列表首期不分页，但单用户最多返回 200 个未归档项目；超过后后端要求归档或启用分页版本。
+- 项目详情最多 20 个阶段、每阶段 100 个任务、初始题量 10 至 200、单次追加题量 1 至 20。
+- sourceResourceIds 最多 20 个、mediaAssetIds 最多 5 个；正文进入模型前由后端按 token 预算裁剪和检索，不把全部文件正文直接拼接。
+- 生成任务接口应在 1 秒内返回 jobId；任务查询 P95 低于 500ms；项目详情 P95 低于 1 秒，不包含 AI 生成时间。
+- 前端轮询计划任务每秒一次、最多 120 次；资源恢复每 3 秒一次、最多约 120 秒。达到上限只停止前端自动查询，不取消后端任务。
 
 ## 11. 学习助教
 
 学习助教不新增独立聊天协议，复用：
 
-1. POST /api/conversation/create，conversationType=learning-tutor，learningProjectId 必填。
+1. POST /api/conversation/create，conversationType=learning-tutor，projectId 必填。
 2. GET /api/conversation/list 恢复项目关联会话。
 3. GET /api/conversation/{id}/messages 恢复历史。
 4. POST /api/chat/stream 发送问题。
 
-后端根据 conversation.learningProjectId 加载：
+后端根据 conversation.projectId 加载：
 
 - 项目目标和画像。
 - 当前阶段、任务和题目。
 - 用户已提交答案和错题。
 - 项目资源。
+
+请求可额外携带 stageId、taskId、exerciseId 说明用户当前所在位置。后端必须先按 conversation.projectId 校验层级归属，再从数据库加载权威状态；前端不发送 tutorContext 作为正式系统提示词。
+
+正式上下文组装顺序：
+
+1. 读取项目目标、画像、阶段、当前任务、进度、已提交答案、错题和资源元数据。
+2. 以 project.knowledgeBaseId 作为知识库检索范围；为空时跳过知识库 RAG。
+3. 对当前问题做查询改写和向量/关键词混合检索，返回有权限且 ready 的片段。
+4. 组合系统约束、结构化项目摘要、当前题目安全边界、RAG 片段和会话历史后调用模型。
+5. 保存用户消息、回答、引用片段和上下文实体 ID；不保存或回传隐藏答案、评分规则和内部提示词。
+
+项目结构化数据来自业务数据库，知识库正文来自 RAG，两者缺一不可但职责不同。RAG 不负责保存学习进度，项目数据库也不替代文档检索。
 
 未提交的测验只能给提示，不得返回正确答案、标准代码、隐藏测试或完整解法。
 
@@ -1458,11 +1591,11 @@ learning_project_name 不作为权威冗余字段；响应通过 learning_projec
 
 | 建议表 | 关键字段 |
 | --- | --- |
-| learning_project | id、user_id、library_id、title、goal、status、period、target_type、progress、统计字段、deleted、create_time、update_time |
+| learning_project | id、user_id、knowledge_base_id、title、goal、status、period、target_type、progress、统计字段、deleted、create_time、update_time |
 | learning_profile_version | id、project_id、version、profile_json、confirmation_content、confirmed、create_time |
 | learning_stage | id、project_id、sort_no、title、description、schedule_label |
 | learning_task | id、stage_id、type、status、completion_mode、进度和时长字段 |
-| learning_resource | id、project_id、library_id、task_id、group_type、title、status、file_path、content、mind_map_id、error_message |
+| learning_resource | id、project_id、resource_id、task_id、group_type、title、status、content、mind_map_id、error_message |
 | exercise | id、project_id、source_task_id、题型、题干、难度、知识点、选项、答案、解析、评分规则、生成批次 |
 | task_exercise | task_id、exercise_id、sort_no |
 | answer_submission | id、user_id、project_id、exercise_id、answer、language、score、correct、feedback、client_request_id、create_time |
@@ -1473,7 +1606,7 @@ learning_project_name 不作为权威冗余字段；响应通过 learning_projec
 
 关键约束：
 
-- answer_submission 唯一键：(user_id, client_request_id)。
+- answer_submission 唯一键：(user_id, client_request_id, exercise_id)；批量请求还需单独保存 batch client_request_id 与请求摘要，保证整组幂等。
 - learning_activity 唯一键：(user_id, client_request_id)。
 - conversation 索引：(user_id, is_pinned, update_time)。
 - generation_job 索引：(user_id, status, update_time)。
@@ -1542,7 +1675,7 @@ mastered -> needs_review  再次答错时
 | P1 | ModelSwitch 当前没有调用 fetchList，model API 失败会返回本地固定列表 | 前端加载 /api/config/model，并取消生产 fallback |
 | P1 | 文档 status=0 在前端当前显示映射需要统一为 processing | 前端 |
 | P1 | 前端现已允许 DOC、Excel、PPT、ZIP，现有文档解析器尚未全部支持 | 后端按第 6.4 节扩展解析；图片和音频固定走第 18 节媒体接口 |
-| P1 | 学习项目重命名、删除目前只改前端展示 | 前端接入本文 PATCH/DELETE |
+| P1 | 学习项目重命名、删除需要后端实现正式持久化 | 前端 API Repository 已接入本文 PATCH/DELETE，后端按契约实现 |
 | P1 | LearningProject 前端类型暂位于 Mock 文件 | 前端迁移到正式 contracts |
 | P1 | 前端 common.ts 中 ApiResponse.code 仍声明为 string | 前端改为 number，与现有 Java Result 和本文一致 |
 | P1 | 未提交题目的 answer 字段需要按第 9.4 节脱敏 | 前后端 |
@@ -1561,8 +1694,9 @@ mastered -> needs_review  再次答错时
 8. 实现学习行为、答题、错题和进度。
 9. 实现自适应练习、错题巩固和资源生成。
 10. 新增媒体资产、麦克风/上传音频转写、图片识别任务，并让聊天和资料库按媒体 ID 关联。
-11. 按第 19 节新增 PPT 实体、任务、Provider Adapter、预览、下载和资料库关联。
-12. 前后端联调 API 模式。
+11. 按第 19 节新增 PPT 实体、任务、Provider Adapter、预览、下载和自动资源归档。
+12. 按第 20 节新增对话直达电子表格任务、XLSX 生成、预览、下载和自动资源归档。
+13. 前后端联调 API 模式。
 
 ## 16. 后端验收清单
 
@@ -1580,7 +1714,8 @@ mastered -> needs_review  再次答错时
 - 拒绝的麦克风权限不会发起后端请求；空录音、上传音频超时和不支持格式返回固定错误码。
 - 图片和音频资产只能被所属用户和已关联的会话、资料库或学习项目引用。
 - 图片识别任务可在刷新后通过 jobId 查询，重复 clientRequestId 不创建重复资产或任务。
-- PPT confirm/auto 流程使用同一状态机，刷新后可恢复任务，ready 后可预览、下载和保存资料库。
+- PPT 固定经过大纲人工确认，刷新后可恢复任务，ready 后自动进入资料库并可预览、下载。
+- 电子表格根据对话和已关联上下文直接生成，ready 后自动进入资料库并可预览、下载 XLSX。
 - 讯飞密钥、任务 ID、模板 ID 和原始文件 URL 不进入前端响应或普通业务日志。
 
 ## 17. 首期明确不实现
@@ -1589,7 +1724,6 @@ mastered -> needs_review  再次答错时
 
 - 资料库文件在线预览。
 - 选择多个资料直接开始聊天。
-- 高级筛选。
 
 需要启用时另行新增契约版本，不在现有接口中偷偷扩展字段。
 
@@ -1618,8 +1752,8 @@ type ImageRecognitionMode = "auto" | "ocr" | "question"
 
 type MediaContext = {
   conversationId?: number | null
-  libraryId?: number | null
-  learningProjectId?: number | null
+  knowledgeBaseId?: number | null
+  projectId?: number | null
 }
 
 type MediaAssetDto = MediaContext & {
@@ -1708,8 +1842,8 @@ type ImageRecognitionJob = {
 - 单图最大 10 MB；单次请求只传 1 张；输入框最多引用 5 个媒体资产。
 - 去除 EXIF GPS 等敏感元数据，并根据 EXIF orientation 规范化方向。
 - `purpose=chat-attachment` 时 conversationId 必填。
-- `purpose=library-resource` 时 libraryId 必填，成功后创建资料库媒体关联并启动 OCR/索引任务。
-- `purpose=learning-input` 时 libraryId 或 learningProjectId 至少一个有效；未创建项目时允许只关联 libraryId。
+- `purpose=library-resource` 和 `learning-input` 的 knowledgeBaseId、projectId 都允许为空；传入时必须校验归属和关系。
+- 除 `source=microphone` 的临时录音外，成功上传的媒体都必须创建第 7 节资料库资源；聊天、资料库、智能学习分别写入对应 origin。
 - source 仅说明入口来自上传或摄像头，不影响权限和识别算法。
 - 以 userId + operation + clientRequestId 保证幂等；相同请求返回原资产，不重复保存文件。
 
@@ -1722,8 +1856,8 @@ type ImageRecognitionJob = {
   "source": "camera",
   "purpose": "chat-attachment",
   "conversationId": 42,
-  "libraryId": null,
-  "learningProjectId": null,
+  "knowledgeBaseId": null,
+  "projectId": null,
   "clientRequestId": "d682cf5f-5037-4cc5-841f-9280dc16ac51"
 }
 ~~~
@@ -1744,8 +1878,8 @@ type ImageRecognitionJob = {
     "size": 1842201,
     "status": "uploaded",
     "conversationId": 42,
-    "libraryId": null,
-    "learningProjectId": null,
+    "knowledgeBaseId": null,
+    "projectId": null,
     "createdAt": "2026-07-16T16:30:00+08:00",
     "updatedAt": "2026-07-16T16:30:00+08:00"
   }
@@ -1770,8 +1904,8 @@ type ImageRecognitionJob = {
 - 无有效人声返回 HTTP 422 + NO_SPEECH_DETECTED，不返回空字符串成功。
 - `source=microphone` 的转写文字只回填输入框，前端不得在识别完成后自动发送。
 - `source=upload` 在用户发送消息或确认资料上传后执行；成功资产固定为 `kind=audio`、`source=upload`、`status=ready`，聊天后端复用已返回的 text，不得再次转写同一 asset。
-- `purpose=chat-attachment` 时 conversationId 必填；`purpose=library-resource` 时 libraryId 必填；`purpose=learning-input` 时 libraryId 或 learningProjectId 至少一个有效。
-- `purpose=library-resource` 或 `learning-input` 成功后建立资源关联，并在 `GET /api/library/resources` 中返回 `media:{assetId}`、`category=file`、`type=音频`。
+- `purpose=chat-attachment` 时 conversationId 必填；其他 purpose 的 knowledgeBaseId、projectId 允许为空，传入时必须校验。
+- 用户选择上传的音频成功后建立第 7 节资源记录，并在 `GET /api/resources` 中返回 `resourceId=media:{assetId}`、`fileType=audio`；麦克风临时录音不自动归档。
 - 麦克风临时录音默认 24 小时后清理；用户主动上传并关联资料库/学习项目的音频按业务资源保留策略保存。删除聚合资源时同时解除关联，只有无其他引用时才删除原件。
 
 成功：HTTP 200，ApiResult<AudioTranscriptionDto>。
@@ -1861,7 +1995,7 @@ pending -> running -> succeeded
 
 1. purpose=library-resource 或 learning-input 上传图片，或提交音频转写。
 2. 后端保存私有原件和媒体元数据；图片启动识别/索引，音频保存转写并创建资料库关联。
-3. GET /api/library/resources 返回 media:{assetId} 聚合项及 processing/ready/failed 状态。
+3. GET /api/resources 返回 media:{assetId} 资源及 processing/ready/failed 状态。
 4. 只有 ready 图片或音频可以进入 RAG 或正式学习生成上下文；failed 可通过聚合资源 retry 接口重试。
 
 ### 18.7 意图、上下文与权限
@@ -1869,14 +2003,14 @@ pending -> running -> succeeded
 - 前端只发送显式 mode、purpose、用户 prompt 和实体 ID，不在浏览器用关键词规则决定 OCR、题目类型或模型。
 - 后端 auto 意图至少使用用户当前问题、媒体 purpose、图片内容和会话/学习项目类型；低置信度时按 general-image 处理或向用户追问，不能静默执行高风险动作。
 - 图片识别结果加入当前消息上下文，不默认污染后续所有会话；需要跨轮引用时由后端已保存的消息媒体关联恢复。
-- learningProjectId、libraryId 和 conversationId 必须逐个反查当前用户；三者同时存在时必须属于同一用户且关联关系一致，否则返回 409 CONTEXT_MISMATCH。
+- projectId、knowledgeBaseId 和 conversationId 必须逐个反查当前用户；三者同时存在时必须属于同一用户且关联关系一致，否则返回 409 CONTEXT_MISMATCH。
 - 任何前端传入的 OCR 文本、durationMs、mimeType、source 和 confidence 都不是权限或业务真值。
 
 ### 18.8 错误码
 
 | HTTP | errorCode | 触发条件 |
 | --- | --- | --- |
-| 400 | MEDIA_CONTEXT_REQUIRED | purpose 缺少要求的 conversationId、libraryId 或 learningProjectId |
+| 400 | MEDIA_CONTEXT_REQUIRED | chat-attachment 缺少 conversationId |
 | 400 | CONTEXT_MISMATCH | 会话、资料库和学习项目关联冲突 |
 | 403 | MEDIA_FORBIDDEN | 当前用户无权访问媒体或上下文实体 |
 | 404 | MEDIA_NOT_FOUND | 媒体资产不存在 |
@@ -1894,87 +2028,77 @@ pending -> running -> succeeded
 
 ## 19. PPT 生成与讯飞适配
 
-### 19.1 边界与实现原则
+### 19.1 唯一流程
 
-- 前端只调用本节定义的 ExamInsight 接口，不直接调用讯飞，不保存讯飞密钥、签名、任务 ID 或文件 URL。
-- 后端负责内容生成、讯飞 Provider 适配、任务持久化、权限、文件下载、对象存储、预览图生成和资料库关联。
-- `MockPresentationRepository` 仅模拟接口返回并在下载时用 PptxGenJS 生成演示文件，不是后端内容算法或讯飞接入参考。
-- `ApiPresentationRepository` 与 Mock 使用同一请求、响应和状态类型。API 失败不得自动切换 Mock。
-- PPT 原件、预览图和 Provider 响应不写浏览器 Storage。正式页面刷新后按 presentationId 和 activeJobId 从后端恢复。
-- 后端可以更换 PPT Provider，但不得改变本节对前端的 DTO、状态、幂等和错误语义。
-- PPT 工作区面向用户统一显示“知识库”；协议为兼容现有后端继续使用 `libraryId`、`libraryResourceId` 和 `/library` 路径，后端不得另增同义字段。
+状态：NEW。PPT 不再区分“先确认大纲”和“自动生成”两种模式，正式流程固定为：
 
-### 19.2 路由和前端调用顺序
+~~~text
+对话确认卡或功能入口
+→ 创建/更新 PPT 草稿
+→ AI 生成结构化大纲
+→ 用户进入大纲页检查和修改
+→ 保存确认后的大纲
+→ 创建 PPT 生成任务
+→ 生成完成并自动创建资料库资源
+→ 预览或下载
+~~~
 
-| 页面场景 | 前端路由 | 关联字段 |
+“生成大纲”只表示 AI 自动填充大纲，绝不跳过用户确认。配置页不能直接进入最终生成；只有 `status=outline_ready` 且大纲非空时，前端才展示“确认大纲并生成”。后端在大纲未就绪时收到生成请求必须返回 409 `PRESENTATION_OUTLINE_NOT_READY`。
+
+讯飞 AppId、密钥、模板映射、Provider taskId、回调签名和原始下载地址仅存在于后端。前端只识别本节 DTO、后端 jobId、资源 ID 和本站下载接口。
+
+### 19.2 路由与对话卡
+
+| 入口 | 路由/动作 | 必须携带的上下文 |
 | --- | --- | --- |
-| 新对话创建 PPT | `/presentations/new?conversationId=:id&libraryId=:id&returnTo=:path` | conversationId、libraryId 可空 |
-| 学习资源创建 PPT | `/presentations/new?learningProjectId=:id&learningResourceId=:id&libraryId=:id&returnTo=:path` | 三个 ID 必须属于同一用户 |
-| 恢复或查看 PPT | `/presentations/:presentationId` | 页面重新获取权威 DTO 和任务 |
+| 新对话快捷入口或自然语言意图 | SSE `presentation-card` | conversationId、sourceMessageId，可选 knowledgeBaseId/projectId |
+| 卡片“更多设置” | 先创建草稿，再进入 `/presentations/{id}` | 同一 presentationId，卡片与工作区同步 |
+| 卡片“生成大纲” | 创建草稿并启动大纲任务，进入 `/presentations/{id}` | 不生成最终 PPT |
+| 直接新建 | `/presentations/new` | 可选 knowledgeBaseId/projectId/returnTo |
+| 智能学习资源 | `/presentations/new?projectId=:id&learningResourceId=:id&knowledgeBaseId=:id` | 三个实体必须属于同一用户 |
+| 资料库资源 | `/presentations/{id}` | 由 `externalKey=presentations:{id}` 或资源 ID 打开 |
 
-默认确认模式调用顺序：
+配置页主题、页数、模板、知识库等改变后调用草稿更新接口；返回对话时，消息卡必须显示同一草稿的最新配置。消息卡不保存另一份 PPT 配置。
 
-1. `POST /api/presentations` 创建草稿。
-2. `POST /api/presentations/{id}/outline-jobs` 创建大纲任务。
-3. 轮询 `GET /api/presentations/jobs/{jobId}`，成功后重新获取 PPT。
-4. 用户编辑并调用 `PUT /api/presentations/{id}/outline`。
-5. `POST /api/presentations/{id}/generation-jobs` 创建 PPT 任务。
-6. 轮询任务，成功后重新获取 PPT 并展示预览。
-7. 用户按需下载或保存到资料库。
+SSE 事件示例：
 
-自动模式仍使用同一组接口，只是前端在大纲任务成功后不暂停编辑，立即保存大纲并创建 PPT 任务。后端不得为自动模式另造不兼容 DTO。任何模式在大纲未成功前调用生成接口均返回 `409 PRESENTATION_OUTLINE_NOT_READY`。
+~~~text
+event: presentation-card
+data: {"cardType":"presentation","view":"proposal","status":"draft","conversationId":102,"sourceMessageId":9081,"knowledgeBaseId":1,"projectId":null,"config":{"topic":"Java 多态","title":"Java 多态","pageCount":8,"templateId":"ink-focus","aspectRatio":"16:9","style":"academic","audience":"student","language":"zh-CN"}}
+~~~
 
 ### 19.3 共享类型
 
-```ts
+以 `frontend/src/types/contracts/presentation.ts` 为准，关键字段如下：
+
+~~~ts
 type PresentationStatus =
-  | 'draft'
-  | 'outlining'
-  | 'outline_ready'
-  | 'generating'
-  | 'ready'
-  | 'failed'
-  | 'cancelled'
+  | "draft" | "outlining" | "outline_ready"
+  | "generating" | "ready" | "failed" | "cancelled"
 
-type PresentationOutlineMode = 'confirm' | 'auto'
-type PresentationAspectRatio = '16:9' | '4:3'
-type PresentationStyle = 'academic' | 'minimal' | 'vibrant' | 'professional'
-type PresentationAudience = 'student' | 'teacher' | 'general' | 'business'
-type PresentationSlideLayout = 'cover' | 'section' | 'content' | 'comparison' | 'summary'
+type PresentationContext = {
+  conversationId?: number | null
+  sourceMessageId?: number | string | null
+  knowledgeBaseId?: number | null
+  projectId?: number | null
+  learningResourceId?: number | null
+}
 
-interface PresentationConfig {
+type PresentationConfig = {
   topic: string
   title: string
   pageCount: number
-  outlineMode: PresentationOutlineMode
   templateId: string
-  aspectRatio: PresentationAspectRatio
-  style: PresentationStyle
-  audience: PresentationAudience
+  aspectRatio: "16:9" | "4:3"
+  style: "academic" | "minimal" | "vibrant" | "professional"
+  audience: "student" | "teacher" | "general" | "business"
   language: string
   sourceText?: string
   sourceFileNames?: string[]
   mediaAssetIds?: string[]
 }
 
-interface PresentationSlideOutline {
-  id: string
-  order: number
-  title: string
-  points: string[]
-  speakerNotes?: string
-  layout: PresentationSlideLayout
-}
-
-interface PresentationPreviewPage extends PresentationSlideOutline {
-  backgroundColor: string
-  surfaceColor: string
-  textColor: string
-  accentColor: string
-  previewImageUrl?: string
-}
-
-interface PresentationDto {
+type PresentationDto = PresentationContext & {
   id: string
   status: PresentationStatus
   config: PresentationConfig
@@ -1983,318 +2107,235 @@ interface PresentationDto {
   activeJobId?: string
   fileName?: string
   fileSize?: number
-  libraryResourceId?: string
+  resourceId?: string
+  errorCode?: string
+  errorMessage?: string
+  createdAt: string
+  updatedAt: string
+}
+~~~
+
+`resourceId` 在 `ready` 状态必填。`PresentationChatCardDto` 的 proposal/result 状态必须由同一 Presentation 实体组装，不允许前端猜测最终状态。
+
+### 19.4 接口与调用顺序
+
+1. `GET /api/presentations/templates`：返回可用模板。
+2. `GET /api/presentations`：返回当前用户 PPT 列表。
+3. `GET /api/presentations/{id}`：返回实体及恢复状态。
+4. `POST /api/presentations`：创建 draft，请求为 `CreatePresentationRequest`，包含 `clientRequestId`。
+5. `PUT /api/presentations/{id}/draft`：全量更新 config 和可选上下文，请求为 `UpdatePresentationDraftRequest`。
+6. `POST /api/presentations/{id}/outline-jobs`：请求 `{ clientRequestId }`，创建大纲任务。
+7. `PUT /api/presentations/{id}/outline`：请求 `{ slides, clientRequestId }`，保存用户确认后的结构化大纲。
+8. `POST /api/presentations/{id}/generation-jobs`：请求 `{ clientRequestId }`，创建最终 PPT 任务。
+9. `GET /api/presentations/jobs/{jobId}`：返回统一 `AsyncJob`。
+10. `POST /api/presentations/jobs/{jobId}/cancel`：停止任务但保留配置和大纲。
+11. `GET /api/presentations/{id}/preview-pages/{pageId}`：返回本站预览图。
+12. `GET /api/presentations/{id}/download`：仅 ready 可下载 PPTX。
+
+没有“保存到资料库”接口。最终生成事务必须：保存本站 PPTX、更新 Presentation 为 ready、创建或更新全局 `LibraryResourceDto`、写入 `resourceId`、同步对话卡和可选学习资源。若用户选择知识库或项目，同时写入对应关联；两者都未选择时资源仍进入资料库。
+
+### 19.5 状态机、刷新与异常
+
+- `draft -> outlining -> outline_ready -> generating -> ready` 是唯一成功路径。
+- `outlining/generating -> failed | cancelled`；重试复用原实体并创建新 jobId。
+- 前端刷新后通过 `GET /api/presentations/{id}` 和 `activeJobId` 恢复，不依赖本地生成进度。
+- `clientRequestId` 在同一用户、接口和实体范围内幂等；重复点击不得创建多个 Provider 任务或多个资料库资源。
+- 配置更新只允许 draft、outline_ready、cancelled；大纲编辑不允许覆盖正在生成的版本。
+- sourceMessageId 存在时，后端每次状态提交都同步消息 `presentationData`；ready/failed 使用 result 视图。
+- 错误码至少包含：`PRESENTATION_NOT_FOUND`、`PRESENTATION_FORBIDDEN`、`PRESENTATION_CONTEXT_MISMATCH`、`PRESENTATION_OUTLINE_NOT_READY`、`PRESENTATION_JOB_CONFLICT`、`PRESENTATION_PROVIDER_FAILED`、`PRESENTATION_DOWNLOAD_NOT_READY`。
+
+### 19.6 Mock 与正式实现边界
+
+Mock Repository 使用 sessionStorage 保存实体和任务元数据，只在下载时用 PptxGenJS 生成演示 PPTX。正式 API Repository 不导入 Mock 生成器；后端可接讯飞或其他 Provider，但必须转换为本节 DTO，且最终文件由本站存储和下载。
+
+## 20. 电子表格生成
+
+### 20.1 能力边界与唯一流程
+
+状态：NEW。电子表格上传/读取属于资料解析；生成新电子表格由聊天编排服务和 Spreadsheet Repository 协作完成。前端不提供配置页或工作簿确认步骤，唯一流程为：
+
+~~~text
+用户在对话中说明要求并可上传文件
+→ 聊天服务结合 conversationId、消息附件、knowledgeBaseId、projectId 判断信息是否充分
+→ 信息不足：普通对话追问，不创建任务
+→ 信息充分：创建 Spreadsheet 并立即启动 generation job
+→ AI 根据上下文生成受约束的工作簿 JSON
+→ 后端校验 JSON 并生成 XLSX
+→ Spreadsheet=ready，并在同一业务提交中创建资料库资源
+→ 对话卡和预览页展示结果，用户可预览或下载
+~~~
+
+“直接生成”表示不要求用户经过前端配置和人工确认，不表示信任模型直接返回二进制。正式后端仍应让 AI 生成结构化工作簿 JSON，校验工作表名、列数、行数、值类型和公式策略后，再用 Apache POI、EasyExcel 或等价库生成 XLSX。Mock 根据同一请求生成演示工作簿，并在下载时使用 ExcelJS 生成文件。
+
+### 20.2 路由、卡片与类型
+
+- `/spreadsheets/new` 只重定向 `/chat?intent=spreadsheet`，用于预填生成要求，不承载配置页面。
+- `/spreadsheets/{id}` 用于生成任务恢复、失败重试和知识库关联；ready 文件从外部入口使用 `/resources/{resourceId}/preview` 统一预览。
+- 对话显式动作：`clientAction=spreadsheet.create`。
+- SSE 事件：`spreadsheet-card`，只返回 `generating/ready/failed/cancelled` 任务状态，结构保存到消息 `spreadsheetData`。
+- 资料库资源使用 `externalKey=spreadsheet:{id}`，`fileType=spreadsheet`。
+
+~~~ts
+type SpreadsheetStatus =
+  | "generating" | "ready" | "failed" | "cancelled"
+
+type SpreadsheetContext = {
   conversationId?: number | null
-  libraryId?: number | null
-  learningProjectId?: number | null
-  learningResourceId?: number | null
+  sourceMessageId?: number | string | null
+  knowledgeBaseId?: number | null
+  projectId?: number | null
+}
+
+type SpreadsheetConfig = {
+  topic: string
+  title: string
+  sheetCount: number
+  language: string
+  requirements?: string
+}
+
+type CreateSpreadsheetRequest = SpreadsheetContext & {
+  prompt: string
+  resourceIds?: string[]
+  mediaAssetIds?: string[]
+  clientRequestId: string
+}
+
+type SpreadsheetSheetDraft = {
+  sheetId: string
+  name: string
+  columns: string[]
+  rows: Array<Array<string | number | boolean | null>>
+}
+
+type SpreadsheetDto = SpreadsheetContext & {
+  id: string
+  status: SpreadsheetStatus
+  config: SpreadsheetConfig
+  workbook: { sheets: SpreadsheetSheetDraft[] }
+  activeJobId?: string
+  fileName?: string
+  fileSize?: number
+  resourceId?: string
   errorCode?: string
   errorMessage?: string
   createdAt: string
   updatedAt: string
 }
 
-interface PresentationJob<T> {
-  jobId: string
-  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled'
-  progress: number
-  result?: T
-  errorCode?: string
+type SpreadsheetChatCardDto = SpreadsheetContext & {
+  cardType: "spreadsheet"
+  status: SpreadsheetStatus
+  spreadsheetId: string
+  config: SpreadsheetConfig
+  fileName?: string
+  resourceId?: string
   errorMessage?: string
 }
-```
+~~~
 
-字段约束：
+`prompt` 是当前用户完整要求；聊天服务还必须读取该会话已保存的历史消息和 `sourceMessageId` 对应附件。`resourceIds/mediaAssetIds` 用于显式补充来源，不能代替权限校验。`config` 和 `sheetCount` 是后端生成后的摘要，不是前端配置请求。
 
-| 字段 | 约束 |
-| --- | --- |
-| topic、title | 去首尾空格后 1 至 120 字符 |
-| pageCount | 3 至 30，必须为整数 |
-| language | 首期只接受 `zh-CN`；扩展语言时后端返回模板支持范围 |
-| sourceText | 最多 6000 字符，只是生成上下文，不作为权限依据 |
-| sourceFileNames | 最多 20 个，每项最多 255 字符，仅用于展示 |
-| mediaAssetIds | 最多 10 个，只接受当前用户有权使用且状态为 ready 的媒体资产 |
-| outline | 3 至 30 页，order 从 1 连续递增且不得重复 |
-| slide.title | 1 至 120 字符 |
-| slide.points | 1 至 8 项，每项 1 至 200 字符 |
-| speakerNotes | 每页最多 2000 字符 |
-| clientRequestId | 8 至 64 字符，同一用户内作为幂等键 |
-| progress | 0 至 100 的整数，只能整体非递减 |
+首期工作表数量为 1 至 5；工作表名不能为空、去重后最长 31 个字符。后端必须限制最大行列数、单元格字符串长度和总 JSON 大小；不得执行 AI 返回的宏、外部链接或不可信公式。超限时任务进入 `failed`，不能截断后伪造完整结果。
 
-`previewImageUrl` 只能是当前后端受保护的相对地址或短期签名地址；不能是讯飞原始地址，过期后前端通过重新获取 PresentationDto 刷新。
+### 20.3 接口
 
-### 19.4 模板接口
+1. `GET /api/spreadsheets`：返回当前用户表格列表。
+2. `GET /api/spreadsheets/{id}`：返回实体及恢复状态。
+3. `POST /api/spreadsheets/generation-jobs`：请求 `CreateSpreadsheetRequest`，在同一事务中创建 Spreadsheet 和任务，返回 `SpreadsheetDto`，初始 `status=generating` 且包含 `activeJobId`。
+4. `POST /api/spreadsheets/{id}/generation-jobs`：失败或取消后重试，请求 `{ clientRequestId }`，返回 `AsyncJob<{ spreadsheetId }>`。
+5. `GET /api/spreadsheets/jobs/{jobId}`：返回统一 `AsyncJob<{ spreadsheetId }>`。
+6. `POST /api/spreadsheets/jobs/{jobId}/cancel`：取消任务但保留原始 prompt 和上下文，状态变为 `cancelled`。
+7. `GET /api/spreadsheets/{id}/download`：仅 `ready` 返回 XLSX 文件流。
 
-#### GET /api/presentations/templates
+生成成功必须在同一业务提交中创建或更新资料库资源并返回 `resourceId`。选择了 `knowledgeBaseId`、`projectId` 时写入对应关联；均为空时只进入资料库。不存在额外“保存到资料库”步骤。
 
-响应 data：
+聊天入口不要求浏览器再调用一次创建接口：后端聊天编排层识别到明确需求后应调用同一 Spreadsheet Application Service，创建任务并通过 `spreadsheet-card` 返回实体。`POST /api/spreadsheets/generation-jobs`供非 SSE 编排、重试恢复测试或其他明确入口复用，两条路径必须使用同一业务服务和幂等规则。
 
-```json
-[
-  {
-    "id": "ink-focus",
-    "name": "清晰讲解",
-    "description": "适合课程和知识分享",
-    "style": "academic",
-    "backgroundColor": "#F8FAFC",
-    "surfaceColor": "#FFFFFF",
-    "textColor": "#172033",
-    "accentColor": "#2563EB"
-  }
-]
-```
+### 20.4 状态、幂等与错误
 
-模板 ID 是后端公开业务 ID，不是讯飞模板 ID。后端内部维护业务模板到 Provider 模板的映射。已被演示文稿使用的模板不能直接删除；可标记停用并从新建列表隐藏。
+- 唯一成功路径：`generating -> ready`；可以从 `generating` 进入 `failed/cancelled`。
+- 重试复用原 Spreadsheet 实体和 `resourceId/externalKey`，但创建新的 jobId；不得重新创建第二个资料库资源。
+- 卡片、工作区和资料库都以同一 Spreadsheet/Resource 权威状态恢复。
+- `clientRequestId` 防重复任务；`externalKey=spreadsheet:{id}` 建唯一资源约束。
+- 相同 `clientRequestId`、用户和操作必须返回原 Spreadsheet/Job；相同键对应不同 prompt 或上下文时返回 409 `IDEMPOTENCY_CONFLICT`。
+- `conversationId/sourceMessageId/knowledgeBaseId/projectId/resourceIds/mediaAssetIds`都必须反查当前用户；项目和知识库不一致返回 409。
+- 错误码至少包含：`SPREADSHEET_NOT_FOUND`、`SPREADSHEET_FORBIDDEN`、`SPREADSHEET_CONTEXT_MISMATCH`、`SPREADSHEET_INPUT_INSUFFICIENT`、`SPREADSHEET_STRUCTURE_INVALID`、`SPREADSHEET_LIMIT_EXCEEDED`、`SPREADSHEET_JOB_CONFLICT`、`SPREADSHEET_GENERATION_FAILED`、`SPREADSHEET_DOWNLOAD_NOT_READY`。
 
-### 19.5 查询和创建
+## 21. 统一资源在线预览
 
-#### GET /api/presentations
+### 21.1 前端入口与职责边界
 
-返回当前用户最近更新的 PPT 列表，首期返回 `PresentationDto[]`。列表按 updatedAt 降序，最多 100 条；需要分页时必须按第 2.5 节统一分页升级，不能临时改变 data 形状。
+状态：NEW。资料库、知识库详情、智能学习资源包和对话生成结果都使用同一个只读路由：
 
-#### GET /api/presentations/{id}
+~~~text
+/resources/{resourceId}/preview?returnTo={内部路径}&source={library|knowledge|learning|chat}
+~~~
 
-- 只返回当前用户拥有的 PPT。
-- status 为 outlining/generating 时 activeJobId 必填。
-- status 为 ready 时 fileName、fileSize、previewPages 必填，outline 不得为空。
-- status 为 failed 时 errorCode 和 errorMessage 必填。
-- 不存在返回 404；属于其他用户也返回 404，避免枚举资源。
+该页面只负责预览和下载，不包含文件问答输入框，不创建会话，也不改变 `projectId/knowledgeBaseId` 关联。PPT 工作区中的“配置 -> 大纲 -> 生成 -> 预览”第 4 步是生成流程的一部分，继续使用 Presentation 自身的 `previewPages`；PPT 在资料库、资源包和聊天结果卡中的“预览”才进入统一资源预览路由。电子表格生成任务的 generating/failed 恢复页可保留，ready 文件的外部预览统一进入资源预览路由。
 
-#### POST /api/presentations
+所有入口只传 `resourceId`。后端必须通过资源记录反查文件、用户权限、类型及 Presentation/Spreadsheet 等业务实体，不能信任前端传递的文件 URL、MIME 或关联 ID。
 
-请求：
+### 21.2 共享响应
 
-```json
-{
-  "topic": "Java 多态的核心原理与应用",
-  "title": "Java 多态复习",
-  "pageCount": 8,
-  "outlineMode": "confirm",
-  "templateId": "ink-focus",
-  "aspectRatio": "16:9",
-  "style": "academic",
-  "audience": "student",
-  "language": "zh-CN",
-  "sourceText": "覆盖动态绑定、向上转型和常见误区",
-  "sourceFileNames": ["多态讲义.pdf"],
-  "mediaAssetIds": [],
-  "conversationId": 102,
-  "libraryId": 1,
-  "learningProjectId": null,
-  "learningResourceId": null,
-  "clientRequestId": "ppt-create-20260716-001"
+~~~ts
+type ResourcePreviewStatus =
+  | "processing" | "ready" | "failed" | "unsupported" | "too_large"
+
+type ResourcePreviewKind =
+  | "text" | "image" | "pdf" | "word"
+  | "presentation" | "spreadsheet" | "mindmap" | "audio"
+  | "unsupported"
+
+type ResourcePreviewDto = {
+  resource: LibraryResourceDto
+  status: ResourcePreviewStatus
+  previewKind: ResourcePreviewKind
+  textContent?: string
+  previewUrl?: string
+  transcript?: string
+  presentationId?: string
+  spreadsheetId?: string
+  mindMapId?: number
+  errorMessage?: string
 }
-```
+~~~
 
-响应 data 为 status=`draft` 的 PresentationDto，outline 和 previewPages 为 `[]`。后端校验所有上下文实体归属；learningResourceId 存在时必须属于 learningProjectId 且 group=PPT，否则返回 `409 PRESENTATION_CONTEXT_MISMATCH`。
+接口：`GET /api/resources/{resourceId}/preview`。
 
-相同用户、相同 clientRequestId、相同请求体重复提交时返回第一次创建的 DTO；请求体不同返回 `409 IDEMPOTENCY_CONFLICT`。
+- `resource.status=waiting/processing` 时返回 `status=processing`，不得伪造可预览结果。
+- 解析失败返回 `status=failed` 和用户可读 `errorMessage`。
+- 格式不支持返回 `status=unsupported`；文件超限返回 `status=too_large`。这两种业务状态允许 HTTP 200，便于前端展示下载兜底。
+- 资源不存在返回 404 `RESOURCE_NOT_FOUND`；无权访问返回 403 `RESOURCE_FORBIDDEN`。
+- `previewUrl` 必须是本站或受控对象存储的短期签名 URL，禁止返回本机路径，建议 5 至 15 分钟过期。
+- 不允许返回 Base64 文件正文。`textContent` 只用于受大小限制的文本、Markdown 和代码。
+- `presentationId/spreadsheetId/mindMapId` 只在资源确实关联本站结构化实体时返回；前端可继续读取对应只读结构。普通上传的 Office 文件由预览服务转换后返回 PDF 或分页图片 URL。
 
-### 19.6 大纲任务和编辑
+### 21.3 格式和大小限制
 
-#### POST /api/presentations/{id}/outline-jobs
+| 类型 | 在线预览上限 | 正式处理方式 |
+| --- | ---: | --- |
+| Markdown、TXT、代码、JSON | 10MB | 安全转义或受控 Markdown 渲染 |
+| 思维导图 | 10MB | 返回只读树结构或受控预览数据 |
+| 图片 | 20MB | 返回缩放图/原图短期 URL |
+| PDF | 30MB | 支持 Range 的文件流或短期 URL |
+| Word | 30MB | 服务端转 PDF/分页图片，不能依赖前端 Mammoth 保真 |
+| PPT/PPTX | 30MB | 生成实体返回 previewPages；上传文件服务端转 PDF/分页图片 |
+| Excel/CSV | 30MB | 生成实体返回受限工作簿 JSON；上传文件服务端解析只读网格 |
+| 音频 | 30MB | 返回可流式播放 URL，可选返回已有转写文本 |
+| ZIP/RAR/7Z、视频 | 不支持 | 只允许下载 |
 
-请求：
+前端在读取预览正文前按 `sizeBytes` 拦截，后端仍必须执行同样限制。Word、PPT、PDF 和 Excel 的转换任务应复用文件解析状态；超时、转换失败和恶意文件不能回退为“成功”。
 
-```json
-{ "clientRequestId": "ppt-outline-20260716-001" }
-```
+### 21.4 性能、安全与缓存
 
-允许状态：draft、failed、cancelled。成功返回 PresentationJob，初始 status 为 pending 或 running；同时 PresentationDto 变为 outlining 并写 activeJobId。一个 PPT 同时只能有一个活动任务。
+- PDF、图片和音频必须支持流式读取或 Range；分页图片按可视区域懒加载。
+- 同一资源版本可缓存预览产物；资源内容或版本变化时必须使旧预览失效。
+- 文本和 Office 转换结果必须移除脚本、外链执行、宏和嵌入对象；预览域不得携带主站认证 Cookie。
+- 前端离开路由时取消未完成请求并释放 Blob URL；后端转换任务要有超时、并发和单用户配额。
+- `returnTo` 仅由前端作为内部返回路径使用，后端不处理；前端只接受以单个 `/` 开头的站内路径。
+- 下载继续使用 `GET /api/resources/{resourceId}/download`，预览失败、超限或不支持时仍可下载有权限的原文件。
 
-任务成功 result：
+### 21.5 Mock 边界
 
-```json
-{
-  "presentationId": "ppt_01JZ8K0A6F",
-  "outline": [
-    {
-      "id": "slide_01",
-      "order": 1,
-      "title": "Java 多态复习",
-      "points": ["建立本次复习目标"],
-      "speakerNotes": "说明本次分享范围",
-      "layout": "cover"
-    }
-  ]
-}
-```
-
-任务成功时后端必须在同一事务中保存 outline、把 PPT 状态改为 outline_ready、清空 activeJobId，再把任务改为 succeeded。任务失败时 PPT 状态改为 failed，保存稳定错误码，清空 activeJobId。
-
-#### PUT /api/presentations/{id}/outline
-
-请求：
-
-```json
-{
-  "slides": [
-    {
-      "id": "slide_01",
-      "order": 1,
-      "title": "Java 多态复习",
-      "points": ["复习目标与内容范围"],
-      "speakerNotes": "控制在一分钟内",
-      "layout": "cover"
-    }
-  ],
-  "clientRequestId": "ppt-outline-update-20260716-001"
-}
-```
-
-允许状态：outline_ready、cancelled、failed、ready。后端按数组顺序重新写连续 order，并把 config.pageCount 更新为数组长度。ready 状态编辑大纲后，原文件仍保留为历史版本但当前 DTO 回到 outline_ready，fileName/fileSize/previewPages 清空，防止下载旧内容冒充新版本。
-
-### 19.7 PPT 生成任务
-
-#### POST /api/presentations/{id}/generation-jobs
-
-请求：
-
-```json
-{ "clientRequestId": "ppt-generate-20260716-001" }
-```
-
-允许状态：outline_ready、failed、cancelled，且 outline 已通过 19.3 校验。成功返回 PresentationJob，并把 PPT 改为 generating。相同幂等键重复提交返回同一 jobId；页面“重试”必须使用新的 clientRequestId 调用本接口，不增加独立 retry 路径。
-
-任务成功 result：
-
-```json
-{ "presentationId": "ppt_01JZ8K0A6F" }
-```
-
-成功完成前，后端必须：
-
-1. 从 Provider 获取完整 PPTX，并校验文件签名、MIME、大小和页数。
-2. 将原件复制到本系统私有对象存储，生成自己的 fileAssetId。
-3. 按页生成 PNG/WebP 预览，保存预览资产关联。
-4. 在一个最终提交事务中更新 fileName、fileSize、previewPages、status=ready，清空 activeJobId。
-5. learningProjectId 和 learningResourceId 存在时，把对应学习资源更新为已生成并保存 presentationId；前端随后重新获取学习项目。
-
-不得在 Provider 文件尚未复制、文件校验失败或预览未完成时返回 succeeded。
-
-#### GET /api/presentations/jobs/{jobId}
-
-返回 PresentationJob。jobId 只允许所属用户读取。轮询建议：前 30 秒每 1 秒一次，之后每 2 至 3 秒一次；前端当前最多轮询 120 次。后端必须允许页面刷新后继续查询，任务记录至少保留 30 天。
-
-#### POST /api/presentations/jobs/{jobId}/cancel
-
-无请求体，成功 data 为 null。pending/running 可取消；已结束任务重复取消仍返回成功。后端尽力取消 Provider 任务，并把本地任务和 PPT 都改为 cancelled。若 Provider 已完成但本地尚未提交，取消请求优先，生成文件作为无引用临时资产清理。
-
-### 19.8 预览、下载和资料库
-
-#### GET /api/presentations/{id}/preview-pages/{pageId}
-
-- 只允许 PPT 所有者或有权访问关联资料库/学习项目的用户访问。
-- 返回 `image/webp` 或 `image/png`，支持 ETag 和私有缓存；不得永久公开。
-- pageId 必须来自该 PresentationDto.previewPages，不能接受任意对象存储键。
-
-#### GET /api/presentations/{id}/download
-
-- 只允许 status=ready。
-- 返回 PPTX 二进制，Content-Type 固定为 `application/vnd.openxmlformats-officedocument.presentationml.presentation`。
-- Content-Disposition 使用经过安全处理的 UTF-8 fileName。
-- 支持流式下载，不把整个文件读入 JVM 堆；下载前再次校验权限。
-- 后端返回自己的对象存储文件，禁止 302 到讯飞长期 URL。
-
-#### POST /api/presentations/{id}/library
-
-请求：
-
-```json
-{
-  "libraryId": 1,
-  "clientRequestId": "ppt-library-20260716-001"
-}
-```
-
-只允许 ready 状态。后端校验资料库归属，创建或更新唯一的资料库聚合资源，externalKey 固定为 `presentation:{presentationId}`，type=PPT、category=file、status=ready，并返回更新后的 PresentationDto，其中 libraryId 和 libraryResourceId 必填。重复保存到同一资料库幂等；改存其他资料库视为移动关联，不复制 PPT 原件。
-
-### 19.9 状态机和刷新恢复
-
-```text
-draft
-  -> outlining -> outline_ready
-  -> failed
-  -> cancelled
-
-outline_ready
-  -> generating -> ready
-  -> failed
-  -> cancelled
-
-ready
-  -> outline_ready  编辑大纲形成新版本
-
-failed/cancelled
-  -> outlining      大纲任务重试
-  -> generating     已有有效大纲时生成任务重试
-```
-
-- 页面刷新时先 GET PresentationDto；有 activeJobId 时继续 GET job，不能重新创建任务。
-- status=generating/outlining 但 activeJobId 为空属于服务端数据错误，返回 `PRESENTATION_STATE_INVALID` 并记录告警。
-- 页面倒退到大纲不会自动取消任务；只有明确点击“停止生成”才调用 cancel。
-- 用户关闭页面不删除 PPT 或任务。再次进入 `/presentations/:id` 必须可恢复。
-- 任务 progress 只表示体验进度，不作为文件是否可下载的依据；只有 status=ready 才允许下载。
-
-### 19.10 讯飞 Provider 内部适配
-
-后端至少分为业务 Service 与 Provider Adapter 两层。Controller 和返回 DTO 不得出现以下字段：讯飞 appId、apiKey、apiSecret、签名、providerTaskId、providerTemplateId、providerFileUrl、Provider 原始状态或原始错误对象。
-
-推荐内部持久化字段：
-
-| 字段 | 用途 |
-| --- | --- |
-| provider | 固定如 `xunfei`，便于未来替换 |
-| providerTaskId | 仅后端轮询/取消使用，加密或受控保存 |
-| providerTemplateId | 由业务 templateId 映射 |
-| providerStatus | 原始状态，只用于排错 |
-| providerErrorCode/message | 受控日志，不直接返回前端 |
-| providerRequestHash | 排查幂等和重复计费 |
-
-Provider 状态必须映射到通用任务状态：未提交/排队映射 pending，生成中映射 running，成功且文件已落本系统映射 succeeded，明确失败映射 failed，用户取消映射 cancelled。网络超时不能立即标记失败，应在可重试查询窗口内继续核验 Provider 任务；超过后端配置的总时限后返回 `PRESENTATION_PROVIDER_TIMEOUT`。
-
-Provider 回调必须验证签名、防重放并按 providerTaskId 找本地任务；轮询与回调同时到达时使用乐观锁或任务版本号，只允许一次最终提交。任何 Provider 原始 prompt、源资料和下载 URL 不写普通业务日志。
-
-### 19.11 权限、并发和数据表
-
-- presentation 必须保存 ownerUserId；所有上下文 ID 都要反查，不信任前端路由参数。
-- 同一用户首期最多 3 个 running PPT 任务，超出返回 429。
-- 同一 PPT 同时只能有一个活动任务，第二个返回 409。
-- 删除资料库或学习项目不能越权删除用户独立创建的 PPT；只解除关联。用户删除 PPT 时再清理文件引用。
-- 建议表：presentation、presentation_slide、generation_job、presentation_preview_asset；文件原件和预览复用现有 file_asset/object storage，资料库展示复用 library resource 聚合。
-- generation_job 保存 requestSnapshot、resultSnapshot、errorCode、进度和时间；讯飞原始大对象放受控日志或专用审计存储，不塞入主业务表。
-- PPT 更新和任务完成使用 version 字段做乐观锁；过期任务不能覆盖用户已经修改的新大纲。
-
-### 19.12 错误码
-
-| HTTP | errorCode | 前端处理 |
-| --- | --- | --- |
-| 400 | PRESENTATION_VALIDATION_FAILED | 保留配置或大纲，定位字段 |
-| 400 | PRESENTATION_STATE_INVALID | 展示不可恢复错误并允许返回 |
-| 403 | PRESENTATION_FORBIDDEN | 不展示实体详情，返回来源页 |
-| 404 | PRESENTATION_NOT_FOUND | 展示不存在状态 |
-| 404 | PRESENTATION_TEMPLATE_NOT_FOUND | 刷新模板并要求重新选择 |
-| 409 | PRESENTATION_CONTEXT_MISMATCH | 保留输入，提示关联实体冲突 |
-| 409 | PRESENTATION_OUTLINE_NOT_READY | 返回大纲步骤 |
-| 409 | PRESENTATION_JOB_RUNNING | 恢复返回的活动任务，不创建新任务 |
-| 409 | IDEMPOTENCY_CONFLICT | 停止重试并记录请求 ID |
-| 413 | PRESENTATION_SOURCE_TOO_LARGE | 保留配置，减少资料 |
-| 422 | PRESENTATION_OUTLINE_REJECTED | 保留大纲，展示可修改原因 |
-| 422 | PRESENTATION_FILE_INVALID | 允许以新请求 ID 重试生成 |
-| 429 | PRESENTATION_RATE_LIMITED | 显示稍后重试，不自动高频重发 |
-| 502 | PRESENTATION_PROVIDER_FAILED | 展示失败并允许重试 |
-| 503 | PRESENTATION_PROVIDER_UNAVAILABLE | 展示服务暂不可用 |
-| 504 | PRESENTATION_PROVIDER_TIMEOUT | 展示超时并允许恢复/重试 |
-
-错误响应必须沿用第 2.3 节统一结构，并在 details 中按需返回 `presentationId`、`activeJobId`、`retryable` 和字段错误；不得返回密钥、Provider 原始响应或内部对象存储键。
-
-### 19.13 后端交付验收
-
-- [ ] API 模式可完成配置、大纲、编辑、生成、刷新恢复、取消、重试、预览、下载和保存资料库。
-- [ ] confirm 和 auto 两种 outlineMode 走同一状态机，auto 只跳过前端人工暂停。
-- [ ] 学习资源生成完成后重新获取项目能得到 presentationId 和已生成状态。
-- [ ] 资料库聚合列表返回 externalKey=`presentation:{id}`，从首页和详情均可重新打开。
-- [ ] 重复 clientRequestId 不重复调用讯飞、不重复计费、不重复创建文件。
-- [ ] 接口错误时前端不会读取 Mock 或伪造 ready。
-- [ ] 前端响应和日志中不存在讯飞密钥、Provider 任务 ID、原始文件 URL和对象存储私有键。
-- [ ] PPTX 下载 MIME、文件名、页数和预览页一致，预览 URL 过期后可通过重新 GET DTO 恢复。
+Mock Repository 使用与正式环境相同的 `ResourcePreviewDto`。生成的 PPT、表格、思维导图和文本读取现有结构化 Mock 实体；当前标签页刚上传的图片、PDF、DOCX、XLSX、文本和音频可使用内存 Blob URL。真实文件正文不写入 sessionStorage，因此整页刷新后只剩元数据时必须返回明确失败状态，不能生成假的文件内容。API 模式不得在预览接口失败后回退 Mock。

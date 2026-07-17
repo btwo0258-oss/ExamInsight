@@ -1,6 +1,6 @@
 import { USER_KEY } from '@/api/request'
 
-const PREFIX = 'examinsight.mock.v1'
+const PREFIX = 'examinsight.mock.v2'
 
 function currentUserId() {
   const raw = sessionStorage.getItem(USER_KEY) ?? localStorage.getItem(USER_KEY)

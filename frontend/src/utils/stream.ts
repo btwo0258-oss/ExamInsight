@@ -1,4 +1,4 @@
-type SseEvent = {
+export type SseEvent = {
   event?: string
   data: string
 }
@@ -31,7 +31,7 @@ function parseEventBlock(block: string): SseEvent[] {
   return events
 }
 
-export async function* parseSseTextStream(response: Response): AsyncGenerator<string> {
+export async function* parseSseEventStream(response: Response): AsyncGenerator<SseEvent> {
   if (!response.body) return
 
   const reader = response.body.getReader()
@@ -44,22 +44,35 @@ export async function* parseSseTextStream(response: Response): AsyncGenerator<st
     buffer += decoder.decode(value, { stream: true })
 
     while (true) {
-      const sep = buffer.indexOf('\n\n')
-      if (sep === -1) break
+      const separator = /\r?\n\r?\n/.exec(buffer)
+      if (!separator || separator.index === undefined) break
 
-      const block = buffer.slice(0, sep)
-      buffer = buffer.slice(sep + 2)
+      const block = buffer.slice(0, separator.index)
+      buffer = buffer.slice(separator.index + separator[0].length)
       const events = parseEventBlock(block)
       for (const evt of events) {
         if (!evt.data) continue
-        if (evt.data === '[DONE]') return
-        if (evt.event === 'error') throw new Error(evt.data)
-        if (evt.event && evt.event !== 'message') continue
-
-        const text = normalizeChunk(evt.data)
-        if (text) yield text
+        yield evt
       }
     }
+  }
+
+  buffer += decoder.decode()
+  if (buffer.trim()) {
+    for (const evt of parseEventBlock(buffer)) {
+      if (evt.data) yield evt
+    }
+  }
+}
+
+export async function* parseSseTextStream(response: Response): AsyncGenerator<string> {
+  for await (const evt of parseSseEventStream(response)) {
+    if (evt.data === '[DONE]') return
+    if (evt.event === 'error') throw new Error(evt.data)
+    if (evt.event && evt.event !== 'message') continue
+
+    const text = normalizeChunk(evt.data)
+    if (text) yield text
   }
 }
 
