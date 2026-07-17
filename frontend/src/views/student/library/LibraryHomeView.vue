@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
+import ResourceTypeIcon from '@/components/common/ResourceTypeIcon.vue'
 import StudentShell from '@/components/layout/StudentShell.vue'
 import UploadMaterialModal from '@/components/library/UploadMaterialModal.vue'
 import LibraryKnowledgeCreateModal from '@/components/library/LibraryKnowledgeCreateModal.vue'
@@ -14,6 +15,7 @@ import type { ResourceFileType, ResourceSourceType } from '@/types/contracts/lib
 import { presentationRepository } from '@/repositories/presentation'
 import { spreadsheetRepository } from '@/repositories/spreadsheet'
 import { resourcePreviewRoute } from '@/utils/resourcePreview'
+import { resourceVisualTypeFromFile } from '@/utils/resourceVisual'
 
 type LibraryFilter = 'all' | 'knowledge' | 'mindmap' | 'image' | 'file'
 type ViewMode = 'grid' | 'list'
@@ -181,13 +183,8 @@ function fileSize(file: LibraryResource) {
   return `${(file.sizeBytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-function fileIconName(file: LibraryResource) {
-  if (file.fileType === 'mindmap') return 'mind-topic'
-  if (file.fileType === 'presentation') return 'presentation'
-  if (file.fileType === 'spreadsheet') return 'grid'
-  if (file.fileType === 'image') return 'image'
-  if (file.fileType === 'document') return 'book'
-  return 'file'
+function fileVisualType(file: LibraryResource) {
+  return resourceVisualTypeFromFile(file.name, file.mimeType, file.fileType)
 }
 
 function sourceLabel(file: LibraryResource) {
@@ -400,18 +397,6 @@ onMounted(() => {
                 <span class="ui-menu-icon"><AppIcon name="folder" :size="16" /></span>
                 新建知识库
               </button>
-              <button class="ui-menu-item" type="button" @click="newMenuOpen = false; router.push('/mindmap')">
-                <span class="ui-menu-icon"><AppIcon name="mindmap" :size="16" /></span>
-                创建思维导图
-              </button>
-              <button class="ui-menu-item" type="button" @click="newMenuOpen = false; router.push({ path: '/presentations/new', query: { returnTo: '/library' } })">
-                <span class="ui-menu-icon"><AppIcon name="presentation" :size="16" /></span>
-                生成演示文稿
-              </button>
-              <button class="ui-menu-item" type="button" @click="newMenuOpen = false; router.push({ path: '/spreadsheets/new', query: { returnTo: '/library' } })">
-                <span class="ui-menu-icon"><AppIcon name="grid" :size="16" /></span>
-                生成电子表格
-              </button>
             </div>
           </div>
         </div>
@@ -540,9 +525,7 @@ onMounted(() => {
           @click="openAsset(asset)"
         >
           <template v-if="asset.kind === 'knowledge'">
-            <span class="knowledge-icon">
-              <AppIcon name="folder" :size="22" />
-            </span>
+            <ResourceTypeIcon class="knowledge-icon" type="knowledge" :size="22" :container-size="34" />
             <strong>{{ knowledgeTitle(asset.source) }}</strong>
             <small>{{ knowledgeFileCount(asset.source) }} 个文档 · {{ knowledgeUpdatedAt(asset.source) }}</small>
             <button
@@ -589,9 +572,7 @@ onMounted(() => {
               </button>
             </div>
             <strong>{{ asset.source.name }}</strong>
-            <span class="file-preview-icon">
-              <AppIcon :name="fileIconName(asset.source)" :size="34" />
-            </span>
+            <ResourceTypeIcon class="file-preview-icon" :type="fileVisualType(asset.source)" :size="34" :container-size="58" />
             <small>{{ asset.source.format }} · {{ fileSize(asset.source) }} · {{ sourceLabel(asset.source) }}</small>
           </template>
         </article>
@@ -623,7 +604,11 @@ onMounted(() => {
           <button class="asset-row-check" type="button" :aria-label="`选择 ${asset.kind === 'knowledge' ? knowledgeTitle(asset.source) : asset.source.name}`" @click.stop="toggleSelection(asset.id)">
             <span v-if="isSelected(asset.id)">✓</span>
           </button>
-          <AppIcon :name="asset.kind === 'knowledge' ? 'folder' : fileIconName(asset.source)" :size="20" />
+          <ResourceTypeIcon
+            :type="asset.kind === 'knowledge' ? 'knowledge' : fileVisualType(asset.source)"
+            variant="plain"
+            :size="20"
+          />
           <strong>{{ asset.kind === 'knowledge' ? knowledgeTitle(asset.source) : asset.source.name }}</strong>
           <span>{{ assetModifiedAt(asset) }}</span>
           <span>{{ assetSize(asset) }}</span>
@@ -1115,13 +1100,6 @@ h1 {
 
 .knowledge-icon {
   grid-row: 1 / 3;
-  width: 34px;
-  height: 34px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  display: grid;
-  place-items: center;
-  color: var(--color-text);
 }
 
 .asset-check {
@@ -1283,12 +1261,6 @@ h1 {
 
 .file-preview-icon {
   place-self: center;
-  width: 58px;
-  height: 58px;
-  border-radius: 14px;
-  display: grid;
-  place-items: center;
-  color: var(--color-info);
 }
 
 .asset-list {

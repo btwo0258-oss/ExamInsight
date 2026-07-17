@@ -110,7 +110,7 @@ async function submit() {
     password: p,
     nickname: nickname.value.trim(),
     remember: remember.value,
-  });
+  }, router);
   close();
 }
 
@@ -263,8 +263,8 @@ function goToAdminLogin() {
         </div>
       </div>
       <div class="forgot-password__footer">
-        <AppButton type="secondary" @click="showForgotPassword = false">取消</AppButton>
-        <AppButton type="primary" :loading="forgotPasswordLoading" @click="handleForgotPassword"
+        <AppButton variant="secondary" @click="showForgotPassword = false">取消</AppButton>
+        <AppButton variant="primary" :loading="forgotPasswordLoading" @click="handleForgotPassword"
           >提交申请</AppButton
         >
       </div>

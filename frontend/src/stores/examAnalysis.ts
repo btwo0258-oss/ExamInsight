@@ -43,11 +43,12 @@ export const useExamAnalysisStore = defineStore("examAnalysis", () => {
 
   async function add(item: Omit<ExamAnalysis, "id"> & { fileNames?: string }) {
     try {
-      const id = await examApi.createExamAnalysis({
-        title: item.title,
-        examType: item.type,
-        fileNames: (item as any).fileNames || "",
-      });
+      const id = await examApi.createExamAnalysis(
+        item.title,
+        item.type,
+        item.fileNames || "",
+        [],
+      );
       await fetchList();
       return { ...item, id };
     } catch (error) {

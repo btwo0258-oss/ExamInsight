@@ -30,6 +30,7 @@ describe('PresentationChatCard', () => {
     expect(wrapper.text()).toContain('取消')
     expect(wrapper.text()).toContain('更多设置')
     expect(wrapper.text()).toContain('生成大纲')
+    expect(wrapper.find('[data-resource-type="presentation"]').exists()).toBe(true)
 
     await wrapper.find('input[placeholder="输入 PPT 主题"]').setValue('数据结构复习')
     const update = wrapper.emitted('update')?.at(-1)?.[0] as PresentationChatCardDto

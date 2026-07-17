@@ -1,40 +1,43 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { getStoredToken } from '@/api/request'
 import { useAuthStore as useAdminAuthStore } from '@/stores/adminAuth'
+import { useAuthStore } from '@/stores/auth'
+
+const requiresAuth = { requiresAuth: true }
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
-    { path: '/', redirect: '/learning/projects' },
+    { path: '/', redirect: '/chat' },
     { path: '/chat', name: 'chat', component: () => import('@/views/student/chat/StudentChatView.vue') },
-    { path: '/chat/:id', name: 'chat-detail', component: () => import('@/views/student/chat/StudentChatView.vue'), props: true },
-    { path: '/presentations/new', name: 'presentation-new', component: () => import('@/views/student/presentation/PresentationWorkspaceView.vue') },
-    { path: '/presentations/:id', name: 'presentation-detail', component: () => import('@/views/student/presentation/PresentationWorkspaceView.vue'), props: true },
+    { path: '/chat/:id', name: 'chat-detail', component: () => import('@/views/student/chat/StudentChatView.vue'), props: true, meta: requiresAuth },
+    { path: '/presentations/new', name: 'presentation-new', component: () => import('@/views/student/presentation/PresentationWorkspaceView.vue'), meta: requiresAuth },
+    { path: '/presentations/:id', name: 'presentation-detail', component: () => import('@/views/student/presentation/PresentationWorkspaceView.vue'), props: true, meta: requiresAuth },
     {
       path: '/spreadsheets/new',
       name: 'spreadsheet-new',
-      redirect: (to) => ({ path: '/chat', query: { ...to.query, intent: 'spreadsheet' } }),
+      component: () => import('@/views/student/chat/StudentChatView.vue'),
+      meta: requiresAuth,
     },
-    { path: '/spreadsheets/:id', name: 'spreadsheet-detail', component: () => import('@/views/student/spreadsheet/SpreadsheetWorkspaceView.vue'), props: true },
-    { path: '/learning', redirect: '/learning/projects' },
-    { path: '/learning/new', name: 'learning-new', component: () => import('@/views/student/chat/StudentChatView.vue') },
-    { path: '/learning/setup/:id', name: 'learning-setup', component: () => import('@/views/student/chat/StudentChatView.vue'), props: true },
-    { path: '/learning/projects', name: 'learning-projects', component: () => import('@/views/student/learning/LearningProjectsView.vue') },
-    { path: '/learning/:id', name: 'learning-plan', component: () => import('@/views/student/learning/LearningPlanView.vue'), props: true },
-    { path: '/learning/:id/study', name: 'learning-study', component: () => import('@/views/student/learning/LearningStudyView.vue'), props: true },
+    { path: '/spreadsheets/:id', name: 'spreadsheet-detail', component: () => import('@/views/student/spreadsheet/SpreadsheetWorkspaceView.vue'), props: true, meta: requiresAuth },
+    { path: '/learning', redirect: '/learning/projects', meta: requiresAuth },
+    { path: '/learning/new', name: 'learning-new', component: () => import('@/views/student/chat/StudentChatView.vue'), meta: requiresAuth },
+    { path: '/learning/setup/:id', name: 'learning-setup', component: () => import('@/views/student/chat/StudentChatView.vue'), props: true, meta: requiresAuth },
+    { path: '/learning/projects', name: 'learning-projects', component: () => import('@/views/student/learning/LearningProjectsView.vue'), meta: requiresAuth },
+    { path: '/learning/:id', name: 'learning-plan', component: () => import('@/views/student/learning/LearningPlanView.vue'), props: true, meta: requiresAuth },
+    { path: '/learning/:id/study', name: 'learning-study', component: () => import('@/views/student/learning/LearningStudyView.vue'), props: true, meta: requiresAuth },
     { path: '/learning/:id/practice', redirect: (to) => `/learning/${String(to.params.id)}/study` },
-    { path: '/learning/:id/mistakes', name: 'learning-mistakes', component: () => import('@/views/student/learning/LearningMistakesView.vue'), props: true },
-    { path: '/learning/:id/resources', name: 'learning-resources', component: () => import('@/views/student/learning/LearningResourcesView.vue'), props: true },
-    { path: '/library', name: 'library-home', component: () => import('@/views/student/library/LibraryHomeView.vue') },
-    { path: '/library/:id', name: 'library-detail', component: () => import('@/views/student/library/LibraryDetailView.vue'), props: true },
-    { path: '/resources/:resourceId/preview', name: 'resource-preview', component: () => import('@/views/student/resource/ResourcePreviewView.vue'), props: true },
-    { path: '/resource', name: 'resource-center', component: () => import('@/views/ResourceCenterView.vue') },
-    { path: '/exam-analysis', name: 'exam-analysis-list', component: () => import('@/views/ExamAnalysisListView.vue') },
-    { path: '/exam-analysis/:id', name: 'exam-analysis-detail', component: () => import('@/views/ExamAnalysisView.vue'), props: true },
+    { path: '/learning/:id/mistakes', name: 'learning-mistakes', component: () => import('@/views/student/learning/LearningMistakesView.vue'), props: true, meta: requiresAuth },
+    { path: '/learning/:id/resources', name: 'learning-resources', component: () => import('@/views/student/learning/LearningResourcesView.vue'), props: true, meta: requiresAuth },
+    { path: '/library', name: 'library-home', component: () => import('@/views/student/library/LibraryHomeView.vue'), meta: requiresAuth },
+    { path: '/library/:id', name: 'library-detail', component: () => import('@/views/student/library/LibraryDetailView.vue'), props: true, meta: requiresAuth },
+    { path: '/resources/:resourceId/preview', name: 'resource-preview', component: () => import('@/views/student/resource/ResourcePreviewView.vue'), props: true, meta: requiresAuth },
+    { path: '/resource', name: 'resource-center', component: () => import('@/views/ResourceCenterView.vue'), meta: requiresAuth },
+    { path: '/exam-analysis', name: 'exam-analysis-list', component: () => import('@/views/ExamAnalysisListView.vue'), meta: requiresAuth },
+    { path: '/exam-analysis/:id', name: 'exam-analysis-detail', component: () => import('@/views/ExamAnalysisView.vue'), props: true, meta: requiresAuth },
     { path: '/knowledge', redirect: '/library' },
     { path: '/knowledge/:id', redirect: (to) => `/library/${String(to.params.id)}` },
-    { path: '/mindmap', name: 'mindmap-list', component: () => import('@/views/mindmap/MindMapListView.vue') },
-    { path: '/mindmap/:id', name: 'mindmap-detail', component: () => import('@/views/mindmap/MindMapView.vue') },
+    { path: '/mindmap', name: 'mindmap-list', component: () => import('@/views/mindmap/MindMapListView.vue'), meta: requiresAuth },
+    { path: '/mindmap/:id', name: 'mindmap-detail', component: () => import('@/views/mindmap/MindMapView.vue'), meta: requiresAuth },
     // Admin routes
     {
       path: '/admin/login',
@@ -89,22 +92,15 @@ router.beforeEach((to, from, next) => {
     return
   }
 
-  const token = getStoredToken()
-  const publicStudentPath =
-    to.path === '/learning' ||
-    to.path.startsWith('/learning/') ||
-    to.path.startsWith('/presentations/') ||
-    to.path.startsWith('/spreadsheets/') ||
-    to.path.startsWith('/resources/') ||
-    to.path === '/library' ||
-    to.path.startsWith('/library/')
-
-  if (!token && !publicStudentPath && to.path !== '/chat' && !to.path.startsWith('/chat')) {
-    // Student mock pages and quick chat are available before login.
-    next('/chat')
-  } else {
-    next()
+  const authStore = useAuthStore()
+  authStore.init()
+  if (to.meta.requiresAuth && !authStore.isAuthed) {
+    authStore.openAuthModal(to.fullPath)
+    next({ name: 'chat', replace: true })
+    return
   }
+
+  next()
 })
 
 export default router

@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import KnowledgeBaseList from '@/components/knowledge/KnowledgeBaseList.vue'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import { useConversationStore } from '@/stores/conversation'
+import { useMindMapStore } from '@/stores/mindmap'
 
 vi.mock('vue-router', () => ({
   useRouter: () => ({
@@ -42,18 +43,20 @@ describe('KnowledgeBaseList.vue', () => {
     setActivePinia(createPinia())
   })
 
-  it('renders empty state when no knowledge bases', async () => {
+  it('renders only the creation affordance when no knowledge bases exist', async () => {
     const store = useKnowledgeBaseStore()
     store.fetchAll = vi.fn().mockResolvedValue(undefined)
     const convStore = useConversationStore()
     convStore.fetchList = vi.fn().mockResolvedValue(undefined)
+    const mindMapStore = useMindMapStore()
+    mindMapStore.fetchList = vi.fn().mockResolvedValue([])
     
     const wrapper = mount(KnowledgeBaseList)
     store.list = [] // empty
     await new Promise(resolve => setTimeout(resolve, 0))
     await wrapper.vm.$nextTick()
-    expect(wrapper.find('.empty').exists()).toBe(true)
-    expect(wrapper.text()).toContain('暂无知识库')
+    expect(wrapper.find('.new-card').exists()).toBe(true)
+    expect(wrapper.findAll('.kb-card')).toHaveLength(0)
   })
 
   it('renders list of knowledge bases', async () => {
@@ -61,6 +64,8 @@ describe('KnowledgeBaseList.vue', () => {
     store.fetchAll = vi.fn().mockResolvedValue(undefined)
     const convStore = useConversationStore()
     convStore.fetchList = vi.fn().mockResolvedValue(undefined)
+    const mindMapStore = useMindMapStore()
+    mindMapStore.fetchList = vi.fn().mockResolvedValue([])
     
     store.list = [
       { id: 1, name: 'KB 1', createTime: '', updateTime: '' },

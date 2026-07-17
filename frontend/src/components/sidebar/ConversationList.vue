@@ -23,10 +23,10 @@ const groupedList = computed(() => {
     return [{ label: '', items: props.items }]
   }
 
-  const groups: { [key: string]: Conversation[] } = {
-    '今天': [],
-    '7天内': [],
-    '30天内': []
+  const groups = {
+    今天: [] as Conversation[],
+    '7天内': [] as Conversation[],
+    '30天内': [] as Conversation[],
   }
   
   const others: { [key: string]: Conversation[] } = {}
@@ -39,7 +39,7 @@ const groupedList = computed(() => {
   for (const c of props.items) {
     const time = new Date(c.updateTime || c.createTime || Date.now()).getTime()
     if (time >= todayStart) {
-      groups['今天'].push(c)
+      groups.今天.push(c)
     } else if (time >= sevenDaysAgo) {
       groups['7天内'].push(c)
     } else if (time >= thirtyDaysAgo) {
@@ -53,7 +53,7 @@ const groupedList = computed(() => {
   }
 
   const result = []
-  if (groups['今天'].length) result.push({ label: '今天', items: groups['今天'] })
+  if (groups.今天.length) result.push({ label: '今天', items: groups.今天 })
   if (groups['7天内'].length) result.push({ label: '7天内', items: groups['7天内'] })
   if (groups['30天内'].length) result.push({ label: '30天内', items: groups['30天内'] })
   

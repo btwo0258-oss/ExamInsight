@@ -6,7 +6,6 @@ import { getMediaSource, isAudioFile, isImageFile } from '@/utils/file'
 import {
   deleteLibraryResource,
   downloadLibraryResource,
-  getLibraryResources,
   listLibraryResources,
   renameLibraryResource,
   retryLibraryResource,
@@ -46,7 +45,8 @@ function clientRequestId() {
 }
 
 export const useLibraryResourceStore = defineStore('libraryResource', () => {
-  const resources = ref<LibraryResource[]>(getLibraryResources())
+  // Do not expose mock seed data before a user has authenticated.
+  const resources = ref<LibraryResource[]>([])
   const isLoading = ref(false)
   const isMutating = ref(false)
   const errorMessage = ref<string | null>(null)
@@ -413,7 +413,7 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
   }
 
   function clearAll() {
-    resources.value = getLibraryResources()
+    resources.value = []
     isLoading.value = false
     isMutating.value = false
     errorMessage.value = null

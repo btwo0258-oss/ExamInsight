@@ -352,7 +352,7 @@ onMounted(async () => {
   const raw = localStorage.getItem("llm.sidebar.open");
   if (raw === "0") sidebarOpen.value = false;
   appState.setMode("exam-analysis");
-  await loadAnalysis(route.params.id);
+  if (route.params.id) await loadAnalysis(route.params.id);
   window.addEventListener("click", handleClickOutside);
 });
 
@@ -402,7 +402,8 @@ async function startAnalysis() {
   isAnalyzing.value = true;
 
   const fileNames = files.value.map((f) => f.name).join(",");
-  const firstFile = files.value[0].name;
+  const firstFile = files.value[0]?.name;
+  if (!firstFile) return;
   const analysisTitle =
     files.value.length === 1
       ? `${examType.value}试卷分析 - ${firstFile}`

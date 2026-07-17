@@ -1,11 +1,6 @@
 <script setup lang="ts">
-type IconName = 
-  | 'home' | 'users' | 'settings' | 'bar-chart' | 'pie-chart' | 'logout' | 'search' | 'plus' | 'edit' | 'trash' 
-  | 'lock' | 'unlock' | 'check' | 'close' | 'chevron-left' | 'chevron-right' | 'chevron-down' | 'refresh' | 'file' | 'user'
-  | 'book' | 'paperclip' | 'message-square' | 'layers' | 'shield' | 'activity' | 'user-circle' | 'user-plus' | 'folder'
-
 type Props = {
-  name: IconName
+  name: string
   size?: number
 }
 

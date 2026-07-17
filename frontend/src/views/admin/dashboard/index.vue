@@ -2,7 +2,7 @@
 import { ref, onMounted, computed } from 'vue'
 import StatsCard from '@/components/admin/StatsCard.vue'
 import AppIcon from '@/components/admin/AppIcon.vue'
-import { getStats, getTrends, getTypeDistribution } from '@/api/admindashboard'
+import { getStats, getTrends, getTypeDistribution } from '@/api/adminDashboard'
 
 const stats = ref<any[]>([])
 const trends = ref<any[]>([])

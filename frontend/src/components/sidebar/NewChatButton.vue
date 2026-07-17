@@ -1,14 +1,11 @@
 <script setup lang="ts">
 import AppIcon from '@/components/common/AppIcon.vue'
-import { useConversationStore } from '@/stores/conversation'
-import { useAuthStore } from '@/stores/auth'
+import { useRouter } from 'vue-router'
 
-const conversationStore = useConversationStore()
-const authStore = useAuthStore()
+const router = useRouter()
 
 async function createNewChat() {
-  if (!authStore.isAuthed) return authStore.openAuthModal()
-  await conversationStore.create()
+  await router.push('/chat')
 }
 </script>
 

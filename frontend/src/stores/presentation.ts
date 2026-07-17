@@ -129,6 +129,24 @@ export const usePresentationStore = defineStore('presentation', () => {
     }
   }
 
+  async function saveSlide(slide: PresentationSlideOutline) {
+    if (!current.value) throw new Error('PPT 不存在')
+    isSaving.value = true
+    errorMessage.value = ''
+    try {
+      current.value = await presentationRepository.updateSlide(current.value.id, slide.id, {
+        slide,
+        clientRequestId: clientRequestId(),
+      })
+      return current.value
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : 'PPT 页面保存失败'
+      throw error
+    } finally {
+      isSaving.value = false
+    }
+  }
+
   async function generate() {
     if (!current.value) throw new Error('PPT 不存在')
     isSaving.value = true
@@ -211,6 +229,7 @@ export const usePresentationStore = defineStore('presentation', () => {
     generateOutline,
     createAndGenerateOutline,
     saveOutline,
+    saveSlide,
     generate,
     resumeActiveJob,
     retry,

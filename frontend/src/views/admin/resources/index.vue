@@ -265,7 +265,7 @@ function closeModal() {
 function onFileChange(e: Event) {
   const target = e.target as HTMLInputElement;
   if (target.files && target.files.length > 0) {
-    form.value.file = target.files[0];
+    form.value.file = target.files[0]!;
   }
 }
 

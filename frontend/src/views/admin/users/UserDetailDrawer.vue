@@ -3,7 +3,7 @@ import AppIcon from "@/components/admin/AppIcon.vue";
 import AppButton from "@/components/admin/AppButton.vue";
 import ConfirmDialog from "@/components/admin/ConfirmDialog.vue";
 import { ref, watch } from "vue";
-import { getUserDetail, resetPassword } from "@/api/adminuser";
+import { getUserDetail, resetPassword } from "@/api/adminUser";
 
 const props = defineProps<{
   open: boolean;

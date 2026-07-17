@@ -106,6 +106,11 @@ export type UpdatePresentationOutlineRequest = {
   clientRequestId: string
 }
 
+export type UpdatePresentationSlideRequest = {
+  slide: PresentationSlideOutline
+  clientRequestId: string
+}
+
 export type StartPresentationGenerationRequest = {
   clientRequestId: string
 }

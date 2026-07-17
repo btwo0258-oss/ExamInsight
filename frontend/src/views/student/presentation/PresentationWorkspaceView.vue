@@ -10,8 +10,10 @@ import {
   FileText,
   FolderPlus,
   LoaderCircle,
+  Pencil,
   Presentation,
   RefreshCw,
+  Save,
   Sparkles,
   X,
 } from 'lucide-vue-next'
@@ -29,6 +31,7 @@ import { usePresentationStore } from '@/stores/presentation'
 import type {
   PresentationAspectRatio,
   PresentationAudience,
+  PresentationSlideLayout,
   PresentationSlideOutline,
   PresentationStyle,
 } from '@/types/contracts/presentation'
@@ -48,6 +51,7 @@ const messageStore = useMessageStore()
 const step = ref<WorkspaceStep>('config')
 const outline = ref<PresentationSlideOutline[]>([])
 const selectedSlideIndex = ref(0)
+const slideEditDraft = ref<PresentationSlideOutline | null>(null)
 const selectedKnowledgeBaseId = ref<number | null>(numberQuery('knowledgeBaseId'))
 const localError = ref('')
 const successMessage = ref('')
@@ -85,6 +89,13 @@ const styleOptions: Array<{ value: PresentationStyle; label: string }> = [
   { value: 'minimal', label: '简洁克制' },
   { value: 'vibrant', label: '重点鲜明' },
   { value: 'professional', label: '专业汇报' },
+]
+const slideLayoutOptions: Array<{ value: PresentationSlideLayout; label: string }> = [
+  { value: 'cover', label: '封面' },
+  { value: 'section', label: '章节' },
+  { value: 'content', label: '内容' },
+  { value: 'comparison', label: '对比' },
+  { value: 'summary', label: '总结' },
 ]
 
 const currentStepIndex = computed(() => steps.findIndex((item) => item.key === step.value))
@@ -218,6 +229,60 @@ function updateOutline(next: PresentationSlideOutline[]) {
 
 function cloneOutline(slides: PresentationSlideOutline[]) {
   return slides.map((slide) => ({ ...slide, points: [...slide.points] }))
+}
+
+function openSlideEditor() {
+  const source = currentPresentation.value?.outline[selectedSlideIndex.value] ?? selectedPage.value
+  if (!source) return
+  slideEditDraft.value = {
+    id: source.id,
+    order: source.order,
+    title: source.title,
+    points: [...source.points],
+    speakerNotes: source.speakerNotes ?? '',
+    layout: source.layout,
+  }
+}
+
+function closeSlideEditor() {
+  slideEditDraft.value = null
+}
+
+function updateSlideEditPoints(value: string) {
+  if (!slideEditDraft.value) return
+  slideEditDraft.value.points = value.split('\n').map((point) => point.trim()).filter(Boolean)
+}
+
+function selectPreviewSlide(index: number) {
+  if (slideEditDraft.value) return
+  selectedSlideIndex.value = index
+}
+
+async function saveSlideEdit() {
+  const draft = slideEditDraft.value
+  if (!draft?.title.trim() || presentationStore.isSaving) return
+  const selectedIndex = selectedSlideIndex.value
+  const nextOutline = cloneOutline(currentPresentation.value?.outline ?? outline.value)
+  const currentSlide = nextOutline[selectedIndex]
+  if (!currentSlide) return
+  nextOutline[selectedIndex] = {
+    ...currentSlide,
+    title: draft.title.trim(),
+    points: draft.points.map((point) => point.trim()).filter(Boolean),
+    speakerNotes: draft.speakerNotes?.trim() ?? '',
+    layout: draft.layout,
+    order: selectedIndex + 1,
+  }
+  localError.value = ''
+  try {
+    const presentation = await presentationStore.saveSlide(nextOutline[selectedIndex]!)
+    outline.value = cloneOutline(presentation.outline)
+    slideEditDraft.value = null
+    await syncConversationCard(presentation)
+    showMessage('当前页已保存')
+  } catch (error) {
+    setError(error, 'PPT 页面保存失败')
+  }
 }
 
 function draftInput() {
@@ -380,6 +445,7 @@ async function back() {
 }
 
 function returnToOutline() {
+  slideEditDraft.value = null
   outline.value = cloneOutline(currentPresentation.value?.outline ?? [])
   step.value = 'outline'
 }
@@ -506,7 +572,7 @@ onMounted(async () => {
         <aside class="outline-summary">
           <div class="summary-template" :style="{ borderColor: selectedTemplate?.accentColor }"><Presentation :size="24" /><strong>{{ selectedTemplate?.name }}</strong><span>{{ config.aspectRatio }} · {{ outline.length }} 页</span></div>
           <dl><div><dt>主题</dt><dd>{{ config.topic }}</dd></div><div><dt>受众</dt><dd>{{ config.audience }}</dd></div><div><dt>知识库</dt><dd>{{ displayKnowledgeBaseName(knowledgeBaseStore.list.find((item) => item.id === selectedKnowledgeBaseId)?.name || '未关联') }}</dd></div></dl>
-          <button class="primary-action" type="button" :disabled="outline.length < 3 || presentationStore.isSaving" @click="generatePresentation"><Sparkles :size="18" />确认大纲并生成</button>
+          <button class="primary-action" type="button" :disabled="outline.length < 3 || presentationStore.isSaving" @click="generatePresentation()"><Sparkles :size="18" />确认大纲并生成</button>
           <button class="secondary-action" type="button" :disabled="presentationStore.isSaving" @click="step = 'config'">返回配置</button>
         </aside>
       </main>
@@ -524,22 +590,52 @@ onMounted(async () => {
         </div>
       </main>
 
-      <main v-else class="preview-layout">
+      <main v-else class="preview-layout" :class="{ 'preview-layout--editing': slideEditDraft }">
         <aside class="slide-list">
           <header><span>页面</span><strong>{{ currentPresentation?.previewPages.length }}</strong></header>
-          <button v-for="(page, index) in currentPresentation?.previewPages" :key="page.id" type="button" :class="{ selected: selectedSlideIndex === index }" @click="selectedSlideIndex = index">
+          <button v-for="(page, index) in currentPresentation?.previewPages" :key="page.id" type="button" :class="{ selected: selectedSlideIndex === index }" :disabled="Boolean(slideEditDraft)" @click="selectPreviewSlide(index)">
             <span>{{ index + 1 }}</span>
             <PresentationSlidePreview :page="page" :aspect-ratio="currentPresentation!.config.aspectRatio" compact />
           </button>
         </aside>
 
         <section class="slide-stage">
-          <div class="preview-toolbar"><div><span>步骤 4</span><strong>{{ selectedPage?.title }}</strong></div><div><button class="icon-command" type="button" title="上一页" :disabled="selectedSlideIndex === 0" @click="selectedSlideIndex--"><ChevronLeft :size="18" /></button><span>{{ selectedSlideIndex + 1 }} / {{ currentPresentation?.previewPages.length }}</span><button class="icon-command" type="button" title="下一页" :disabled="selectedSlideIndex >= (currentPresentation?.previewPages.length || 1) - 1" @click="selectedSlideIndex++"><ChevronRight :size="18" /></button></div></div>
+          <div class="preview-toolbar"><div><span>步骤 4</span><strong>{{ selectedPage?.title }}</strong></div><div><button class="icon-command" type="button" title="上一页" :disabled="Boolean(slideEditDraft) || selectedSlideIndex === 0" @click="selectPreviewSlide(selectedSlideIndex - 1)"><ChevronLeft :size="18" /></button><span>{{ selectedSlideIndex + 1 }} / {{ currentPresentation?.previewPages.length }}</span><button class="icon-command" type="button" title="下一页" :disabled="Boolean(slideEditDraft) || selectedSlideIndex >= (currentPresentation?.previewPages.length || 1) - 1" @click="selectPreviewSlide(selectedSlideIndex + 1)"><ChevronRight :size="18" /></button></div></div>
           <PresentationSlidePreview v-if="selectedPage && currentPresentation" :page="selectedPage" :aspect-ratio="currentPresentation.config.aspectRatio" />
           <p v-if="selectedPage?.speakerNotes" class="speaker-notes"><strong>演讲者备注</strong>{{ selectedPage.speakerNotes }}</p>
         </section>
 
-        <aside class="export-panel">
+        <aside v-if="slideEditDraft" class="export-panel slide-edit-panel">
+          <div class="slide-edit-heading">
+            <div><span>当前第 {{ selectedSlideIndex + 1 }} 页</span><strong>编辑当前页</strong></div>
+            <button class="icon-command" type="button" title="关闭编辑" @click="closeSlideEditor"><X :size="18" /></button>
+          </div>
+          <label class="slide-edit-field">
+            <span>页面版式</span>
+            <AppSelectMenu v-model="slideEditDraft.layout" class="slide-edit-select" :options="slideLayoutOptions" aria-label="页面版式" :min-menu-width="180" />
+          </label>
+          <label class="slide-edit-field">
+            <span>页面标题</span>
+            <input v-model="slideEditDraft.title" maxlength="100" />
+          </label>
+          <label class="slide-edit-field">
+            <span>页面要点（一行一个）</span>
+            <textarea :value="slideEditDraft.points.join('\n')" rows="6" @input="updateSlideEditPoints(($event.target as HTMLTextAreaElement).value)" />
+          </label>
+          <label class="slide-edit-field">
+            <span>演讲者备注</span>
+            <textarea v-model="slideEditDraft.speakerNotes" rows="3" />
+          </label>
+          <p class="slide-edit-hint">保存后立即更新当前页，下载 PPTX 时会使用修改后的内容。</p>
+          <div class="slide-edit-actions">
+            <button class="secondary-action" type="button" :disabled="presentationStore.isSaving" @click="closeSlideEditor">取消</button>
+            <button class="primary-action" type="button" :disabled="!slideEditDraft.title.trim() || presentationStore.isSaving" @click="saveSlideEdit">
+              <Save :size="17" />{{ presentationStore.isSaving ? '保存中' : '保存修改' }}
+            </button>
+          </div>
+        </aside>
+
+        <aside v-else class="export-panel">
           <div class="result-status"><span><Check :size="18" /></span><div><strong>生成完成</strong><small>{{ currentPresentation?.fileName }}</small></div></div>
           <button class="primary-action" type="button" @click="downloadPresentation"><Download :size="18" />下载 PPTX</button>
           <label class="field"><span>关联知识库</span><AppSelectMenu v-model="selectedKnowledgeBaseId" :options="knowledgeBaseOptions" aria-label="选择关联知识库" create-label="新建知识库" @create="knowledgeCreateOpen = true" /></label>
@@ -547,6 +643,7 @@ onMounted(async () => {
             <FolderPlus :size="17" />
             {{ currentPresentation?.knowledgeBaseId === selectedKnowledgeBaseId ? (selectedKnowledgeBaseId === null ? '未关联知识库' : '已加入知识库') : (selectedKnowledgeBaseId === null ? '取消知识库关联' : '更新知识库关联') }}
           </button>
+          <button class="secondary-action" type="button" @click="openSlideEditor"><Pencil :size="17" />编辑当前页</button>
           <button class="text-action" type="button" @click="returnToOutline">返回修改大纲</button>
         </aside>
       </main>
@@ -1053,6 +1150,10 @@ onMounted(async () => {
   grid-template-columns: 190px minmax(0, 1fr) 240px;
 }
 
+.preview-layout--editing {
+  grid-template-columns: 190px minmax(0, 1fr) 320px;
+}
+
 .slide-list {
   max-height: calc(100vh - 190px);
   overflow: auto;
@@ -1085,6 +1186,11 @@ onMounted(async () => {
 .slide-list > button.selected {
   border-color: var(--color-border);
   background: var(--ui-hover-bg);
+}
+
+.slide-list > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.68;
 }
 
 .slide-stage {
@@ -1145,6 +1251,84 @@ onMounted(async () => {
 .export-panel {
   display: grid;
   gap: 11px;
+}
+
+.slide-edit-panel {
+  gap: 14px;
+}
+
+.slide-edit-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.slide-edit-heading > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.slide-edit-heading span,
+.slide-edit-field > span {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.slide-edit-heading strong {
+  font-size: 16px;
+}
+
+.slide-edit-field {
+  display: grid;
+  gap: 6px;
+}
+
+.slide-edit-field input,
+.slide-edit-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.slide-edit-field input {
+  height: 36px;
+  padding: 0 10px;
+}
+
+.slide-edit-field textarea {
+  padding: 9px 10px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.slide-edit-field input:focus,
+.slide-edit-field textarea:focus {
+  border-color: var(--color-text-muted);
+  box-shadow: 0 0 0 2px var(--color-hover);
+}
+
+.slide-edit-select {
+  width: 100%;
+}
+
+.slide-edit-hint {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.slide-edit-actions {
+  display: grid;
+  gap: 8px;
 }
 
 .result-status {

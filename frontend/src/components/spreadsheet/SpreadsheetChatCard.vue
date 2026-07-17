@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Check, Download, ExternalLink, LoaderCircle, RefreshCw, Table2 } from 'lucide-vue-next'
+import { Check, Download, ExternalLink, LoaderCircle, RefreshCw } from 'lucide-vue-next'
+import ResourceTypeIcon from '@/components/common/ResourceTypeIcon.vue'
 import type { SpreadsheetChatCardDto } from '@/types/contracts/spreadsheet'
 
 const props = withDefaults(defineProps<{
@@ -24,7 +25,7 @@ const displayName = computed(() => props.data.fileName || `${props.data.config.t
 <template>
   <section class="sheet-card" :class="`sheet-card--${data.status}`">
     <header>
-      <span class="sheet-card__icon"><Table2 :size="19" /></span>
+      <ResourceTypeIcon class="sheet-card__icon" type="spreadsheet" :size="19" :container-size="36" />
       <div>
         <strong>{{ isGenerating ? '正在生成电子表格' : isFailed ? '电子表格生成失败' : '电子表格已生成' }}</strong>
         <small>{{ isGenerating ? 'AI 正在读取当前对话、附件和已关联资料' : displayName }}</small>
@@ -74,15 +75,6 @@ const displayName = computed(() => props.data.fileName || `${props.data.config.t
   align-items: center;
   gap: 10px;
   border-bottom: 1px solid var(--color-border);
-}
-
-.sheet-card__icon {
-  width: 36px;
-  height: 36px;
-  display: grid;
-  place-items: center;
-  border-radius: 7px;
-  background: var(--color-hover);
 }
 
 .sheet-card header strong,

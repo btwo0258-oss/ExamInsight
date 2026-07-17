@@ -50,7 +50,9 @@ type DifficultyStrategy = NonNullable<LearningPlan['questionBank']>['difficultyS
 export const evaluateExerciseAnswer = evaluateMockExerciseAnswer
 
 export const useLearningStore = defineStore('learning', () => {
-  const plans = ref<LearningPlan[]>(learningRepository.initialPlans())
+  // Business data is loaded only after authentication. In particular, mock mode
+  // must not hydrate a guest session with demo projects.
+  const plans = ref<LearningPlan[]>([])
   const generatingResourceIds = ref<number[]>([])
   const isLoading = ref(false)
   const errorMessage = ref<string | null>(null)
@@ -263,6 +265,17 @@ export const useLearningStore = defineStore('learning', () => {
 
   function clearError() {
     errorMessage.value = null
+  }
+
+  function clearAll() {
+    plans.value = []
+    generatingResourceIds.value = []
+    errorMessage.value = null
+    isLoading.value = false
+    pendingReadingActivities.clear()
+    readingFlushTimers.forEach((timer) => window.clearTimeout(timer))
+    readingFlushTimers.clear()
+    setActivePlanGeneration(null)
   }
 
   async function generateLearningProfile(input: LearningProfileRequest): Promise<LearningProfileResult> {
@@ -1085,6 +1098,7 @@ export const useLearningStore = defineStore('learning', () => {
     fetchPlans,
     fetchPlan,
     clearError,
+    clearAll,
     generateLearningProfile,
     generateLearningConfirmation,
     getPlan,

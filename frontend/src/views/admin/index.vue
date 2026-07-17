@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
-import StatsCard from '@/components/admin/admin/StatsCard.vue'
-import AppIcon from '@/components/admin/admin/AppIcon.vue'
-import { getStats, getTrends, getTypeDistribution } from '@/api/adminadmindashboard'
+import StatsCard from '@/components/admin/StatsCard.vue'
+import AppIcon from '@/components/admin/AppIcon.vue'
+import { getStats, getTrends, getTypeDistribution } from '@/api/adminDashboard'
 
 const stats = ref<any[]>([])
 const trends = ref<any[]>([])
@@ -61,7 +61,8 @@ const calculateDashOffset = (index: number) => {
   const circumference = 2 * Math.PI * 40
   let offset = 0
   for (let i = 0; i < index; i++) {
-    offset -= (types.value[i].value as number / totalDocs.value) * circumference
+    const item = types.value[i]
+    if (item) offset -= (item.value as number / totalDocs.value) * circumference
   }
   return offset
 }

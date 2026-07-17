@@ -5,8 +5,8 @@ import AppButton from "@/components/admin/AppButton.vue";
 import AppModal from "@/components/admin/AppModal.vue";
 import ConfirmDialog from "@/components/admin/ConfirmDialog.vue";
 import UserDetailDrawer from "./UserDetailDrawer.vue";
-import { getUserList, updateStatus, resetPassword, handleResetRequest } from "@/api/adminuser";
-import type { User } from "@/types";
+import { getUserList, updateStatus, resetPassword, handleResetRequest } from "@/api/adminUser";
+import type { AdminUser as User } from "@/api/adminUser";
 
 // Data
 const users = ref<User[]>([]);
@@ -218,7 +218,7 @@ const visiblePages = computed(() => {
           </template>
           <button
             class="page-btn"
-            :class="{ disabled: currentPage === totalPages.value }"
+            :class="{ disabled: currentPage === totalPages }"
             @click="changePage(currentPage + 1)"
           >
             <AppIcon name="chevron-right" :size="14" />

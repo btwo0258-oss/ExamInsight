@@ -39,7 +39,7 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import UserProfileModal from '@/components/auth/UserProfileModal.vue'
 import LibraryKnowledgeCreateModal from '@/components/library/LibraryKnowledgeCreateModal.vue'
 import logoUrl from '@/assets/icons/ExamInsight-Logo.png'
-import { learningPlans } from '@/mock'
+import type { LearningPlan } from '@/mock/student'
 import type { Conversation } from '@/api/conversation'
 import { useAuthStore } from '@/stores/auth'
 import { useConversationStore } from '@/stores/conversation'
@@ -56,7 +56,7 @@ type MenuAction = {
   divided?: boolean
 }
 
-type SidebarProject = (typeof learningPlans)[number] & {
+type SidebarProject = LearningPlan & {
   pinned?: boolean
 }
 
@@ -95,10 +95,7 @@ const learningStore = useLearningStore()
 const knowledgeBaseStore = useKnowledgeBaseStore()
 const themeStore = useThemeStore()
 const initialPinnedProjectIds = new Set(readPinnedProjectIds())
-const sidebarProjects = ref<SidebarProject[]>(learningPlans.map((plan) => ({
-  ...plan,
-  pinned: initialPinnedProjectIds.has(plan.id),
-})))
+const sidebarProjects = ref<SidebarProject[]>([])
 const sidebarWidth = ref(readSidebarWidth())
 const sidebarCollapsed = ref(false)
 const isResizing = ref(false)
@@ -201,17 +198,17 @@ const pinnedRecent = computed(() => conversationStore.list.filter((item) => item
 const normalRecent = computed(() => conversationStore.list.filter((item) => !item.isPinned))
 
 onMounted(() => {
+  authStore.init()
   conversationStore.init()
-  void knowledgeBaseStore.fetchList()
-  void learningStore.fetchPlans().then(() => {
-    syncSidebarProjects()
-    migrateLegacyConversationProjectLinks()
-  })
+  if (authStore.isAuthed) migrateLegacyConversationProjectLinks()
 })
 
 watch(
   () => learningStore.plans.map((plan) => `${plan.id}:${plan.title}:${plan.status}`).join('|'),
-  () => syncSidebarProjects(),
+  () => {
+    syncSidebarProjects()
+    if (authStore.isAuthed) migrateLegacyConversationProjectLinks()
+  },
 )
 
 watch(
@@ -251,6 +248,10 @@ function openProjectSettings() {
 }
 
 function openCreateProject() {
+  if (!authStore.isAuthed) {
+    authStore.openAuthModal()
+    return
+  }
   createProjectOpen.value = true
   iconPaletteOpen.value = false
   libraryMenuOpen.value = false
@@ -367,7 +368,7 @@ function syncSidebarProjects() {
   const pinnedMap = new Map(sidebarProjects.value.map((project) => [project.id, Boolean(project.pinned)]))
   sidebarProjects.value = learningStore.plans.map((plan) => ({
     ...plan,
-    pinned: pinnedMap.get(plan.id) ?? false,
+    pinned: pinnedMap.get(plan.id) ?? initialPinnedProjectIds.has(plan.id),
   }))
   persistProjects()
 }
@@ -410,6 +411,10 @@ function handleProjectKnowledgeCreated(id: number) {
 }
 
 async function submitCreateProject() {
+  if (!authStore.isAuthed) {
+    authStore.openAuthModal()
+    return
+  }
   const title = createProjectTitle.value.trim()
   if (!title) return
   const project = await learningStore.createDraftPlan({
@@ -623,7 +628,7 @@ onBeforeUnmount(stopSidebarResize)
       :aria-hidden="sidebarCollapsed"
     >
     <div class="brand-row">
-      <button class="brand" type="button" @click="go('/learning')">
+      <button class="brand" type="button" @click="createNewChat">
         <span class="brand-logo">
           <img
             :src="logoUrl"

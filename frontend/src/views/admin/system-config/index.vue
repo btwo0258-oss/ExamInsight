@@ -3,8 +3,8 @@ import { ref, onMounted } from "vue";
 import AppIcon from "@/components/admin/AppIcon.vue";
 import AppButton from "@/components/admin/AppButton.vue";
 import AppModal from "@/components/admin/AppModal.vue";
-import { getAllConfigs, updateConfig } from "@/api/adminconfig";
-import type { SystemConfig } from "@/types";
+import { getAllConfigs, updateConfig } from "@/api/adminConfig";
+import type { SystemConfig } from "@/api/adminConfig";
 
 // Config Data
 const configs = ref<SystemConfig[]>([]);

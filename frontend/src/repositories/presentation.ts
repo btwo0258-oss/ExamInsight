@@ -13,6 +13,7 @@ import type {
   StartPresentationGenerationRequest,
   UpdatePresentationDraftRequest,
   UpdatePresentationOutlineRequest,
+  UpdatePresentationSlideRequest,
 } from '@/types/contracts/presentation'
 
 export interface PresentationRepository {
@@ -23,6 +24,7 @@ export interface PresentationRepository {
   updateDraft(id: string, input: UpdatePresentationDraftRequest): Promise<PresentationDto>
   startOutlineGeneration(id: string, clientRequestId: string): Promise<PresentationOutlineJob>
   updateOutline(id: string, input: UpdatePresentationOutlineRequest): Promise<PresentationDto>
+  updateSlide(id: string, slideId: string, input: UpdatePresentationSlideRequest): Promise<PresentationDto>
   startGeneration(id: string, input: StartPresentationGenerationRequest): Promise<PresentationGenerationJob>
   getJob<T>(jobId: string): Promise<AsyncJob<T>>
   cancelJob(jobId: string): Promise<void>
@@ -415,6 +417,29 @@ const mockPresentationRepository: PresentationRepository = {
     presentation.updatedAt = now()
     return structuredClone(updateMockPresentation(presentation))
   },
+  async updateSlide(presentationId, slideId, input) {
+    const presentation = getMockPresentation(presentationId)
+    if (presentation.status !== 'ready') throw new Error('PPT 尚未生成完成')
+    const outlineIndex = presentation.outline.findIndex((slide) => slide.id === slideId)
+    const previewIndex = presentation.previewPages.findIndex((slide) => slide.id === slideId)
+    const previewPage = presentation.previewPages[previewIndex]
+    if (outlineIndex === -1 || !previewPage) throw new Error('PPT 页面不存在')
+    const slide = {
+      ...input.slide,
+      id: slideId,
+      order: outlineIndex + 1,
+      title: input.slide.title.trim(),
+      points: input.slide.points.map((point) => point.trim()).filter(Boolean),
+      speakerNotes: input.slide.speakerNotes?.trim() || undefined,
+    }
+    presentation.outline[outlineIndex] = slide
+    presentation.previewPages[previewIndex] = {
+      ...previewPage,
+      ...slide,
+    }
+    presentation.updatedAt = now()
+    return structuredClone(updateMockPresentation(presentation))
+  },
   async startGeneration(presentationId) {
     const presentation = getMockPresentation(presentationId)
     if (!presentation.outline.length) throw new Error('请先生成并确认 PPT 大纲')
@@ -483,6 +508,9 @@ const apiPresentationRepository: PresentationRepository = {
   },
   async updateOutline(id, input) {
     return unwrap<PresentationDto>(await request.put(`/api/presentations/${id}/outline`, input))
+  },
+  async updateSlide(id, slideId, input) {
+    return unwrap<PresentationDto>(await request.put(`/api/presentations/${id}/slides/${slideId}`, input))
   },
   async startGeneration(id, input) {
     return unwrap<PresentationGenerationJob>(await request.post(`/api/presentations/${id}/generation-jobs`, input))

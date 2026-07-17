@@ -9,7 +9,8 @@ import { useMessageStore } from '@/stores/message'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import { useExamAnalysisStore } from '@/stores/examAnalysis'
 import { useMindMapStore } from '@/stores/mindmap'
-import { isMockDataSource } from '@/config/dataSource'
+import { useLearningStore } from '@/stores/learning'
+import { useLibraryResourceStore } from '@/stores/libraryResource'
 
 export type User = authApi.ApiUser
 
@@ -20,6 +21,7 @@ export const useAuthStore = defineStore('auth', () => {
   const isSubmitting = ref(false)
   const errorMessage = ref<string | null>(null)
   const authModalOpen = ref(false)
+  const pendingRoute = ref<string | null>(null)
 
   const isAuthed = computed(() => Boolean(token.value))
 
@@ -31,8 +33,7 @@ export const useAuthStore = defineStore('auth', () => {
     const rawUser = sessionStorage.getItem(USER_KEY) || localStorage.getItem(USER_KEY)
     user.value = rawUser ? (JSON.parse(rawUser) as User) : null
 
-    // Mock guest data must survive refresh within the current tab.
-    if (!token.value && !isMockDataSource) {
+    if (!token.value) {
       const guestKeys = Object.keys(sessionStorage).filter(key => key.includes('.guest'))
       guestKeys.forEach(key => sessionStorage.removeItem(key))
     }
@@ -49,7 +50,7 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = next.token
     user.value = next.user
 
-    if (remember && !isMockDataSource) {
+    if (remember) {
       localStorage.setItem(TOKEN_KEY, next.token)
       localStorage.setItem(USER_KEY, JSON.stringify(next.user))
       sessionStorage.removeItem(TOKEN_KEY)
@@ -88,12 +89,31 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  function openAuthModal() {
+  function openAuthModal(redirectTo?: string) {
+    if (redirectTo) pendingRoute.value = redirectTo
     authModalOpen.value = true
   }
 
   function closeAuthModal() {
     authModalOpen.value = false
+    pendingRoute.value = null
+  }
+
+  function clearBusinessStores() {
+    useConversationStore().clearAll()
+    useMessageStore().clearMemoryState()
+    useKnowledgeBaseStore().clearAll()
+    useExamAnalysisStore().clearAll()
+    useMindMapStore().clearAll()
+    useLearningStore().clearAll()
+    useLibraryResourceStore().clearAll()
+  }
+
+  async function finishAuthentication(router?: ReturnType<typeof useRouter>) {
+    const redirectTo = pendingRoute.value
+    authModalOpen.value = false
+    pendingRoute.value = null
+    if (router && redirectTo) await router.replace(redirectTo)
   }
 
   async function login(payload: { username: string; password: string; remember?: boolean }, router?: ReturnType<typeof useRouter>) {
@@ -104,21 +124,11 @@ export const useAuthStore = defineStore('auth', () => {
       persist(res, payload.remember ?? true)
 
       // 清除当前store的旧数据并重新初始化
-      const conversationStore = useConversationStore()
-      const messageStore = useMessageStore()
-      const knowledgeBaseStore = useKnowledgeBaseStore()
+      clearBusinessStores()
 
-      // 清除store中的旧数据
-      conversationStore.clearAll()
-      messageStore.clearMemoryState()
-      knowledgeBaseStore.clearAll()
-
-      // 重新加载新用户的数据是在 App.vue 中 watch 触发的
-      closeAuthModal()
-      // 登录成功后跳转到/chat页面
-      if (router) {
-        router.push('/chat')
-      }
+      // 重新加载新用户的数据是在 App.vue 中 watch 触发的。
+      // 如果登录由受保护路由触发，则回到用户原本要去的页面。
+      await finishAuthentication(router)
     } catch (err) {
       errorMessage.value = err instanceof Error ? err.message : '登录失败'
       throw err
@@ -132,7 +142,7 @@ export const useAuthStore = defineStore('auth', () => {
     password: string
     nickname?: string
     remember?: boolean
-  }) {
+  }, router?: ReturnType<typeof useRouter>) {
     errorMessage.value = null
     isSubmitting.value = true
     try {
@@ -140,17 +150,10 @@ export const useAuthStore = defineStore('auth', () => {
       persist(res, payload.remember ?? true)
 
       // 清除当前store的旧数据并重新初始化
-      const conversationStore = useConversationStore()
-      const messageStore = useMessageStore()
-      const knowledgeBaseStore = useKnowledgeBaseStore()
+      clearBusinessStores()
 
-      // 清除store中的旧数据
-      conversationStore.clearAll()
-      messageStore.clearMemoryState()
-      knowledgeBaseStore.clearAll()
-
-      // 重新加载新用户的数据是在 App.vue 中 watch 触发的
-      closeAuthModal()
+      // 注册成功也遵循相同的原意图回跳规则。
+      await finishAuthentication(router)
     } catch (err) {
       errorMessage.value = err instanceof Error ? err.message : '注册失败'
       throw err
@@ -165,26 +168,9 @@ export const useAuthStore = defineStore('auth', () => {
     clearStoredAuth()
 
     // 清除对话和消息 (在清除auth之后调用，确保使用正确的guest storage key)
-    const conversationStore = useConversationStore()
-    const messageStore = useMessageStore()
-    const knowledgeBaseStore = useKnowledgeBaseStore()
-    const examAnalysisStore = useExamAnalysisStore()
-    const mindMapStore = useMindMapStore()
-
-    // 清除所有对话
-    conversationStore.clearAll()
-
-    // 清除所有消息
-    messageStore.clearMemoryState()
-
-    // 清除所有知识库
-    knowledgeBaseStore.clearAll()
-
-    // 清除所有考试分析
-    examAnalysisStore.clearAll()
-
-    // 清除所有思维导图
-    mindMapStore.clearAll()
+    pendingRoute.value = null
+    authModalOpen.value = false
+    clearBusinessStores()
 
     window.dispatchEvent(new CustomEvent('auth:logout'))
 
@@ -201,6 +187,7 @@ export const useAuthStore = defineStore('auth', () => {
     isSubmitting,
     errorMessage,
     authModalOpen,
+    pendingRoute,
     init,
     login,
     register,

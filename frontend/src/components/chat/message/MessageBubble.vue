@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-nocheck
 import { computed, watch, onMounted, ref } from "vue";
 import { useRoute, useRouter } from 'vue-router'
@@ -10,6 +11,7 @@ import { useAppState } from "@/stores/appState";
 import MarkdownRenderer from "./MarkdownRenderer.vue";
 import SourceChunks from "./SourceChunks.vue";
 import AppIcon from "@/components/common/AppIcon.vue";
+import ResourceTypeIcon from '@/components/common/ResourceTypeIcon.vue'
 import MessageActions from "./MessageActions.vue";
 import { copyText } from "@/utils/clipboard";
 import LearningProfileCard from "@/components/learning/LearningProfileCard.vue";
@@ -22,6 +24,7 @@ import type { SpreadsheetChatCardDto } from '@/types/contracts/spreadsheet'
 import { presentationRouteQuery, toPresentationChatCard } from '@/utils/presentation'
 import { spreadsheetRouteQuery, toSpreadsheetChatCard } from '@/utils/spreadsheet'
 import { resourcePreviewRoute } from '@/utils/resourcePreview'
+import { resourceVisualTypeFromFile } from '@/utils/resourceVisual'
 
 type Props = {
   message: ChatMessage;
@@ -405,7 +408,7 @@ async function retrySpreadsheet() {
       <!-- Uploaded files display -->
       <div v-if="isUser && message.files && message.files.length > 0" class="uploaded-files">
         <div v-for="(file, idx) in message.files" :key="idx" class="file-card">
-          <AppIcon name="file" :size="24" :color="idx % 2 === 0 ? '#ef4444' : '#3b82f6'" />
+          <ResourceTypeIcon :type="resourceVisualTypeFromFile(file.name, file.type)" :size="20" :container-size="36" />
           <div class="file-info">
             <div class="file-name">{{ file.name }}</div>
             <div class="file-meta">

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
+import ResourceTypeIcon from '@/components/common/ResourceTypeIcon.vue'
 import LearningRouteState from '@/components/learning/LearningRouteState.vue'
 import StudentShell from '@/components/layout/StudentShell.vue'
 import type { LearningResource } from '@/mock'
@@ -12,6 +13,7 @@ import { useLearningTutorStore } from '@/stores/learningTutor'
 import { useLibraryResourceStore } from '@/stores/libraryResource'
 import { useLearningPlanRoute } from '@/composables/useLearningPlanRoute'
 import { resourcePreviewRoute } from '@/utils/resourcePreview'
+import { resourceVisualTypeFromLearningGroup } from '@/utils/resourceVisual'
 
 type ResourceWithMeta = LearningResource & {
   source?: 'default' | 'ai-conversation'
@@ -83,28 +85,6 @@ const filteredResources = computed(() => {
 const aiGeneratedCount = computed(() => resources.value.filter((resource) => resource.source === 'ai-conversation').length)
 const resourceTypes = computed(() => [...new Set(resources.value.map((resource) => typeLabel(resource)))].join('、'))
 const latestUpdate = computed(() => resources.value.find((resource) => resource.updatedAt)?.updatedAt ?? '刚刚')
-
-const resourceColors: Record<LearningResource['group'], string> = {
-  学习方案: '#6366f1',
-  个性化学习手册: '#10b981',
-  PPT: '#d4552d',
-  思维导图: '#8b5cf6',
-  代码案例: '#2563eb',
-  图片: '#ec4899',
-}
-
-function iconName(group: LearningResource['group']) {
-  if (group === '学习方案') return 'notebook'
-  if (group === 'PPT') return 'presentation'
-  if (group === '思维导图') return 'mind-topic'
-  if (group === '代码案例') return 'code'
-  if (group === '图片') return 'image'
-  return 'book'
-}
-
-function resourceStyle(group: LearningResource['group']): Record<string, string> {
-  return { '--resource-color': resourceColors[group] }
-}
 
 function typeLabel(resource: ResourceWithMeta) {
   if (resource.group === '学习方案' || resource.group === '个性化学习手册') return 'Markdown'
@@ -331,7 +311,7 @@ onBeforeUnmount(() => {
               <thead><tr><th>文件名</th><th>类型</th><th>状态</th><th>来源</th><th>更新时间</th><th>操作</th></tr></thead>
               <tbody>
                 <tr v-for="resource in filteredResources" :key="resource.id" :class="{ disabled: resource.status !== '已生成' && resource.group !== 'PPT' }" @click="openResource(resource)">
-                  <td><span class="resource-type-icon" :style="resourceStyle(resource.group)"><AppIcon :name="iconName(resource.group)" :size="18" /></span><span>{{ resource.fileName || resource.title }}</span></td>
+                  <td><ResourceTypeIcon :type="resourceVisualTypeFromLearningGroup(resource.group)" :size="18" :container-size="30" /><span>{{ resource.fileName || resource.title }}</span></td>
                   <td>{{ typeLabel(resource) }}</td>
                   <td><span class="status" :class="{ active: resource.status === '生成中', failed: resource.status === '生成失败' }">{{ resource.status }}</span></td>
                   <td>{{ sourceLabel(resource) }}</td>
@@ -409,7 +389,6 @@ tbody tr:not(.empty-row) { cursor: pointer; }
 tbody tr:not(.empty-row):hover { background: var(--ui-hover-bg); }
 td:first-child { min-width: 210px; display: flex; align-items: center; gap: 9px; }
 td:first-child span { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.resource-type-icon { width: 30px; height: 30px; flex: 0 0 auto; display: grid !important; place-items: center; border-radius: 8px; background: color-mix(in srgb, var(--resource-color) 12%, var(--color-surface)); color: var(--resource-color); }
 .status { padding: 4px 9px; border-radius: 999px; background: color-mix(in srgb, var(--color-success) 15%, var(--color-surface)); color: var(--color-success); white-space: nowrap; }
 .status.active { background: color-mix(in srgb, var(--color-info) 12%, var(--color-surface)); color: var(--color-info); }
 .status.failed { background: color-mix(in srgb, var(--color-danger) 12%, var(--color-surface)); color: var(--color-danger); }

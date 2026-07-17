@@ -238,5 +238,6 @@ header button:hover {
 
 footer {
   justify-content: flex-end;
+  margin-top: 16px;
 }
 </style>

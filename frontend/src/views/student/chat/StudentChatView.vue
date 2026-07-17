@@ -14,9 +14,9 @@ import { useMessageStore } from '@/stores/message'
 import { useLibraryResourceStore } from '@/stores/libraryResource'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import { useLearningStore } from '@/stores/learning'
+import { useAuthStore } from '@/stores/auth'
 import LibraryKnowledgeCreateModal from '@/components/library/LibraryKnowledgeCreateModal.vue'
 import type { LearningProfileData } from '@/types/contracts/learning'
-import { courseKnowledgeBases } from '@/mock'
 import { isMockDataSource } from '@/config/dataSource'
 import type { ChatClientAction } from '@/repositories/chat'
 
@@ -25,6 +25,7 @@ const messageStore = useMessageStore()
 const libraryResourceStore = useLibraryResourceStore()
 const knowledgeBaseStore = useKnowledgeBaseStore()
 const learningStore = useLearningStore()
+const authStore = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -538,6 +539,11 @@ function showProfile(conversationId: number, text: string) {
 }
 
 async function onSend(text: string, files?: File[], complete?: (success?: boolean) => void) {
+  if (!authStore.isAuthed) {
+    authStore.openAuthModal()
+    complete?.(false)
+    return
+  }
   retryAction.value = null
   messageStore.clearError()
   let succeeded = false
@@ -790,6 +796,10 @@ function fillHomePrompt(prompt: string, clientAction?: ChatClientAction) {
 }
 
 async function runHomePromptAction(action: HomePromptAction) {
+  if (!authStore.isAuthed) {
+    authStore.openAuthModal()
+    return
+  }
   if (!action.action) {
     if (action.prompt) fillHomePrompt(action.prompt)
     return
@@ -876,6 +886,7 @@ function handleToggleMindMapSidebar() {
 }
 
 async function initializeLearningChat() {
+  if (!authStore.isAuthed) return
   try {
     await Promise.all([knowledgeBaseStore.fetchList(), learningStore.fetchPlans()])
     if (!isLearningSetupChat.value) return
@@ -892,6 +903,7 @@ async function initializeLearningChat() {
 }
 
 onMounted(() => {
+  authStore.init()
   conversationStore.init()
   void initializeLearningChat()
   window.addEventListener('keydown', handleKeyDown)
@@ -899,7 +911,7 @@ onMounted(() => {
 
 let routeIntentHandled = false
 watch(
-  [() => route.query.intent, homeInputRef],
+  [() => route.name === 'spreadsheet-new' ? 'spreadsheet' : route.query.intent, homeInputRef],
   ([intent, input]) => {
     if (routeIntentHandled || intent !== 'spreadsheet' || !input) return
     routeIntentHandled = true
