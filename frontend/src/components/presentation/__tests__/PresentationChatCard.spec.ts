@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import PresentationChatCard from '@/components/presentation/PresentationChatCard.vue'
+import AppSelectMenu from '@/components/common/AppSelectMenu.vue'
 import type { PresentationChatCardDto } from '@/types/contracts/presentation'
 
 function proposal(): PresentationChatCardDto {
@@ -24,6 +26,8 @@ function proposal(): PresentationChatCardDto {
 }
 
 describe('PresentationChatCard', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
   it('edits proposal fields and exposes the three confirmed actions', async () => {
     const wrapper = mount(PresentationChatCard, { props: { data: proposal() } })
 
@@ -36,6 +40,12 @@ describe('PresentationChatCard', () => {
     const update = wrapper.emitted('update')?.at(-1)?.[0] as PresentationChatCardDto
     expect(update.config.topic).toBe('数据结构复习')
     expect(update.config.title).toBe('数据结构复习')
+
+    const knowledgeSelect = wrapper.findComponent(AppSelectMenu)
+    expect(knowledgeSelect.exists()).toBe(true)
+    knowledgeSelect.vm.$emit('update:modelValue', 9)
+    const associationUpdate = wrapper.emitted('update')?.at(-1)?.[0] as PresentationChatCardDto
+    expect(associationUpdate.knowledgeBaseId).toBe(9)
   })
 
   it('renders preview, download, and knowledge-base actions for a ready result', () => {

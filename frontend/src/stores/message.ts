@@ -15,6 +15,10 @@ import type { MediaAssetDto } from '@/types/contracts/media'
 import type { ChatClientAction } from '@/repositories/chat'
 import type { PresentationChatCardDto } from '@/types/contracts/presentation'
 import type { SpreadsheetChatCardDto } from '@/types/contracts/spreadsheet'
+import type { ChatArtifactDto } from '@/types/contracts/artifact'
+import { upsertArtifact } from '@/utils/artifact'
+import { useLibraryResourceStore } from '@/stores/libraryResource'
+import { rememberMockGeneratedResourcePreview } from '@/repositories/libraryResource'
 
 export type ChatRole = "user" | "assistant" | "system";
 
@@ -53,6 +57,7 @@ export type ChatMessage = {
   learningData?: any;
   presentationData?: PresentationChatCardDto;
   spreadsheetData?: SpreadsheetChatCardDto;
+  artifacts?: ChatArtifactDto[];
   tutorContext?: string;
   tutorSource?: TutorSource;
 };
@@ -184,6 +189,36 @@ export const useMessageStore = defineStore("message", () => {
     saveLocal(conversationId, list);
   }
 
+  function syncMindMapArtifact(
+    mindMapId: number,
+    tree: ChatArtifactDto['preview']['mindMap'],
+    title: string,
+    explicitResourceId?: string,
+  ) {
+    const artifactId = `mindmap:${mindMapId}`;
+    const resourceIds = new Set<string>();
+    if (explicitResourceId) resourceIds.add(explicitResourceId);
+    Object.entries(byConversation.value).forEach(([conversationId, messages]) => {
+      let changed = false;
+      messages.forEach((message) => {
+        if (!message.artifacts?.length) return;
+        message.artifacts = message.artifacts.map((artifact) => {
+          if (artifact.artifactId !== artifactId && artifact.editorRoute !== `/mindmap/${mindMapId}`) return artifact;
+          changed = true;
+          if (artifact.resourceId) resourceIds.add(artifact.resourceId);
+          return {
+            ...artifact,
+            title,
+            fileName: `${title}.mindmap`,
+            preview: { kind: 'mindmap', mindMap: tree },
+          };
+        });
+      });
+      if (changed) saveLocal(Number(conversationId), messages);
+    });
+    return resourceIds;
+  }
+
   function initLocalIfNeeded(conversationId: number) {
     const key = String(conversationId);
     if (!byConversation.value[key]) {
@@ -285,6 +320,9 @@ export const useMessageStore = defineStore("message", () => {
             spreadsheetData:
               parseStructuredValue<SpreadsheetChatCardDto>(m.spreadsheetData)
               || localMatch?.spreadsheetData,
+            artifacts:
+              parseStructuredValue<ChatArtifactDto[]>(m.artifacts)
+              || localMatch?.artifacts,
             //files: parsedFiles || localMatch?.files,
             files:
               parsedFiles ||
@@ -745,6 +783,37 @@ export const useMessageStore = defineStore("message", () => {
               conversationId: chunk.data.conversationId ?? conversationId,
               sourceMessageId: chunk.data.sourceMessageId ?? assistantMsg.id,
             };
+          } else if (chunk.type === 'artifact') {
+            const artifact = {
+              ...chunk.data,
+              conversationId: chunk.data.conversationId ?? conversationId,
+              sourceMessageId: chunk.data.sourceMessageId ?? assistantMsg.id,
+            };
+            list[targetIdx].artifacts = upsertArtifact(list[targetIdx].artifacts ?? [], artifact);
+            if (isMockDataSource && artifact.status === 'ready' && artifact.resourceId) {
+              const libraryStore = useLibraryResourceStore();
+              const origin = artifact.fileType === 'presentation'
+                ? 'presentation'
+                : artifact.fileType === 'spreadsheet'
+                  ? 'spreadsheet'
+                  : artifact.fileType === 'mindmap'
+                    ? 'mindmap'
+                    : 'chat';
+              libraryStore.addGeneratedFile({
+                resourceId: artifact.resourceId,
+                externalKey: artifact.artifactId,
+                name: artifact.fileName,
+                format: artifact.format,
+                fileType: artifact.fileType,
+                mimeType: artifact.mimeType,
+                origin,
+                projectId: Number(artifact.projectId) || null,
+                knowledgeBaseId: Number(artifact.knowledgeBaseId) || null,
+                status: 'ready',
+                sizeBytes: artifact.sizeBytes,
+              });
+              rememberMockGeneratedResourcePreview(artifact.resourceId, artifact.preview);
+            }
           }
           saveLocal(conversationId, list);
         }
@@ -864,6 +933,17 @@ export const useMessageStore = defineStore("message", () => {
                 ...list[localAssistantIdx].spreadsheetData,
                 sourceMessageId: String(remoteAssistant.id),
               };
+            }
+            const remoteArtifacts = parseStructuredValue<ChatArtifactDto[]>(remoteAssistant.artifacts);
+            if (remoteArtifacts) {
+              list[localAssistantIdx].artifacts = remoteArtifacts;
+            } else if (list[localAssistantIdx].artifacts?.length) {
+              list[localAssistantIdx].artifacts = list[localAssistantIdx].artifacts?.map((artifact) => ({
+                ...artifact,
+                sourceMessageId: artifact.sourceMessageId === localAssistantId
+                  ? String(remoteAssistant.id)
+                  : artifact.sourceMessageId,
+              }));
             }
           }
 
@@ -1126,6 +1206,7 @@ export const useMessageStore = defineStore("message", () => {
     getMessages,
     appendLocalMessage,
     updateLocalMessage,
+    syncMindMapArtifact,
     isStreaming,
     errorMessage,
     byConversation,

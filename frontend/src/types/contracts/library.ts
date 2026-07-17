@@ -1,4 +1,5 @@
 import type { EntityId } from './common'
+import type { ArtifactInlinePreview } from './artifact'
 
 export type DocumentProcessingStatus = 'uploading' | 'uploaded' | 'parsing' | 'ready' | 'failed'
 
@@ -77,6 +78,7 @@ export type ResourcePreviewDto = {
   presentationId?: string
   spreadsheetId?: string
   mindMapId?: number
+  previewData?: ArtifactInlinePreview
   errorMessage?: string
 }
 

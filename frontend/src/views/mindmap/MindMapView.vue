@@ -4,6 +4,11 @@ import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
 import AppButton from '@/components/common/AppButton.vue'
 import { useMindMapStore } from '@/stores/mindmap'
+import { useMessageStore } from '@/stores/message'
+import { useLibraryResourceStore } from '@/stores/libraryResource'
+import { rememberMockGeneratedResourcePreview } from '@/repositories/libraryResource'
+import { publishResourcePreviewUpdate } from '@/utils/resourcePreviewSync'
+import { mindMapRenderData, mindMapThemeConfig } from '@/utils/mindMapTheme'
 
 // simple-mind-map
 import MindMap from 'simple-mind-map'
@@ -33,6 +38,8 @@ MindMap.usePlugin(AssociativeLine)
 const route = useRoute()
 const router = useRouter()
 const store = useMindMapStore()
+const messageStore = useMessageStore()
+const libraryResourceStore = useLibraryResourceStore()
 
 const mindMapContainer = ref<HTMLElement | null>(null)
 const mindMap = shallowRef<any>(null)
@@ -60,7 +67,7 @@ const initMindMap = (data: any) => {
   if (!mindMapContainer.value) return
 
   // 深度克隆数据，防止引用问题导致引擎出错
-  const renderData = JSON.parse(JSON.stringify(data || store.treeData))
+  const renderData = mindMapRenderData(JSON.parse(JSON.stringify(data || store.treeData)))
   
   // 确保数据结构完整
   if (!renderData.data) {
@@ -79,36 +86,10 @@ const initMindMap = (data: any) => {
     enableFreeDrag: true,
     mousewheelAction: 'zoom',
     initRootNodePosition: ['center', 'center'],
-    themeConfig: {
-      backgroundColor: 'var(--color-surface)',
-      lineColor: 'var(--color-text-muted)', // 节点连线颜色
-      lineWidth: 2,
-      // 关联线（联系线）样式
-      associativeLineColor: 'var(--color-text-muted)',
-      associativeLineWidth: 2,
-      // 默认节点边框颜色
-      borderColor: 'var(--color-border)',
-      borderWidth: 1,
-      // 中心主题样式强制透明
-      rootFillColor: 'transparent',
-      rootBorderWidth: 0,
-      rootFontSize: 32,
-      rootFontWeight: 'bold',
-      rootColor: 'var(--color-text)'
-    }
+    themeConfig: mindMapThemeConfig()
   } as any)
 
   // 注册事件
-  let isApplyingStyles = false
-  mindMap.value.on('node_tree_render_end', () => {
-    if (isApplyingStyles) return
-    isApplyingStyles = true
-    applyCustomNodeStyles()
-    setTimeout(() => {
-      isApplyingStyles = false
-    }, 500) // 增加冷却期到 500ms
-  })
-
   mindMap.value.on('data_change', (newData: any) => {
     store.treeData = newData
   })
@@ -163,94 +144,11 @@ const initMindMap = (data: any) => {
     isRelMode.value = false
   })
 
-  // 初始应用样式
   setTimeout(() => {
-    applyCustomNodeStyles()
-    // 强制中心主题居中
     if (mindMap.value.renderer.root) {
       mindMap.value.renderer.moveNodeToCenter(mindMap.value.renderer.root)
     }
   }, 200)
-}
-
-// 颜色工具：生成浅色版本
-const getLightColor = (hex: string) => {
-  if (!hex || hex === 'transparent') return 'transparent'
-  // 简单的色值变浅逻辑
-  const r = parseInt(hex.slice(1, 3), 16)
-  const g = parseInt(hex.slice(3, 5), 16)
-  const b = parseInt(hex.slice(5, 7), 16)
-  return `rgba(${r}, ${g}, ${b}, 0.2)`
-}
-
-const colors = ['#4f46e5', '#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899']
-
-const applyCustomNodeStyles = () => {
-  if (!mindMap.value || !mindMap.value.renderer.root) return
-  
-  // 1. 设置全局配置（仅在必要时）
-  const config = {
-    lineColor: 'var(--color-text-muted)',
-    borderColor: 'var(--color-border)',
-    associativeLineColor: 'var(--color-text-muted)',
-    rootFillColor: 'transparent',
-    rootBorderWidth: 0
-  }
-  
-  mindMap.value.setThemeConfig(config)
-
-  // 2. 严格的样式设置辅助函数，避免无意义的重渲染触发
-  const safeSetStyle = (node: any, prop: string, value: any) => {
-    if (node.getStyle(prop) !== value) {
-      node.setStyle(prop, value)
-    }
-  }
-
-  // 确保所有现有节点的样式一致
-  const walk = (node: any) => {
-    if (!node) return
-    const layer = node.layerIndex
-    const data = node.nodeData.data
-    
-    if (layer === 0) { // H1 (Root)
-      safeSetStyle(node, 'fillColor', 'transparent')
-      safeSetStyle(node, 'borderColor', 'transparent')
-      safeSetStyle(node, 'borderWidth', 0)
-      safeSetStyle(node, 'fontSize', 32)
-      safeSetStyle(node, 'fontWeight', 'bold')
-      safeSetStyle(node, 'color', 'var(--color-text)')
-      safeSetStyle(node, 'shape', 'rectangle')
-    } else if (layer === 1) { // H2 (Main Topics)
-      if (!data.fillColor || data.fillColor === 'transparent') {
-        const parentChildren = node.parent?.children || []
-        const colorIndex = (parentChildren.indexOf(node) || 0) % colors.length
-        const stableColor = colors[colorIndex]
-        safeSetStyle(node, 'fillColor', stableColor)
-        safeSetStyle(node, 'color', '#ffffff')
-        safeSetStyle(node, 'borderRadius', 8)
-        safeSetStyle(node, 'borderColor', 'var(--color-border)')
-        safeSetStyle(node, 'borderWidth', 1)
-      }
-    } else if (layer === 2) { // H3 (Sub Topics)
-      const parentColor = node.parent?.nodeData?.data?.fillColor || colors[0]
-      const lightColor = getLightColor(parentColor)
-      safeSetStyle(node, 'fillColor', lightColor)
-      safeSetStyle(node, 'color', parentColor)
-      safeSetStyle(node, 'borderRadius', 6)
-      safeSetStyle(node, 'borderColor', 'var(--color-border)')
-      safeSetStyle(node, 'borderWidth', 1)
-    } else { // Others
-      safeSetStyle(node, 'fillColor', 'transparent')
-      safeSetStyle(node, 'color', 'var(--color-text)')
-      safeSetStyle(node, 'borderColor', 'var(--color-border)')
-      safeSetStyle(node, 'borderWidth', 1)
-    }
-
-    if (node.children && node.children.length > 0) {
-      node.children.forEach(walk)
-    }
-  }
-  walk(mindMap.value.renderer.root)
 }
 
 onMounted(async () => {
@@ -366,9 +264,36 @@ const handleSave = async () => {
     // 强制获取最新标题，防止用户修改了 input 但 store 没同步
     const title = store.mapTitle || '未命名思维导图'
     if (store.currentMapId) {
-      await store.updateMap(store.currentMapId, title, JSON.stringify(data))
-      showToast('已保存')
+      const result = await store.updateMap(store.currentMapId, title, JSON.stringify(data))
+      const savedTree = result?.previewData?.mindMap ?? data
+      const resourceIds = messageStore.syncMindMapArtifact(store.currentMapId, savedTree, title, result?.resourceId)
+      const libraryResource = libraryResourceStore.resources.find((item) => item.externalKey === `mindmap:${store.currentMapId}`)
+      if (libraryResource?.resourceId) resourceIds.add(libraryResource.resourceId)
+      resourceIds.forEach((resourceId) => {
+        rememberMockGeneratedResourcePreview(resourceId, { kind: 'mindmap', mindMap: savedTree })
+        publishResourcePreviewUpdate({
+          resourceId,
+          artifactId: `mindmap:${store.currentMapId}`,
+          preview: { kind: 'mindmap', mindMap: savedTree },
+          version: result?.version,
+        })
+      })
+    } else {
+      const id = await store.createMap(title)
+      const result = await store.updateMap(id, title, JSON.stringify(data))
+      store.currentMapId = id
+      if (result?.resourceId) {
+        const savedTree = result.previewData?.mindMap ?? data
+        publishResourcePreviewUpdate({
+          resourceId: result.resourceId,
+          artifactId: `mindmap:${id}`,
+          preview: { kind: 'mindmap', mindMap: savedTree },
+          version: result.version,
+        })
+      }
+      await router.replace(`/mindmap/${id}`)
     }
+    showToast('已保存')
   } catch (error) {
     showToast('❌ 保存失败')
   } finally {
@@ -391,6 +316,7 @@ function showToast(msg: string) {
           <AppIcon name="chevron-left" :size="20" />
         </AppButton>
         <div class="title-container">
+          <span>思维导图</span>
           <input v-model="store.mapTitle" class="title-input" placeholder="输入导图名称..." />
         </div>
       </div>
@@ -458,18 +384,19 @@ function showToast(msg: string) {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background-color: var(--color-surface-subtle);
+  padding: 0 14px 14px;
+  background-color: var(--color-hover);
 }
 
 .toolbar {
-  height: 64px;
-  padding: 0 20px;
+  flex: 0 0 60px;
+  padding: 0 6px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-border);
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
   z-index: 100;
 }
 
@@ -481,10 +408,14 @@ function showToast(msg: string) {
 }
 
 .title-container {
-  padding: 4px 8px;
+  min-width: 0;
+  padding: 3px 8px;
+  display: grid;
   border-radius: 6px;
   transition: background 0.2s;
 }
+
+.title-container span { color: var(--color-text-muted); font-size: 10px; line-height: 1; }
 
 .title-container:hover {
   background: var(--color-hover);
@@ -497,7 +428,7 @@ function showToast(msg: string) {
   font-weight: 600;
   color: var(--color-text);
   outline: none;
-  width: 180px;
+  width: min(28vw, 280px);
 }
 
 .toolbar__center {
@@ -506,7 +437,9 @@ function showToast(msg: string) {
   gap: 16px;
   background: var(--color-surface-subtle);
   padding: 6px 12px;
-  border-radius: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-sm);
 }
 
 .tool-group {
@@ -574,7 +507,7 @@ function showToast(msg: string) {
 .save-btn {
   background-color: var(--color-primary) !important;
   color: var(--color-on-primary) !important;
-  border-radius: 20px !important;
+  border-radius: 8px !important;
   border: none !important;
   padding: 6px 16px !important;
   font-size: 14px;
@@ -586,10 +519,15 @@ function showToast(msg: string) {
 
 .mind-map-body {
   flex: 1;
+  min-height: 0;
   background-color: var(--color-surface);
   position: relative;
   width: 100%;
   height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
 }
 
 /* Override simple-mind-map styles if needed */
@@ -622,6 +560,14 @@ function showToast(msg: string) {
   padding: 8px !important;
   min-width: auto !important;
   border-radius: 50% !important;
+}
+
+@media (max-width: 820px) {
+  .mindmap-view { padding: 0 8px 8px; }
+  .toolbar { gap: 8px; }
+  .toolbar__center { position: absolute; left: 50%; bottom: 22px; z-index: 110; transform: translateX(-50%); }
+  .tool-btn span { display: none; }
+  .title-input { width: 34vw; }
 }
 
 </style>

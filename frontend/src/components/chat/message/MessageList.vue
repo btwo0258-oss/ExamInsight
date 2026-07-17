@@ -12,7 +12,6 @@ type Props = {
 
 const props = defineProps<Props>();
 const emit = defineEmits<{
-  generateMindmap: [messageId: string, content: string];
   confirmLearningProfile: [messageId: string];
   updateLearningProfile: [messageId: string, profile: LearningProfileData];
   updateLearningDocument: [messageId: string, content: string];
@@ -68,7 +67,6 @@ watch(
         :message="m"
         :conversation-id="conversationId"
         :is-streaming="m.streaming"
-        @generate-mindmap="(id, content) => emit('generateMindmap', id, content)"
         @confirm-learning-profile="(id) => emit('confirmLearningProfile', id)"
         @update-learning-profile="(id, profile) => emit('updateLearningProfile', id, profile)"
         @update-learning-document="(id, content) => emit('updateLearningDocument', id, content)"

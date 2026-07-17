@@ -6,7 +6,6 @@ import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
 import AppInput from '@/components/common/AppInput.vue'
 import StudentShell from '@/components/layout/StudentShell.vue'
-import MindMapPanel from '@/components/chat/MindMapPanel.vue'
 import SegmentPanel from '@/components/chat/SegmentPanel.vue'
 import MessageList from '@/components/chat/message/MessageList.vue'
 import { useConversationStore } from '@/stores/conversation'
@@ -324,10 +323,6 @@ const confirmationReady = computed(() => {
   return Boolean(documentMessage?.kind === 'learning-document' && !documentMessage.learningData?.loading && documentMessage.learningData?.content)
 })
 
-const showMindMapPanel = ref(false)
-const mindMapContent = ref('')
-const mindMapTitle = ref('')
-const mindMapSidebarCollapsed = ref(false)
 const messageListRef = ref<InstanceType<typeof MessageList> | null>(null)
 const homeInputRef = ref<InstanceType<typeof AppInput> | null>(null)
 
@@ -862,27 +857,6 @@ function handleKeyDown(e: KeyboardEvent) {
   }
 }
 
-function onGenerateMindmap(messageId: string, content: string) {
-  mindMapContent.value = content
-  mindMapTitle.value = ''
-  showMindMapPanel.value = true
-  mindMapSidebarCollapsed.value = false
-}
-
-function onMindMapSaved() {
-  if (isMockDataSource) {
-    libraryResourceStore.addChatGenerated(
-      `${mindMapTitle.value.trim() || pageTitle.value}思维导图`,
-      currentConversation.value?.knowledgeBaseId ?? null,
-    )
-  }
-  showMindMapPanel.value = false
-}
-
-function handleToggleMindMapSidebar() {
-  mindMapSidebarCollapsed.value = !mindMapSidebarCollapsed.value
-}
-
 async function initializeLearningChat() {
   if (!authStore.isAuthed) return
   try {
@@ -1073,7 +1047,6 @@ watch(
             ref="messageListRef"
             :conversation-id="activeChatId"
             :messages="messages"
-            @generate-mindmap="onGenerateMindmap"
             @confirm-learning-profile="confirmLearningProfile"
             @update-learning-profile="updateLearningProfile"
             @update-learning-document="updateLearningDocument"
@@ -1149,23 +1122,6 @@ watch(
           :container-ref="messageListContainer"
         />
 
-        <MindMapPanel
-          :visible="showMindMapPanel"
-          :ai-content="mindMapContent"
-          :ai-title="mindMapTitle"
-          @close="showMindMapPanel = false"
-          @saved="onMindMapSaved"
-          @toggle-sidebar="handleToggleMindMapSidebar"
-        />
-
-        <button
-          v-if="showMindMapPanel && mindMapSidebarCollapsed"
-          class="mindmap-fab"
-          type="button"
-          @click="handleToggleMindMapSidebar"
-        >
-          <AppIcon name="panel-left-open" :size="20" />
-        </button>
       </div>
     </section>
 
@@ -1473,27 +1429,4 @@ watch(
   .learning-decision__actions { grid-column: 1 / -1; justify-content: flex-end; }
 }
 
-.mindmap-fab {
-  position: fixed;
-  top: 12px;
-  right: 12px;
-  z-index: 9998;
-  width: 44px;
-  height: 44px;
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  background: var(--color-surface);
-  color: var(--color-text-muted);
-  box-shadow: var(--shadow-md);
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-  transition: background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
-}
-
-.mindmap-fab:hover {
-  background: var(--color-hover);
-  color: var(--color-text);
-  box-shadow: var(--shadow-lg);
-}
 </style>

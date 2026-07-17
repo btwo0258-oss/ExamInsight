@@ -4,6 +4,12 @@ import { markedHighlight } from 'marked-highlight'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github.css'
 
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[character] ?? character)
+}
+
 function sanitizeIncompleteMarkdown(md: string): string {
   if (!md) return ''
 
@@ -94,7 +100,13 @@ const markedInstance = new Marked(
   }),
   {
     breaks: true,
-    gfm: true
+    gfm: true,
+    renderer: {
+      // Model output may contain Markdown, but raw HTML is never executable in chat.
+      html({ text }: { text: string }) {
+        return escapeHtml(text)
+      },
+    },
   }
 )
 

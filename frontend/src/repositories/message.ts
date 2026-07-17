@@ -3,6 +3,7 @@ import { isMockDataSource } from '@/config/dataSource'
 import type { PresentationChatCardDto } from '@/types/contracts/presentation'
 import type { SpreadsheetChatCardDto } from '@/types/contracts/spreadsheet'
 import type { LearningProfileData } from '@/types/contracts/learning'
+import type { ChatArtifactDto } from '@/types/contracts/artifact'
 
 export type MessageRole = 'user' | 'assistant' | 'system'
 
@@ -33,6 +34,7 @@ export type MessageDto = {
   learningData?: LearningMessageData | string | null
   presentationData?: PresentationChatCardDto | string | null
   spreadsheetData?: SpreadsheetChatCardDto | string | null
+  artifacts?: ChatArtifactDto[] | string | null
 }
 
 export interface MessageRepository {

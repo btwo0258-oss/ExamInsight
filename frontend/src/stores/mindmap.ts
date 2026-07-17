@@ -71,11 +71,12 @@ export const useMindMapStore = defineStore('mindmap', () => {
   }
 
   const updateMap = async (id: number, title?: string, content?: string, knowledgeBaseId?: number | null) => {
-    await mindmapApi.updateMindMap({ id, title, content, knowledgeBaseId })
+    const result = await mindmapApi.updateMindMap({ id, title, content, knowledgeBaseId })
     if (title && id === currentMapId.value) {
       mapTitle.value = title
     }
     await fetchList()
+    return result
   }
 
   const deleteMap = async (id: number) => {

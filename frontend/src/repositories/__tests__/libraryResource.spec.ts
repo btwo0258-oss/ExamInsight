@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { USER_KEY } from '@/api/request'
-import { libraryResourceRepository } from '@/repositories/libraryResource'
+import { libraryResourceRepository, rememberMockGeneratedResourcePreview } from '@/repositories/libraryResource'
+import type { LibraryResourceDto } from '@/types/contracts/library'
 
 describe('MockLibraryResourceRepository', () => {
   beforeEach(() => {
@@ -62,5 +63,29 @@ describe('MockLibraryResourceRepository', () => {
     resource.sizeBytes = 11 * 1024 * 1024
     libraryResourceRepository.saveMock(resources)
     expect((await libraryResourceRepository.preview(uploaded.resourceId)).status).toBe('too_large')
+  })
+
+  it('downloads valid mock DOCX and PDF binaries for generated artifacts', async () => {
+    const base: Omit<LibraryResourceDto, 'resourceId' | 'name' | 'format' | 'fileType' | 'mimeType'> = {
+      sizeBytes: 1024,
+      status: 'ready',
+      updatedAt: '刚刚',
+      sourceType: 'generated',
+      origin: 'chat',
+      projectId: null,
+      knowledgeBaseId: null,
+    }
+    const resources: LibraryResourceDto[] = [
+      { ...base, resourceId: 'generated-docx', name: '报告.docx', format: 'DOCX', fileType: 'document', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+      { ...base, resourceId: 'generated-pdf', name: '报告.pdf', format: 'PDF', fileType: 'pdf', mimeType: 'application/pdf' },
+    ]
+    libraryResourceRepository.saveMock(resources)
+    rememberMockGeneratedResourcePreview('generated-docx', { kind: 'document', text: 'Mock document content' })
+    rememberMockGeneratedResourcePreview('generated-pdf', { kind: 'document', text: 'Mock document content' })
+
+    const docxBytes = new Uint8Array(await (await libraryResourceRepository.download('generated-docx')).arrayBuffer())
+    const pdfBytes = new Uint8Array(await (await libraryResourceRepository.download('generated-pdf')).arrayBuffer())
+    expect(String.fromCharCode(...docxBytes.slice(0, 2))).toBe('PK')
+    expect(String.fromCharCode(...pdfBytes.slice(0, 4))).toBe('%PDF')
   })
 })

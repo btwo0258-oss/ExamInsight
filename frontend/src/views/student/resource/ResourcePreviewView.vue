@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
 import LearningMindMapPreview from '@/components/learning/LearningMindMapPreview.vue'
+import MindMapStaticPreview from '@/components/artifact/MindMapStaticPreview.vue'
 import StudentShell from '@/components/layout/StudentShell.vue'
 import PresentationSlidePreview from '@/components/presentation/PresentationSlidePreview.vue'
 import { downloadLibraryResource, previewLibraryResource } from '@/api/libraryResource'
@@ -15,6 +16,7 @@ import type { ResourcePreviewDto } from '@/types/contracts/library'
 import type { PresentationDto } from '@/types/contracts/presentation'
 import type { SpreadsheetSheetDraft } from '@/types/contracts/spreadsheet'
 import { renderMarkdownToHtml } from '@/utils/markdown'
+import { subscribeResourcePreviewUpdates } from '@/utils/resourcePreviewSync'
 
 const route = useRoute()
 const router = useRouter()
@@ -55,6 +57,7 @@ const statusMessage = computed(() => {
   return ''
 })
 const canRender = computed(() => preview.value?.status === 'ready' && !localError.value)
+const generatedDocumentText = computed(() => preview.value?.previewData?.text ?? '')
 
 function internalReturnPath() {
   const value = route.query.returnTo
@@ -179,18 +182,27 @@ async function loadPreview() {
       applyLearningPreview(value)
     }
 
+    if (value.previewData?.table) {
+      sheets.value = [{
+        sheetId: 'preview',
+        name: value.previewData.table.sheetName || '工作表 1',
+        columns: value.previewData.table.columns,
+        rows: value.previewData.table.rows,
+      }]
+    }
+
     if (value.previewKind === 'presentation') {
       const id = presentationIdFromPreview(value)
-      if (!id) throw new Error('上传的 PPT 需要后端转换后才能在线预览，当前可先下载查看')
-      presentation.value = await presentationRepository.get(id)
+      if (id) presentation.value = await presentationRepository.get(id)
+      else if (!value.previewData?.slides?.length) throw new Error('上传的 PPT 需要后端转换后才能在线预览，当前可先下载查看')
     } else if (value.previewKind === 'spreadsheet') {
       const id = spreadsheetIdFromPreview(value)
       if (id) sheets.value = (await spreadsheetRepository.get(id)).workbook.sheets
       else if (value.previewUrl) await loadUploadedSpreadsheet(value.previewUrl)
-      else throw new Error('电子表格预览内容不可用')
+      else if (!value.previewData?.table) throw new Error('电子表格预览内容不可用')
     } else if (value.previewKind === 'word') {
-      if (!value.previewUrl) throw new Error('Word 预览内容不可用')
-      await loadWord(value.previewUrl, value.resource.name)
+      if (value.previewUrl) await loadWord(value.previewUrl, value.resource.name)
+      else if (!value.previewData?.text) throw new Error('Word 预览内容不可用')
     }
   } catch (error) {
     if (sequence !== requestSequence) return
@@ -227,7 +239,12 @@ async function download() {
 
 watch(resourceId, () => void loadPreview(), { immediate: true })
 
+const unsubscribePreviewUpdates = subscribeResourcePreviewUpdates((update) => {
+  if (update.resourceId === resourceId.value) void loadPreview()
+})
+
 onBeforeUnmount(() => {
+  unsubscribePreviewUpdates()
   requestSequence += 1
   clearObjectUrl()
 })
@@ -272,6 +289,13 @@ onBeforeUnmount(() => {
           </article>
         </div>
 
+        <div v-else-if="preview?.previewKind === 'presentation' && preview.previewData?.slides" class="presentation-pages generated-slides">
+          <article v-for="(slide, index) in preview.previewData.slides" :key="`${slide.title}-${index}`" class="generated-slide">
+            <span>第 {{ index + 1 }} 页</span>
+            <div><h2>{{ slide.title }}</h2><ul><li v-for="point in slide.points" :key="point">{{ point }}</li></ul></div>
+          </article>
+        </div>
+
         <section v-else-if="preview?.previewKind === 'spreadsheet'" class="spreadsheet-document">
           <div class="sheet-tabs" role="tablist" aria-label="工作表">
             <button v-for="(sheet, index) in sheets" :key="sheet.sheetId" type="button" :class="{ active: activeSheetIndex === index }" @click="activeSheetIndex = index">{{ sheet.name }}</button>
@@ -286,13 +310,16 @@ onBeforeUnmount(() => {
         </section>
 
         <section v-else-if="preview?.previewKind === 'mindmap'" class="mindmap-document">
-          <LearningMindMapPreview :title="resource?.name || '思维导图'" :tree-data="(preview as ResourcePreviewDto & { mindMapTreeData?: unknown }).mindMapTreeData" />
+          <MindMapStaticPreview v-if="preview.previewData?.mindMap" :tree="preview.previewData.mindMap" />
+          <LearningMindMapPreview v-else :title="resource?.name || '思维导图'" :tree-data="(preview as ResourcePreviewDto & { mindMapTreeData?: unknown }).mindMapTreeData" />
         </section>
 
+        <article v-else-if="preview?.previewKind === 'word' && generatedDocumentText" class="paper-document generated-document"><h1>{{ resource?.name }}</h1><p>{{ generatedDocumentText }}</p></article>
         <article v-else-if="preview?.previewKind === 'word'" class="paper-document word-document" v-html="wordHtml" />
         <article v-else-if="preview?.previewKind === 'text' && textHtml" class="paper-document markdown-document" v-html="textHtml" />
         <pre v-else-if="preview?.previewKind === 'text'" class="paper-document text-document"><code>{{ preview.textContent }}</code></pre>
         <img v-else-if="preview?.previewKind === 'image' && preview.previewUrl" class="image-document" :src="preview.previewUrl" :alt="resource?.name" />
+        <article v-else-if="preview?.previewKind === 'pdf' && generatedDocumentText" class="paper-document generated-document"><h1>{{ resource?.name }}</h1><p>{{ generatedDocumentText }}</p></article>
         <iframe v-else-if="preview?.previewKind === 'pdf' && preview.previewUrl" class="pdf-document" :src="preview.previewUrl" :title="resource?.name" />
         <section v-else-if="preview?.previewKind === 'audio' && preview.previewUrl" class="audio-document">
           <span class="state-icon"><AppIcon name="microphone" :size="30" /></span>
@@ -338,6 +365,11 @@ onBeforeUnmount(() => {
 .pdf-document { display: block; width: min(1200px, 100%); height: calc(100vh - 145px); min-height: 620px; margin: 0 auto; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); }
 .presentation-pages { width: min(1100px, 100%); margin: 0 auto; display: grid; gap: 34px; }
 .presentation-page > span { display: block; margin-bottom: 8px; color: var(--color-text-muted); font-size: 12px; }
+.generated-slide > div { aspect-ratio: 16 / 9; padding: clamp(28px, 5vw, 72px); border: 1px solid var(--color-border); border-radius: 8px; background: linear-gradient(145deg, var(--color-surface), color-mix(in srgb, #d4552d 7%, var(--color-surface))); box-shadow: var(--shadow-sm); }
+.generated-slide h2 { margin: 0 0 26px; font-size: clamp(22px, 3vw, 38px); }
+.generated-slide li { margin: 10px 0; color: var(--color-text-muted); }
+.generated-document h1 { margin: 0 0 28px; font-size: 26px; }
+.generated-document p { white-space: pre-wrap; line-height: 1.85; }
 .spreadsheet-document { overflow: hidden; }
 .sheet-tabs { display: flex; gap: 2px; padding: 10px 12px 0; overflow-x: auto; border-bottom: 1px solid var(--color-border); }
 .sheet-tabs button { flex: 0 0 auto; min-height: 34px; padding: 0 14px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--color-text-muted); cursor: pointer; }

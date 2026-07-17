@@ -13,7 +13,6 @@ const emit = defineEmits<{
   copy: [text: string];
   edit: [messageId: string];
   regenerate: [messageId: string];
-  generateMindmap: [messageId: string, content: string];
 }>();
 
 const isUser = computed(() => props.message.role === "user");
@@ -36,10 +35,6 @@ function handleRegenerate() {
   emit("regenerate", props.message.id);
 }
 
-function handleGenerateMindmap() {
-  const content = props.message.kind === "learning-document" ? props.message.learningData?.content || "" : props.message.content;
-  emit("generateMindmap", props.message.id, content);
-}
 </script>
 
 <template>
@@ -62,9 +57,6 @@ function handleGenerateMindmap() {
         @click="handleRegenerate"
       >
         <AppIcon name="refresh-single" :size="16" />
-      </button>
-      <button class="action-btn" title="AI生成思维导图" @click="handleGenerateMindmap">
-        <AppIcon name="layers" :size="16" />
       </button>
     </template>
   </div>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import {
   Check,
   Download,
@@ -13,6 +13,9 @@ import {
   X,
 } from 'lucide-vue-next'
 import ResourceTypeIcon from '@/components/common/ResourceTypeIcon.vue'
+import AppSelectMenu from '@/components/common/AppSelectMenu.vue'
+import LibraryKnowledgeCreateModal from '@/components/library/LibraryKnowledgeCreateModal.vue'
+import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import type { PresentationChatCardDto } from '@/types/contracts/presentation'
 
 const props = withDefaults(defineProps<{
@@ -35,9 +38,16 @@ const emit = defineEmits<{
   retry: []
 }>()
 
+const knowledgeBaseStore = useKnowledgeBaseStore()
+const showKnowledgeCreate = ref(false)
+
 const isProposal = computed(() => props.data.view === 'proposal')
 const canGenerate = computed(() => props.data.config.topic.trim().length > 0 && !props.busy)
 const pageMeta = computed(() => props.data.previewPageCount || props.data.config.pageCount)
+const knowledgeBaseOptions = computed(() => [
+  { value: null, label: '无', icon: 'close' },
+  ...knowledgeBaseStore.list.map((item) => ({ value: item.id, label: item.name, icon: 'folder' })),
+])
 
 function updateTopic(topic: string) {
   const oldTopic = props.data.config.topic
@@ -65,6 +75,21 @@ function updatePageCount(value: string) {
 function onPageCountChange(event: Event) {
   updatePageCount((event.target as HTMLInputElement).value)
 }
+
+function updateKnowledgeBaseId(knowledgeBaseId: number | null) {
+  emit('update', { ...props.data, knowledgeBaseId })
+}
+
+function onKnowledgeBaseCreated(id: number) {
+  showKnowledgeCreate.value = false
+  updateKnowledgeBaseId(id)
+}
+
+onMounted(() => {
+  if (!knowledgeBaseStore.isInitialized && !knowledgeBaseStore.isLoading) {
+    void knowledgeBaseStore.fetchList().catch(() => undefined)
+  }
+})
 
 </script>
 
@@ -106,13 +131,24 @@ function onPageCountChange(event: Event) {
             @change="onPageCountChange"
           />
         </label>
+        <label class="presentation-field presentation-field--knowledge">
+          <span>知识库</span>
+          <AppSelectMenu
+            :model-value="data.knowledgeBaseId ?? null"
+            :options="knowledgeBaseOptions"
+            aria-label="选择 PPT 关联知识库"
+            create-label="新建知识库"
+            :disabled="busy"
+            :min-menu-width="260"
+            @update:model-value="updateKnowledgeBaseId"
+            @create="showKnowledgeCreate = true"
+          />
+        </label>
       </div>
 
-      <p v-if="data.knowledgeBaseId || data.projectId" class="presentation-card__context">
+      <p v-if="data.projectId" class="presentation-card__context">
         <FolderPlus :size="14" />
-        <span>
-          {{ data.knowledgeBaseId ? '已关联当前知识库' : '' }}{{ data.knowledgeBaseId && data.projectId ? ' · ' : '' }}{{ data.projectId ? '已关联当前学习项目' : '' }}
-        </span>
+        <span>已关联当前学习项目</span>
       </p>
 
       <p v-if="error || data.errorMessage" class="presentation-card__error">{{ error || data.errorMessage }}</p>
@@ -159,15 +195,20 @@ function onPageCountChange(event: Event) {
           <RefreshCw v-else :size="16" />重试
         </button>
         <template v-else>
-          <button class="card-button" type="button" @click="emit('open')"><ExternalLink :size="16" />预览</button>
-          <button class="card-button" type="button" :disabled="busy" @click="emit('download')"><Download :size="16" />下载</button>
-          <button class="card-button card-button--primary" type="button" :disabled="busy || Boolean(data.knowledgeBaseId)" @click="emit('associate')">
+          <button class="card-button" type="button" :disabled="busy || Boolean(data.knowledgeBaseId)" @click="emit('associate')">
             <FilePlus2 :size="16" />{{ data.knowledgeBaseId ? '已加入知识库' : '添加到知识库' }}
           </button>
+          <button class="card-button" type="button" :disabled="busy" @click="emit('download')"><Download :size="16" />下载</button>
+          <button class="card-button card-button--primary" type="button" @click="emit('open')"><ExternalLink :size="16" />预览</button>
         </template>
       </footer>
     </template>
   </section>
+  <LibraryKnowledgeCreateModal
+    :open="showKnowledgeCreate"
+    @close="showKnowledgeCreate = false"
+    @created="onKnowledgeBaseCreated"
+  />
 </template>
 
 <style scoped>
@@ -253,7 +294,9 @@ function onPageCountChange(event: Event) {
 
 .presentation-card__controls {
   padding: 12px 14px 0;
-  width: 118px;
+  display: grid;
+  grid-template-columns: 118px minmax(210px, 1fr);
+  gap: 12px;
 }
 
 .presentation-card__context,
@@ -368,6 +411,10 @@ function onPageCountChange(event: Event) {
 }
 
 @media (max-width: 640px) {
+  .presentation-card__controls {
+    grid-template-columns: 1fr;
+  }
+
   .presentation-card__actions {
     flex-wrap: wrap;
   }

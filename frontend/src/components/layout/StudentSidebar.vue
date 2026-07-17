@@ -200,7 +200,11 @@ const normalRecent = computed(() => conversationStore.list.filter((item) => !ite
 onMounted(() => {
   authStore.init()
   conversationStore.init()
-  if (authStore.isAuthed) migrateLegacyConversationProjectLinks()
+  syncSidebarProjects()
+  if (authStore.isAuthed) {
+    migrateLegacyConversationProjectLinks()
+    if (!learningStore.plans.length) void learningStore.fetchPlans()
+  }
 })
 
 watch(
@@ -209,6 +213,7 @@ watch(
     syncSidebarProjects()
     if (authStore.isAuthed) migrateLegacyConversationProjectLinks()
   },
+  { immediate: true },
 )
 
 watch(

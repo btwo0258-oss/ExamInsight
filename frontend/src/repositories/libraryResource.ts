@@ -12,6 +12,7 @@ import type {
   ResourcePreviewDto,
   ResourcePreviewKind,
 } from '@/types/contracts/library'
+import type { ArtifactInlinePreview } from '@/types/contracts/artifact'
 
 export interface LibraryResourceRepository {
   initial(): LibraryResourceDto[]
@@ -31,6 +32,7 @@ export interface LibraryResourceRepository {
 }
 
 const DOMAIN = 'resources'
+const GENERATED_PREVIEW_DOMAIN = 'resources.generated-previews'
 const mockPreviewFiles = new Map<string, File>()
 
 function externalId(resource: LibraryResourceDto, prefix: string) {
@@ -70,11 +72,48 @@ export function rememberMockLibraryResourceFile(resourceId: string, file: File) 
   mockPreviewFiles.set(resourceId, file)
 }
 
+export function rememberMockGeneratedResourcePreview(resourceId: string, preview: ArtifactInlinePreview) {
+  if (!isMockDataSource) return
+  const previews = mockSession.get<Record<string, ArtifactInlinePreview>>(GENERATED_PREVIEW_DOMAIN, {})
+  previews[resourceId] = preview
+  mockSession.set(GENERATED_PREVIEW_DOMAIN, previews)
+}
+
 function normalizeStatus(status: unknown): LibraryResourceProcessingStatus {
   if (status === 'ready' || status === '解析完成') return 'ready'
   if (status === 'processing' || status === '向量化中') return 'processing'
   if (status === 'failed' || status === '解析失败') return 'failed'
   return 'waiting'
+}
+
+function escapeXml(value: string) {
+  return value.replace(/[<>&'\"]/g, (character) => ({
+    '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;',
+  })[character] ?? character)
+}
+
+async function generatedDocx(name: string, content: string) {
+  const { default: JSZip } = await import('jszip')
+  const zip = new JSZip()
+  const paragraphs = content.split(/\n+/).filter(Boolean).map((line) => `<w:p><w:r><w:t xml:space="preserve">${escapeXml(line)}</w:t></w:r></w:p>`).join('')
+  zip.file('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>')
+  zip.folder('_rels')?.file('.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>')
+  zip.folder('word')?.file('document.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:rPr><w:b/><w:sz w:val="32"/></w:rPr><w:t>${escapeXml(name)}</w:t></w:r></w:p>${paragraphs}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr></w:body></w:document>`)
+  return zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' })
+}
+
+async function generatedPdf(name: string, content: string) {
+  const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib')
+  const pdf = await PDFDocument.create()
+  const page = pdf.addPage([595, 842])
+  const font = await pdf.embedFont(StandardFonts.Helvetica)
+  page.drawText('ExamInsight AI Generated Document', { x: 54, y: 770, size: 20, font, color: rgb(.12, .14, .18) })
+  page.drawText(name.replace(/[^\x20-\x7E]/g, ' ').slice(0, 70) || 'Generated file', { x: 54, y: 735, size: 12, font, color: rgb(.3, .33, .4) })
+  const lines = content.replace(/[^\x20-\x7E\n]/g, ' ').split('\n').flatMap((line) => line.match(/.{1,78}/g) ?? ['']).slice(0, 34)
+  lines.forEach((line, index) => page.drawText(line, { x: 54, y: 700 - index * 17, size: 10, font, color: rgb(.2, .22, .26) }))
+  const bytes = await pdf.save()
+  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+  return new Blob([buffer], { type: 'application/pdf' })
 }
 
 export function resourceFileType(name: string, mimeType = ''): ResourceFileType {
@@ -209,8 +248,19 @@ const mockRepository: LibraryResourceRepository = {
     const presentationId = externalId(resource, 'presentation:')
     const spreadsheetId = externalId(resource, 'spreadsheet:')
     const mindMapId = Number(externalId(resource, 'mindmap:')) || undefined
+    const generatedPreview = mockSession.get<Record<string, ArtifactInlinePreview>>(GENERATED_PREVIEW_DOMAIN, {})[resourceId]
     if (presentationId || spreadsheetId || mindMapId || resource.externalKey?.startsWith('learning:')) {
-      return { ...base, status: 'ready', presentationId, spreadsheetId, mindMapId }
+      return { ...base, status: 'ready', presentationId, spreadsheetId, mindMapId, previewData: generatedPreview }
+    }
+
+    if (generatedPreview) {
+      return {
+        ...base,
+        status: 'ready',
+        previewData: generatedPreview,
+        textContent: generatedPreview.text,
+        previewUrl: generatedPreview.imageUrl,
+      }
     }
 
     const file = mockPreviewFiles.get(resourceId)
@@ -230,6 +280,13 @@ const mockRepository: LibraryResourceRepository = {
   async download(resourceId) {
     const resource = mockSession.get(DOMAIN, initialMockResources()).find((item) => item.resourceId === resourceId)
     if (!resource) throw new Error('资料不存在')
+    const preview = mockSession.get<Record<string, ArtifactInlinePreview>>(GENERATED_PREVIEW_DOMAIN, {})[resourceId]
+    if (preview?.imageUrl) return fetch(preview.imageUrl).then((response) => response.blob())
+    if (resource.name.toLowerCase().endsWith('.docx')) return generatedDocx(resource.name, preview?.text || resource.name)
+    if (resource.name.toLowerCase().endsWith('.pdf')) return generatedPdf(resource.name, preview?.text || resource.name)
+    if (resource.fileType === 'mindmap' && preview?.mindMap) {
+      return new Blob([JSON.stringify(preview.mindMap, null, 2)], { type: 'application/vnd.examinsight.mindmap+json' })
+    }
     return new Blob([`Mock 文件：${resource.name}\nMock 环境不保存真实上传文件内容。`], { type: 'text/plain;charset=utf-8' })
   },
 }

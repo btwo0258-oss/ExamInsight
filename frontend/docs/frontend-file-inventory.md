@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | `/chat`、`/chat/:id` | `src/views/student/chat/StudentChatView.vue` | 主线 |
 | `/presentations/new`、`/presentations/:id` | `src/views/student/presentation/PresentationWorkspaceView.vue` | 主线 |
-| `/spreadsheets/new`（重定向对话）、`/spreadsheets/:id` | `src/views/student/chat/StudentChatView.vue`、`src/views/student/spreadsheet/SpreadsheetWorkspaceView.vue` | 主线 |
+| `/spreadsheets/new`（进入对话） | `src/views/student/chat/StudentChatView.vue` | 主线；不提供独立电子表格编辑/详情页 |
 | `/library` | `src/views/student/library/LibraryHomeView.vue` | 主线 |
 | `/library/:id` | `src/views/student/library/LibraryDetailView.vue` | 主线 |
 | `/resources/:resourceId/preview` | `src/views/student/resource/ResourcePreviewView.vue` | 主线统一只读预览 |
@@ -28,12 +28,12 @@
 | 目录 | 职责 |
 | --- | --- |
 | `src/components/layout` | 学生端整体布局、主侧边栏、学习详情布局 |
-| `src/components/chat` | 消息列表、消息渲染、附件、分段查看和思维导图面板 |
+| `src/components/chat` | 消息列表、Markdown/代码渲染、输入附件和分段查看；不再包含思维导图抽屉 |
+| `src/components/artifact` | 对话生成文件的统一附件卡片，以及与编辑页共用真实渲染规则的只读思维导图预览 |
 | `src/components/capture` | 浏览器语音录制、拍照和图片选择；不包含正式 AI 识别算法 |
 | `src/components/library` | 知识库创建和全局资料上传 |
 | `src/components/learning` | 学习画像、方案文档、题目、助教、资源与导图预览 |
 | `src/components/presentation` | PPT 对话确认/结果卡、大纲编辑和统一页面预览；不直接访问后端或讯飞 |
-| `src/components/spreadsheet` | 电子表格生成中/成功/失败任务卡；不提供配置表单，不直接执行正式 AI 或文件生成 |
 | `src/components/common` | 不依赖具体业务实体的按钮、输入、选择浮层、弹窗、状态和图标 |
 
 主线页面可以依赖上述目录。旧 `src/views/legacy` 和 `src/components/legacy` 已删除，不得重新作为新功能依赖。
@@ -56,6 +56,12 @@
 | `src/components/learning/LearningRouteState.vue` | 学习详情页共用加载、错误和不存在状态 |
 | `src/components/common/AppSelectMenu.vue` | 主线共用选择浮层；负责锚点定位、视口避让、选中/禁用、点击外部和 Esc 关闭、展开动画及可选底部创建动作，不读取业务 Store |
 | `src/types/contracts/media.ts` | 媒体资产、语音转写、图片识别任务、状态和前端限制 |
+| `src/types/contracts/artifact.ts` | 所有聊天生成文件共用的状态、文件信息和轻量预览契约；表格不是独立卡片类型 |
+| `src/components/artifact/ArtifactCard.vue` | 图片、思维导图、DOCX、PDF、XLSX、PPTX 等生成结果的统一卡片；操作固定为编辑（支持时）→下载→预览，预览位于最右 |
+| `src/components/artifact/MindMapStaticPreview.vue` | 对话和统一资源预览共用的 simple-mind-map 只读画布；读取同一树数据并与编辑页共用布局和主题 |
+| `src/utils/mindMapTheme.ts` | 统一思维导图逻辑结构、绿色节点主题和历史节点样式清理，聊天预览、全页预览、编辑页共同使用 |
+| `src/utils/resourcePreviewSync.ts` | 保存后在当前页面和同源标签页广播 resourceId/preview/version，驱动已打开的统一预览立即刷新 |
+| `src/utils/artifact.ts` | artifact upsert 及旧 PPT/Spreadsheet 卡到统一附件的兼容转换 |
 | `src/repositories/media.ts` | MediaRepository 接口及 Mock/API 两套实现 |
 | `src/types/contracts/presentation.ts` | PPT 配置、消息卡、上下文、大纲、预览、状态和异步任务 DTO |
 | `src/repositories/presentation.ts` | PresentationRepository 及 Mock/API 两套实现；Mock 只在下载时生成 PPTX |
@@ -63,21 +69,20 @@
 | `src/views/student/presentation/PresentationWorkspaceView.vue` | 路由页面；组织配置、大纲、生成进度和预览四步流程 |
 | `src/components/presentation/PresentationOutlineEditor.vue` | 编辑页面标题、要点、备注、布局和顺序 |
 | `src/components/presentation/PresentationSlidePreview.vue` | Mock 渲染结构化预览；API 有预览图时展示后端实际页面 |
-| `src/components/presentation/PresentationChatCard.vue` | 对话内统一渲染 PPT proposal/result，发出配置、大纲、预览、下载、知识库关联和重试事件 |
+| `src/components/presentation/PresentationChatCard.vue` | 只渲染 PPT 生成前 proposal 配置特例；页数旁可选择/新建关联知识库，生成结果改用统一 ArtifactCard |
 | `src/utils/presentation.ts` | PresentationDto 与消息卡转换、工作区路由参数组装；被消息与工作区共同复用 |
-| `src/utils/stream.ts` | 解析通用 SSE 事件边界；聊天 Repository 再映射文本、PPT 和电子表格卡片事件 |
+| `src/utils/stream.ts` | 解析现有 SSE 事件边界；聊天 Repository 在同一流上消费文本、PPT proposal 和统一 artifact 事件 |
 | `src/repositories/__tests__/presentation.spec.ts` | 创建、大纲、生成、自动资源 ID 和 PPTX 下载测试 |
 | `tests/e2e/presentation-workflow.spec.ts` | 浏览器验证配置、大纲编辑、生成和预览主链路 |
 | `src/types/contracts/spreadsheet.ts` | 对话生成请求、消息任务卡、只读工作簿、上下文、状态和任务 DTO |
 | `src/repositories/spreadsheet.ts` | SpreadsheetRepository 及 Mock/API 双实现；创建即启动任务，Mock 完成时自动归档并在下载时生成 XLSX |
 | `src/stores/spreadsheet.ts` | 编排直接生成、轮询、取消、失败重试、刷新恢复和下载 |
-| `src/views/student/spreadsheet/SpreadsheetWorkspaceView.vue` | 生成任务恢复、失败重试和知识库关联页面；ready 文件外部预览进入统一资源预览工作区 |
-| `src/components/spreadsheet/SpreadsheetChatCard.vue` | 对话内渲染电子表格 generating/ready/failed 任务状态 |
-| `src/utils/spreadsheet.ts` | SpreadsheetDto 与消息任务卡转换及预览返回路由参数 |
+| `src/utils/spreadsheet.ts` | SpreadsheetDto 与迁移期旧消息卡转换；新对话结果使用只读 artifact，不生成 editorRoute |
 | `src/repositories/__tests__/spreadsheet.spec.ts` | 对话直达生成、上下文、自动资料库归档和 XLSX 下载测试 |
 | `src/types/contracts/library.ts` | 全局资源 DTO；统一 `resourceId`、`knowledgeBaseId`、`projectId`、预览状态和分类型大小限制 |
 | `src/repositories/libraryResource.ts` | `/api/resources` Mock/API 双实现，处理上传、关联、重命名、统一预览、下载和删除；Mock 原文件只保存在当前标签页内存 |
 | `src/views/student/resource/ResourcePreviewView.vue` | 唯一主线只读预览工作区；资料库、知识库详情、智能学习资源包和聊天生成文件都按 resourceId 进入 |
+| `src/stores/message.ts` | 除消息流状态外，按 mindmap artifactId/resourceId 更新已加载聊天附件，保证编辑保存后返回聊天立即显示最新版 |
 | `src/utils/resourcePreview.ts` | 统一生成资源预览路由，携带受控来源和内部 returnTo |
 | `src/components/capture/VoiceRecorder.vue` | 麦克风权限、录音状态、停止、取消和转写回填 |
 | `src/components/capture/ImageCaptureUploader.vue` | 仅供移动端 AppInput 的 `+` 菜单使用，负责上传照片、后置摄像头调用和预校验 |
@@ -128,19 +133,20 @@ PPT、电子表格和统一资源模型对现有主线文件的影响：
 
 | 文件 | 新职责 |
 | --- | --- |
-| `src/router/index.ts` | 注册 PPT 生成工作区、电子表格任务页和 `/resources/:resourceId/preview`；旧 `/knowledge` 重定向主线 `/library` |
+| `src/router/index.ts` | 注册 PPT 生成工作区、电子表格对话入口和 `/resources/:resourceId/preview`；不注册电子表格详情/编辑页，旧 `/knowledge` 重定向主线 `/library` |
 | `src/stores/auth.ts` | Mock 未登录访客数据在当前标签页刷新时保留；API 模式仍清理遗留 guest Mock 数据 |
 | `src/App.vue` | Mock 未登录访客启动时重新获取 sessionStorage 中的会话、知识库和分析实体；API 未登录状态不请求业务接口 |
-| `src/views/student/chat/StudentChatView.vue` | 欢迎页按“撰写或编辑、生成图片、生成 PPT、生成思维导图”展示四个快捷入口；不展示“查找资料”和“生成表格”，但保留电子表格路由、clientAction、任务卡和生成链路 |
-| `src/components/chat/message/MessageBubble.vue` | 渲染 PPT 确认卡和电子表格任务卡；ready 文件预览进入统一资源预览，配置/大纲和任务恢复仍进入各自工作区 |
-| `src/stores/message.ts` | 保存/恢复 presentationData、spreadsheetData，消费两种结构化 SSE 卡片并维持 sourceMessageId |
+| `src/views/student/chat/StudentChatView.vue` | 欢迎页展示四个快捷入口；移除消息气泡思维导图按钮、聊天思维导图抽屉及其页面状态 |
+| `src/components/chat/message/MessageBubble.vue` | 渲染 Markdown/代码、唯一 PPT proposal 特例和统一 ArtifactCard；旧表格/PPT 结果在显示边界转换为 artifact |
+| `src/stores/message.ts` | 保存/恢复 artifacts，消费现有 SSE 上的 artifact upsert，并在 Mock ready 时归档同一 resourceId；保留旧结构化字段兼容读取 |
+| `src/components/layout/StudentSidebar.vue` | 首次挂载立即同步已加载项目，空 Store 时调用统一 fetchPlans；Mock/API 项目都显示在智能学习树中 |
 | `src/views/student/learning/LearningResourcesView.vue` | PPT 资源可创建和恢复；所有 ready 资源通过 resourceId 进入统一预览，操作顺序为预览、下载、生成/重试 |
 | `src/stores/learning.ts` | Mock 完成后回写 presentationId；API 模式重新获取后端项目 |
 | `src/stores/libraryResource.ts` | Mock/API 统一全局资源；生成完成按 externalKey 去重并自动归档 |
 | `src/views/student/library/LibraryHomeView.vue` | 来源/文件类型组合筛选；卡片/列表正文点击统一预览，圆形/方形选择区才切换批量选择 |
 | `src/views/student/library/LibraryDetailView.vue` | ready 文件整行和眼睛按钮进入统一预览；下载仍使用对应 Repository |
 | `src/views/student/presentation/PresentationWorkspaceView.vue` | 用户可见术语统一显示“知识库”；按 sourceMessageId 恢复配置并把状态回写原消息卡 |
-| `package.json`、`package-lock.json` | `pptxgenjs`、`exceljs` 分别服务 Mock 的真实 PPTX/XLSX 下载 |
+| `package.json`、`package-lock.json` | `pptxgenjs`、`exceljs`、`jszip`、`pdf-lib` 分别服务 Mock 的真实 PPTX/XLSX/DOCX/PDF 下载；正式模式仍下载后端文件 |
 
 主线 Store 只编排 Repository 和当前页面内存状态。正式模式不得从 `mock` 读取实体，也不得把项目、题目、答题或资源成功状态写入 Web Storage。
 
@@ -154,6 +160,8 @@ PPT、电子表格和统一资源模型对现有主线文件的影响：
 | 旧版页面与组件 | `views/legacy/*`、`components/legacy/*` | 无 Router、主线 import 或测试依赖；对话和学习工作区已有主线实现 |
 | 空壳与重复源码 | 空 `CodeBlock.vue`、`ReasoningBlock.vue`、`EmptyState.vue`、`LoadingDots.vue`，未使用 `api/index.ts`、`utils/time.ts`、重复 `views/admin/index.vue` 和异常 `src/layouts` | 零引用、无独有逻辑或已有实际路由实现 |
 | 临时文件 | `fix_imports.cjs`、`out.txt`、Playwright 官网示例、已提交的 `.vite/deps` 缓存 | 不属于产品功能、正式测试或构建输入 |
+| 已统一的聊天特例 | `components/chat/MindMapPanel.vue`、`components/spreadsheet/SpreadsheetChatCard.vue` | 思维导图不再使用聊天抽屉；电子表格生成结果与其他文件共用 `ArtifactCard.vue` |
+| 已删除的电子表格页面 | `views/student/spreadsheet/SpreadsheetWorkspaceView.vue`、`/spreadsheets/:id` | 电子表格不提供编辑或独立详情页，统一进入资源只读预览 |
 
 `RobotAI-Learning-Icon-Black.svg` 与 `RobotAI-Learning-Icon-Color.svg` 经产品确认继续保留。`src/api/document.ts` 和 `src/repositories/document.ts` 仍服务试卷分析与附件链路，也继续保留。
 

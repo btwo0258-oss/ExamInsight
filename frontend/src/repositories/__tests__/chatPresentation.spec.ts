@@ -67,24 +67,40 @@ describe('Mock chat presentation intent', () => {
     expect(events.some((event) => event.type === 'presentation-card')).toBe(false)
   })
 
-  it('starts spreadsheet generation directly and returns the ready task card', async () => {
+  it('returns spreadsheets through the same ready artifact event as other files', async () => {
     vi.spyOn(window, 'setTimeout').mockImplementation((handler: TimerHandler) => {
       if (typeof handler === 'function') handler()
       return 0
     })
 
     const events = await collect('根据课程笔记生成电子表格，包括课程、负责人和状态', 'spreadsheet.create')
-    const cardEvent = events.filter((event) => event.type === 'spreadsheet-card').at(-1)
+    const cardEvent = events.filter((event) => event.type === 'artifact').at(-1)
     expect(cardEvent).toMatchObject({
-      type: 'spreadsheet-card',
+      type: 'artifact',
       data: {
-        cardType: 'spreadsheet',
+        fileType: 'spreadsheet',
         status: 'ready',
-        spreadsheetId: expect.any(String),
+        artifactId: expect.stringMatching(/^spreadsheet:/),
+        resourceId: expect.any(String),
         knowledgeBaseId: 3,
         projectId: 7,
-        config: { sheetCount: 1 },
+        preview: { kind: 'spreadsheet' },
+        editable: false,
+        editorRoute: undefined,
       },
     })
+  })
+
+  it('uses one artifact contract for document variants', async () => {
+    vi.spyOn(window, 'setTimeout').mockImplementation((handler: TimerHandler) => {
+      if (typeof handler === 'function') handler()
+      return 0
+    })
+
+    const events = await collect('帮我生成一份关于 Java 多态的 DOCX/PDF 文档')
+    const ready = events.filter((event) => event.type === 'artifact' && event.data.status === 'ready')
+    expect(ready).toHaveLength(2)
+    expect(ready.map((event) => event.type === 'artifact' ? event.data.format : '')).toEqual(['DOCX', 'PDF'])
+    expect(ready.every((event) => event.type === 'artifact' && Boolean(event.data.resourceId))).toBe(true)
   })
 })

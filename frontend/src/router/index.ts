@@ -18,7 +18,6 @@ const router = createRouter({
       component: () => import('@/views/student/chat/StudentChatView.vue'),
       meta: requiresAuth,
     },
-    { path: '/spreadsheets/:id', name: 'spreadsheet-detail', component: () => import('@/views/student/spreadsheet/SpreadsheetWorkspaceView.vue'), props: true, meta: requiresAuth },
     { path: '/learning', redirect: '/learning/projects', meta: requiresAuth },
     { path: '/learning/new', name: 'learning-new', component: () => import('@/views/student/chat/StudentChatView.vue'), meta: requiresAuth },
     { path: '/learning/setup/:id', name: 'learning-setup', component: () => import('@/views/student/chat/StudentChatView.vue'), props: true, meta: requiresAuth },

@@ -6,7 +6,9 @@ import { useRoute, useRouter } from 'vue-router'
 import type { ChatMessage } from "@/stores/message";
 import { useMessageStore } from "@/stores/message";
 import { usePresentationStore } from '@/stores/presentation'
-import { useSpreadsheetStore } from '@/stores/spreadsheet'
+import { useLibraryResourceStore } from '@/stores/libraryResource'
+import { presentationRepository } from '@/repositories/presentation'
+import { spreadsheetRepository } from '@/repositories/spreadsheet'
 import { useAppState } from "@/stores/appState";
 import MarkdownRenderer from "./MarkdownRenderer.vue";
 import SourceChunks from "./SourceChunks.vue";
@@ -18,13 +20,13 @@ import LearningProfileCard from "@/components/learning/LearningProfileCard.vue";
 import type { LearningProfileData } from "@/components/learning/LearningProfileCard.vue";
 import LearningPlanDocument from "@/components/learning/LearningPlanDocument.vue";
 import PresentationChatCard from '@/components/presentation/PresentationChatCard.vue'
-import SpreadsheetChatCard from '@/components/spreadsheet/SpreadsheetChatCard.vue'
+import ArtifactCard from '@/components/artifact/ArtifactCard.vue'
 import type { PresentationChatCardDto } from '@/types/contracts/presentation'
-import type { SpreadsheetChatCardDto } from '@/types/contracts/spreadsheet'
 import { presentationRouteQuery, toPresentationChatCard } from '@/utils/presentation'
-import { spreadsheetRouteQuery, toSpreadsheetChatCard } from '@/utils/spreadsheet'
 import { resourcePreviewRoute } from '@/utils/resourcePreview'
 import { resourceVisualTypeFromFile } from '@/utils/resourceVisual'
+import { presentationCardToArtifact, spreadsheetCardToArtifact, upsertArtifact } from '@/utils/artifact'
+import type { ChatArtifactDto } from '@/types/contracts/artifact'
 
 type Props = {
   message: ChatMessage;
@@ -38,7 +40,6 @@ const emit = defineEmits<{
   copy: [text: string];
   edit: [messageId: string];
   regenerate: [messageId: string];
-  generateMindmap: [messageId: string, content: string];
   confirmLearningProfile: [messageId: string];
   updateLearningProfile: [messageId: string, profile: LearningProfileData];
   updateLearningDocument: [messageId: string, content: string];
@@ -48,14 +49,31 @@ const emit = defineEmits<{
 const isUser = computed(() => props.message.role === "user");
 const messageStore = useMessageStore();
 const presentationStore = usePresentationStore()
-const spreadsheetStore = useSpreadsheetStore()
+const libraryResourceStore = useLibraryResourceStore()
 const appState = useAppState();
 const route = useRoute()
 const router = useRouter()
 const presentationBusy = ref(false)
 const presentationError = ref('')
-const spreadsheetBusy = ref(false)
-const spreadsheetError = ref('')
+const artifactBusyId = ref('')
+
+const displayArtifacts = computed(() => {
+  let artifacts = [...(props.message.artifacts ?? [])]
+  if (props.message.spreadsheetData) {
+    artifacts = upsertArtifact(artifacts, spreadsheetCardToArtifact(props.message.spreadsheetData))
+  }
+  if (props.message.presentationData) {
+    const artifact = presentationCardToArtifact(props.message.presentationData)
+    if (artifact) artifacts = upsertArtifact(artifacts, artifact)
+  }
+  return artifacts
+})
+
+const showPresentationWorkflow = computed(() => Boolean(
+  props.message.kind === 'presentation'
+  && props.message.presentationData
+  && props.message.presentationData.view === 'proposal',
+))
 
 const showMarkdown = ref(true);
 
@@ -204,11 +222,6 @@ async function onRegenerate() {
   await messageStore.regenerate(props.conversationId, turnId);
 }
 
-async function onGenerateMindmap(_messageId?: string, content?: string) {
-  if (!props.conversationId) return;
-  emit("generateMindmap", props.message.id, content ?? props.message.content);
-}
-
 function patchPresentationCard(data: PresentationChatCardDto) {
   if (!props.conversationId) return
   messageStore.updateLocalMessage(props.conversationId, props.message.id, {
@@ -339,59 +352,47 @@ async function retryPresentation() {
   }
 }
 
-function patchSpreadsheetCard(data: SpreadsheetChatCardDto) {
-  if (!props.conversationId) return
-  messageStore.updateLocalMessage(props.conversationId, props.message.id, {
-    kind: 'spreadsheet',
-    spreadsheetData: data,
-  })
+async function openArtifact(artifact: ChatArtifactDto) {
+  if (!artifact.resourceId) return
+  await router.push(resourcePreviewRoute(artifact.resourceId, route.fullPath, 'chat'))
 }
 
-async function openSpreadsheet(data = props.message.spreadsheetData) {
-  if (!data) return
-  if (data.status === 'ready' && data.resourceId) {
-    await router.push(resourcePreviewRoute(data.resourceId, route.fullPath, 'chat'))
-    return
-  }
-  await router.push({
-    path: `/spreadsheets/${data.spreadsheetId}`,
-    query: spreadsheetRouteQuery(data, route.fullPath),
-  })
+async function editArtifact(artifact: ChatArtifactDto) {
+  if (artifact.editorRoute?.startsWith('/') && !artifact.editorRoute.startsWith('//')) {
+    await router.push(artifact.editorRoute)
+  } else await openArtifact(artifact)
 }
 
-async function downloadSpreadsheet() {
-  const card = props.message.spreadsheetData
-  if (!card?.spreadsheetId || spreadsheetBusy.value) return
-  spreadsheetBusy.value = true
+async function downloadArtifact(artifact: ChatArtifactDto) {
+  if (!artifact.resourceId || artifactBusyId.value) return
+  artifactBusyId.value = artifact.artifactId
   try {
-    const spreadsheet = await spreadsheetStore.load(card.spreadsheetId)
-    const blob = await spreadsheetStore.download()
+    const spreadsheetId = artifact.artifactId.startsWith('spreadsheet:')
+      ? artifact.artifactId.slice('spreadsheet:'.length)
+      : ''
+    const presentationId = artifact.artifactId.startsWith('presentation:')
+      ? artifact.artifactId.slice('presentation:'.length)
+      : ''
+    if (!spreadsheetId && !presentationId) {
+      await libraryResourceStore.download(artifact.resourceId, artifact.fileName)
+      return
+    }
+    const blob = spreadsheetId
+      ? await spreadsheetRepository.download(spreadsheetId)
+      : await presentationRepository.download(presentationId)
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.download = spreadsheet.fileName || `${spreadsheet.config.title}.xlsx`
+    link.download = artifact.fileName
     link.click()
     URL.revokeObjectURL(url)
-  } catch (error) {
-    spreadsheetError.value = error instanceof Error ? error.message : '电子表格下载失败'
   } finally {
-    spreadsheetBusy.value = false
+    artifactBusyId.value = ''
   }
 }
 
-async function retrySpreadsheet() {
-  const card = props.message.spreadsheetData
-  if (!card?.spreadsheetId || spreadsheetBusy.value) return
-  spreadsheetBusy.value = true
-  try {
-    await spreadsheetStore.load(card.spreadsheetId)
-    const spreadsheet = await spreadsheetStore.retry()
-    patchSpreadsheetCard(toSpreadsheetChatCard(spreadsheet))
-  } catch (error) {
-    spreadsheetError.value = error instanceof Error ? error.message : '电子表格重试失败'
-  } finally {
-    spreadsheetBusy.value = false
-  }
+async function retryArtifact() {
+  await onRegenerate()
 }
 </script>
 
@@ -451,7 +452,7 @@ async function retrySpreadsheet() {
             :loading="message.learningData.loading"
             @update="(content) => emit('updateLearningDocument', message.id, content)"
           />
-          <div v-else-if="message.kind === 'presentation' && message.presentationData" class="presentation-message">
+          <div v-else-if="showPresentationWorkflow && message.presentationData" class="presentation-message">
             <MarkdownRenderer v-if="message.content && showMarkdown" :content="message.content" :is-streaming="isStreaming" />
             <PresentationChatCard
               :data="message.presentationData"
@@ -467,18 +468,19 @@ async function retrySpreadsheet() {
               @retry="retryPresentation"
             />
           </div>
-          <div v-else-if="message.kind === 'spreadsheet' && message.spreadsheetData" class="presentation-message">
-            <MarkdownRenderer v-if="message.content && showMarkdown" :content="message.content" :is-streaming="isStreaming" />
-            <SpreadsheetChatCard
-              :data="message.spreadsheetData"
-              :busy="spreadsheetBusy || isStreaming"
-              :error="spreadsheetError"
-              @open="openSpreadsheet()"
-              @download="downloadSpreadsheet"
-              @retry="retrySpreadsheet"
+          <MarkdownRenderer v-else-if="showMarkdown" :content="message.content" :is-streaming="isStreaming" />
+          <div v-if="!showPresentationWorkflow && displayArtifacts.length" class="artifact-list">
+            <ArtifactCard
+              v-for="artifact in displayArtifacts"
+              :key="artifact.artifactId"
+              :artifact="artifact"
+              :busy="artifactBusyId === artifact.artifactId"
+              @open="openArtifact(artifact)"
+              @edit="editArtifact(artifact)"
+              @download="downloadArtifact(artifact)"
+              @retry="retryArtifact"
             />
           </div>
-          <MarkdownRenderer v-else-if="showMarkdown" :content="message.content" :is-streaming="isStreaming" />
           <span v-if="isStreaming" class="cursor" />
           <!-- @ts-ignore -->
           <SourceChunks v-if="message.sourceChunks?.length" :chunks="message.sourceChunks" />
@@ -506,7 +508,7 @@ async function retrySpreadsheet() {
       <div
         class="message-footer"
         :class="{ 'message-footer--user': isUser }"
-        v-if="(!message.kind || (message.kind === 'learning-document' && !message.learningData?.loading)) && !isEditing && (!isStreaming || isUser)"
+        v-if="(!message.kind || displayArtifacts.length || (message.kind === 'learning-document' && !message.learningData?.loading)) && !isEditing && (!isStreaming || isUser)"
       >
         <div v-if="versionCount > 1" class="version-switcher">
           <button class="version-btn" :disabled="currentVersionIndex <= 1" @click="prevVersion">
@@ -528,7 +530,6 @@ async function retrySpreadsheet() {
           @copy="onCopy"
           @edit="onEdit"
           @regenerate="onRegenerate"
-          @generate-mindmap="onGenerateMindmap"
         />
       </div>
     </div>

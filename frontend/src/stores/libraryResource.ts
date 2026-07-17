@@ -291,6 +291,7 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
     name: string
     format: string
     fileType: ResourceFileType
+    mimeType?: string
     origin: Extract<ResourceOrigin, 'chat' | 'learning' | 'presentation' | 'spreadsheet' | 'mindmap'>
     projectId?: number | null
     knowledgeBaseId?: number | null
@@ -303,6 +304,7 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
         name: input.name,
         format: input.format,
         fileType: input.fileType,
+        mimeType: input.mimeType ?? existing.mimeType,
         origin: input.origin,
         projectId: input.projectId ?? null,
         knowledgeBaseId: input.knowledgeBaseId ?? null,
@@ -319,6 +321,7 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
       name: input.name,
       format: input.format,
       fileType: input.fileType,
+      mimeType: input.mimeType,
       sizeBytes: input.sizeBytes ?? 0,
       status: input.status ?? 'ready',
       updatedAt: '刚刚',
