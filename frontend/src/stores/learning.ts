@@ -10,12 +10,15 @@ import {
   evaluateMockExerciseAnswer,
 } from '@/mock/generators/learning'
 import type {
+  ActivePlanGenerationDto,
   CreateLearningDraftInput,
   CreateLearningPlanInput,
+  ExerciseDraftDto,
   GeneratedProjectResourceRequest,
   LearningConfirmationRequest,
   LearningProfileRequest,
   LearningProfileResult,
+  LearningSetupStateDto,
 } from '@/types/contracts/learning'
 import type { AsyncJob } from '@/types/contracts/common'
 import type { ChatArtifactDto } from '@/types/contracts/artifact'
@@ -88,13 +91,7 @@ export const useLearningStore = defineStore('learning', () => {
   const READING_FLUSH_INTERVAL_MS = 10_000
   const ACTIVE_PLAN_JOB_STORAGE_KEY = 'examinsight.learning.active-plan-job.v1'
 
-  type ActivePlanGeneration = {
-    jobId: string
-    draftPlanId: number | null
-    sourceResourceIds: string[]
-    knowledgeBaseId: number | null
-    startedAt: number
-  }
+  type ActivePlanGeneration = ActivePlanGenerationDto
 
   function readActivePlanGeneration(): ActivePlanGeneration | null {
     try {
@@ -108,10 +105,24 @@ export const useLearningStore = defineStore('learning', () => {
 
   const activePlanGeneration = ref<ActivePlanGeneration | null>(readActivePlanGeneration())
 
-  function setActivePlanGeneration(value: ActivePlanGeneration | null) {
+  function cacheActivePlanGeneration(value: ActivePlanGeneration | null) {
     activePlanGeneration.value = value
     if (value) sessionStorage.setItem(ACTIVE_PLAN_JOB_STORAGE_KEY, JSON.stringify(value))
     else sessionStorage.removeItem(ACTIVE_PLAN_JOB_STORAGE_KEY)
+  }
+
+  async function persistActivePlanGeneration(value: ActivePlanGeneration | null) {
+    const previous = activePlanGeneration.value
+    cacheActivePlanGeneration(value)
+    try {
+      if (value?.draftPlanId) {
+        await learningRepository.saveActivePlanGeneration(Number(value.draftPlanId), value)
+      } else if (!value && previous?.draftPlanId) {
+        await learningRepository.removeActivePlanGeneration(Number(previous.draftPlanId))
+      }
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? `生成任务恢复状态同步失败：${error.message}` : '生成任务恢复状态同步失败'
+    }
   }
 
   async function waitForGenerationJob<T>(
@@ -130,13 +141,13 @@ export const useLearningStore = defineStore('learning', () => {
   }
 
   type ApiExerciseDraft = { answer: string; language?: CodeLanguageKey }
+  const exerciseDraftTimers = new Map<string, number>()
 
   function exerciseDraftStorageKey(projectId: number) {
     return `examinsight.learning.answer-drafts.v1.${projectId}`
   }
 
   function readExerciseDrafts(projectId: number) {
-    if (!isApiDataSource) return {} as Record<string, ApiExerciseDraft>
     try {
       const raw = sessionStorage.getItem(exerciseDraftStorageKey(projectId))
       return raw ? JSON.parse(raw) as Record<string, ApiExerciseDraft> : {}
@@ -147,21 +158,70 @@ export const useLearningStore = defineStore('learning', () => {
   }
 
   function writeExerciseDraft(planId: number, exercise: Exercise) {
-    if (!isApiDataSource) return
     const drafts = readExerciseDrafts(planId)
     drafts[String(exercise.id)] = {
       answer: exercise.draftAnswer ?? '',
       language: exercise.selectedLanguage,
     }
     sessionStorage.setItem(exerciseDraftStorageKey(planId), JSON.stringify(drafts))
+    const key = `${planId}:${exercise.id}`
+    const previousTimer = exerciseDraftTimers.get(key)
+    if (previousTimer !== undefined) window.clearTimeout(previousTimer)
+    exerciseDraftTimers.set(key, window.setTimeout(async () => {
+      exerciseDraftTimers.delete(key)
+      try {
+        await learningRepository.saveExerciseDraft(planId, {
+          exerciseId: exercise.id,
+          answer: exercise.draftAnswer ?? '',
+          language: exercise.selectedLanguage,
+        })
+      } catch (error) {
+        errorMessage.value = error instanceof Error ? `练习草稿同步失败：${error.message}` : '练习草稿同步失败'
+      }
+    }, 350))
   }
 
   function clearExerciseDrafts(planId: number, exerciseIds: number[]) {
-    if (!isApiDataSource) return
     const drafts = readExerciseDrafts(planId)
-    exerciseIds.forEach((id) => delete drafts[String(id)])
+    exerciseIds.forEach((id) => {
+      delete drafts[String(id)]
+      const key = `${planId}:${id}`
+      const timer = exerciseDraftTimers.get(key)
+      if (timer !== undefined) window.clearTimeout(timer)
+      exerciseDraftTimers.delete(key)
+    })
     if (Object.keys(drafts).length) sessionStorage.setItem(exerciseDraftStorageKey(planId), JSON.stringify(drafts))
     else sessionStorage.removeItem(exerciseDraftStorageKey(planId))
+    void learningRepository.removeExerciseDrafts(planId, exerciseIds).catch((error) => {
+      errorMessage.value = error instanceof Error ? `清理练习草稿失败：${error.message}` : '清理练习草稿失败'
+    })
+  }
+
+  async function hydrateExerciseDrafts(plan: LearningPlan) {
+    const persisted = await learningRepository.listExerciseDrafts(plan.id)
+    if (persisted.length) {
+      const cache = persisted.reduce<Record<string, ApiExerciseDraft>>((result, draft: ExerciseDraftDto) => {
+        result[String(draft.exerciseId)] = {
+          answer: draft.answer,
+          language: draft.language as CodeLanguageKey | undefined,
+        }
+        return result
+      }, {})
+      sessionStorage.setItem(exerciseDraftStorageKey(plan.id), JSON.stringify(cache))
+    } else if (![...exerciseDraftTimers.keys()].some((key) => key.startsWith(`${plan.id}:`))) {
+      sessionStorage.removeItem(exerciseDraftStorageKey(plan.id))
+    }
+    return restoreExerciseDrafts(plan)
+  }
+
+  function discardExerciseDraftCache(planId: number) {
+    const keys = [...exerciseDraftTimers.keys()].filter((key) => key.startsWith(`${planId}:`))
+    keys.forEach((key) => {
+      const timer = exerciseDraftTimers.get(key)
+      if (timer !== undefined) window.clearTimeout(timer)
+      exerciseDraftTimers.delete(key)
+    })
+    sessionStorage.removeItem(exerciseDraftStorageKey(planId))
   }
 
   function restoreExerciseDrafts(plan: LearningPlan) {
@@ -278,7 +338,7 @@ export const useLearningStore = defineStore('learning', () => {
     isLoading.value = true
     errorMessage.value = null
     try {
-      const plan = restoreExerciseDrafts(await learningRepository.getPlan(id))
+      const plan = await hydrateExerciseDrafts(await learningRepository.getPlan(id))
       replacePlanFromServer(plan)
       return plan
     } catch (error) {
@@ -301,7 +361,21 @@ export const useLearningStore = defineStore('learning', () => {
     pendingReadingActivities.clear()
     readingFlushTimers.forEach((timer) => window.clearTimeout(timer))
     readingFlushTimers.clear()
-    setActivePlanGeneration(null)
+    cacheActivePlanGeneration(null)
+    exerciseDraftTimers.forEach((timer) => window.clearTimeout(timer))
+    exerciseDraftTimers.clear()
+  }
+
+  function getLearningSetupState(projectId: number) {
+    return learningRepository.getSetupState(projectId)
+  }
+
+  function saveLearningSetupState(projectId: number, state: LearningSetupStateDto) {
+    return learningRepository.saveSetupState(projectId, state)
+  }
+
+  function removeLearningSetupState(projectId: number) {
+    return learningRepository.removeSetupState(projectId)
   }
 
   async function generateLearningProfile(input: LearningProfileRequest): Promise<LearningProfileResult> {
@@ -370,10 +444,10 @@ export const useLearningStore = defineStore('learning', () => {
   }
 
   async function removePlan(id: number) {
+    discardExerciseDraftCache(id)
     await learningRepository.removePlan(id)
     plans.value = plans.value.filter((plan) => plan.id !== id)
     libraryResourceStore.detachProject(id)
-    sessionStorage.removeItem(exerciseDraftStorageKey(id))
     persist()
   }
 
@@ -396,7 +470,7 @@ export const useLearningStore = defineStore('learning', () => {
     } catch (error) {
       try {
         const latest = await learningRepository.getGenerationJob<{ projectId: number }>(job.jobId)
-        if (['failed', 'cancelled'].includes(latest.status)) setActivePlanGeneration(null)
+        if (['failed', 'cancelled'].includes(latest.status)) await persistActivePlanGeneration(null)
       } catch {
         // Keep the job id for a later resume when the status endpoint is temporarily unavailable.
       }
@@ -425,14 +499,14 @@ export const useLearningStore = defineStore('learning', () => {
         })
       }))
     }
-    setActivePlanGeneration(null)
+    await persistActivePlanGeneration(null)
     persist()
     return plan
   }
 
   async function createPlan(input: CreateLearningPlanInput) {
     const job = await learningRepository.startPlanGeneration(input)
-    setActivePlanGeneration({
+    await persistActivePlanGeneration({
       jobId: job.jobId,
       draftPlanId: input.draftPlanId ?? null,
       sourceResourceIds: input.sourceResourceIds ?? [],
@@ -448,7 +522,11 @@ export const useLearningStore = defineStore('learning', () => {
   }
 
   async function resumePlanGeneration(draftPlanId?: number | null) {
-    const active = activePlanGeneration.value
+    let active = activePlanGeneration.value
+    if ((!active || (draftPlanId !== undefined && active.draftPlanId !== draftPlanId)) && draftPlanId) {
+      active = await learningRepository.getActivePlanGeneration(Number(draftPlanId))
+      if (active) cacheActivePlanGeneration(active)
+    }
     if (!active || (draftPlanId !== undefined && active.draftPlanId !== draftPlanId)) return null
     const job = await learningRepository.getGenerationJob<{ projectId: number }>(active.jobId)
     return finishPlanGeneration(
@@ -985,23 +1063,12 @@ export const useLearningStore = defineStore('learning', () => {
     return set
   }
 
-  function startWrongReviewSet(planId: number, setId: number) {
+  async function startWrongReviewSet(planId: number, setId: number) {
     const plan = getPlan(planId)
     const set = plan?.wrongReviewSets?.find((item) => item.id === setId)
     if (!plan || !set) return false
-    set.status = '作答中'
-    set.exerciseIds.forEach((id) => {
-      const exercise = plan.exercises.find((item) => item.id === id)
-      if (!exercise) return
-      exercise.draftAnswer = undefined
-      exercise.userAnswer = undefined
-      exercise.submitted = false
-      exercise.gradingCorrect = undefined
-      exercise.gradingScore = undefined
-      exercise.gradingFeedback = undefined
-      if (exercise.type === '代码题') exercise.codeDrafts = {}
-    })
-    persist()
+    const updated = await learningRepository.startWrongReviewSet(planId, setId, crypto.randomUUID())
+    replacePlanFromServer(updated)
     return true
   }
 
@@ -1257,6 +1324,9 @@ export const useLearningStore = defineStore('learning', () => {
     clearAll,
     generateLearningProfile,
     generateLearningConfirmation,
+    getLearningSetupState,
+    saveLearningSetupState,
+    removeLearningSetupState,
     getPlan,
     renamePlan,
     removePlan,

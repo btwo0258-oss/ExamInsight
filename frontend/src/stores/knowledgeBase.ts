@@ -8,6 +8,7 @@ import {
   updateKnowledgeBase,
 } from '@/api/knowledgeBase'
 import type { KnowledgeBase } from '@/api/knowledgeBase'
+import { useLibraryResourceStore } from '@/stores/libraryResource'
 
 export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
   const list = ref<KnowledgeBase[]>([])
@@ -63,6 +64,14 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     await deleteKnowledgeBase(id)
     list.value = list.value.filter((item) => item.id !== id)
     if (current.value?.id === id) current.value = null
+    const libraryResourceStore = useLibraryResourceStore()
+    libraryResourceStore.detachKnowledgeBase(id)
+    try {
+      await libraryResourceStore.fetchList()
+    } catch {
+      // The knowledge base deletion succeeded. The library store keeps its own
+      // synchronization error and can retry without reporting a false delete failure.
+    }
   }
 
   function setEditingKnowledgeBase(knowledgeBase: KnowledgeBase | null) {

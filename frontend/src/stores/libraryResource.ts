@@ -57,6 +57,30 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
   const isMutating = ref(false)
   const errorMessage = ref<string | null>(null)
   let sequence = 0
+  let processingPollTimer: number | null = null
+
+  function stopProcessingPoll() {
+    if (processingPollTimer !== null) window.clearTimeout(processingPollTimer)
+    processingPollTimer = null
+  }
+
+  function scheduleProcessingPoll() {
+    if (!resources.value.some((item) => item.status === 'waiting' || item.status === 'processing')) {
+      stopProcessingPoll()
+      return
+    }
+    if (processingPollTimer !== null) return
+    processingPollTimer = window.setTimeout(async () => {
+      processingPollTimer = null
+      try {
+        await fetchList()
+      } catch {
+        // fetchList already exposes the error; keep the pending items retryable.
+      } finally {
+        scheduleProcessingPoll()
+      }
+    }, 700)
+  }
 
   function persist() {
     saveLibraryResources(resources.value)
@@ -81,6 +105,7 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
           ...items,
         ]
       }
+      scheduleProcessingPoll()
     } catch (error) {
       errorMessage.value = error instanceof Error ? error.message : '获取资料失败'
       throw error
@@ -154,11 +179,12 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
         } else {
           item = await uploadLibraryResource(file, origin, associations)
         }
-        rememberMockLibraryResourceFile(item.resourceId, file)
+        await rememberMockLibraryResourceFile(item.resourceId, file)
         upsert(item)
         uploaded.push(item)
       }
       persist()
+      scheduleProcessingPoll()
       return uploaded
     } catch (error) {
       errorMessage.value = error instanceof Error ? error.message : '上传资料失败'
@@ -189,6 +215,7 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
     try {
       upsert(await retryLibraryResource(resourceId))
       persist()
+      scheduleProcessingPoll()
     } catch (error) {
       errorMessage.value = error instanceof Error ? error.message : '重试解析失败'
       throw error
@@ -277,7 +304,7 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
       externalKey: signature,
     }
     resources.value.unshift(item)
-    rememberMockLibraryResourceFile(item.resourceId, file)
+    void rememberMockLibraryResourceFile(item.resourceId, file)
     persist()
     return item
   }
@@ -417,11 +444,23 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
     if (changed) persist()
   }
 
+  function detachKnowledgeBase(knowledgeBaseId: number) {
+    let changed = false
+    resources.value.forEach((resource) => {
+      if (resource.knowledgeBaseId !== knowledgeBaseId) return
+      resource.knowledgeBaseId = null
+      resource.updatedAt = '刚刚'
+      changed = true
+    })
+    if (changed) persist()
+  }
+
   function clearError() {
     errorMessage.value = null
   }
 
   function clearAll() {
+    stopProcessingPoll()
     resources.value = []
     isLoading.value = false
     isMutating.value = false
@@ -450,5 +489,6 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
     addPresentation,
     addPlanExportMarkdown,
     detachProject,
+    detachKnowledgeBase,
   }
 })

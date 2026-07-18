@@ -663,8 +663,8 @@ type KnowledgeBaseDto = {
 
 - name 长度 1 至 100。
 - description 最长 500。
-- 删除知识库继续使用现有事务：文档分块、文档、ES 向量和知识库逻辑删除必须保持一致。
-- 被会话或学习项目引用时，删除策略必须返回 409，不能产生悬空关联。
+- 删除知识库继续使用现有事务：文档分块、文档、ES 向量和知识库逻辑删除必须保持一致；只作为资料库可选归类的资源不得被删除，事务内统一把这些 `LibraryResourceDto.knowledgeBaseId` 置为 `null`。
+- 被会话或学习项目直接引用时，删除策略必须返回 409，不能产生悬空关联；仅存在资料库资源关联不构成 409，按上一条解除关联。
 
 ### 6.3 文档状态
 
@@ -1047,6 +1047,8 @@ type CreateLearningPlanRequest = {
 - mediaAssetIds 最多 5 个，必须属于当前用户且状态为 ready；它们与画像请求使用同一批媒体资产，并继续参与最终学习方案、阶段和题目生成。
 - confirmationResourceId 非空时必须包含在 sourceResourceIds；后端用 prompt 覆盖该 Markdown 资源的最终确认版本，再开始生成项目。
 - mediaAssetIds 最多 5 个，只接受 purpose=learning-input 且属于当前用户的 ready 图片或音频；后端读取图片内容或音频转写，uploadedFileNames 只用于展示，不能替代媒体引用。
+- LearningProfileRequest 的 knowledgeBaseId 是画像关联知识库的权威字段。前端从 KnowledgeBase Store/API DTO 读取所选知识库，Mock 与正式环境发送同一请求；正式页面不得读取 Mock 课程常量。
+- LearningProfileRequest 的 source、subject 只用于补充展示和生成提示；当前端没有独立课程元数据时可使用知识库名称。knowledgeTags 可省略，后端必须根据 knowledgeBaseId 检索知识库内容，不能要求前端伪造标签。
 
 ### 9.3 项目聚合 DTO
 
@@ -1325,6 +1327,34 @@ type UpdateLearningProjectRequest = {
 
 使用逻辑删除或归档。运行中的生成任务存在时返回 409。删除项目不删除全局资料库中的文件，只把这些资源的 projectId 解除；原 knowledgeBaseId 关联保持不变。项目置顶仍是 localStorage UI 偏好，不需要后端字段。
 
+#### GET/PUT/DELETE /api/learning/projects/{id}/setup-state
+
+状态：NEW，当前 Mock/API Repository 均已接入。用于恢复尚未完成的“目标输入 → 学习画像 → 确认稿 → 生成中”创建流程，不替代项目、会话消息或生成任务实体。
+
+~~~ts
+type LearningSetupStateDto = {
+  setupId: string
+  knowledgeBaseId: number | null
+  prompt: string
+  profile: LearningProfileData
+  mediaAssetIds: string[]
+  sourceResourceIds: string[]
+  uploadedFileNames: string[]
+  confirmationResourceId: string | null
+  confirmationDocument: string
+  phase: "idle" | "analyzing" | "profile" | "document" | "generating"
+  profileMessageId: string
+  documentMessageId: string
+  updatedAt?: string
+}
+~~~
+
+- `GET` 成功返回 `ApiResult<LearningSetupStateDto | null>`；没有未完成状态时必须返回 data=null，不用 404 表示空状态。
+- `PUT` 全量幂等 upsert，成功返回服务端写入 `updatedAt` 的 DTO；Path 项目必须为当前用户 draft/configuring 项目。
+- `DELETE` 幂等清理；项目生成成功后前端调用，项目删除时后端也必须级联清理。
+- 前端可用 sessionStorage 保存即时副本避免输入丢失，但 API 状态是刷新、跨设备恢复的权威来源；API 失败不得改读 Mock Storage。
+- `profile` 必须按普通 JSON DTO 传输；前端会把 Vue 响应式对象显式复制为纯 `LearningProfileData`，不得把 Proxy、Ref 或浏览器不可克隆对象传入缓存和请求层。
+
 ### 10.2 通用生成任务
 
 ~~~ts
@@ -1358,6 +1388,24 @@ pending/running -> cancelled
 
 成功：ApiResult<GenerationJob<T>>。
 
+#### GET/PUT/DELETE /api/learning/projects/{projectId}/active-plan-generation
+
+状态：NEW，保存尚未结束的方案生成任务引用，DTO 为：
+
+~~~ts
+type ActivePlanGenerationDto = {
+  jobId: string
+  draftPlanId: number | null
+  sourceResourceIds: string[]
+  knowledgeBaseId: number | null
+  startedAt: number
+}
+~~~
+
+- `PUT` 在 `POST /api/learning/plan-jobs` 返回后幂等保存，成功返回同一 DTO；jobId 必须属于当前用户且请求中的 draftPlanId 必须等于 Path projectId。
+- `GET` 返回 `ApiResult<ActivePlanGenerationDto | null>`，用于新标签页或新设备恢复轮询。
+- `DELETE` 在任务 succeeded/failed/cancelled 后幂等清理；生成任务本身仍由 generation_job 保存，删除这个恢复引用不能取消任务。
+
 ### 10.3 学习画像
 
 #### POST /api/learning/profile-jobs
@@ -1373,6 +1421,8 @@ pending/running -> cancelled
 3. 读取文档解析结果和用户输入。
 4. 调用 AI 并校验结构。
 5. 保存结果并更新任务；conversationId 非空时，在该会话保存或更新 `kind=learning-profile` 的结构化 Card 消息。
+
+前端轮询失败后的重试复用原画像消息位置，将同一条消息恢复为 loading，再以新 jobId 请求本接口；不得因为一次重试在会话中累积多个失败画像卡。Mock 复现同一状态变化，正式环境仍以本接口和消息历史为权威。
 
 #### POST /api/learning/profile-confirmations
 
@@ -1501,6 +1551,16 @@ type SubmitAnswerBatchRequest = {
 - 同一 clientRequestId 重试返回原结果；相同幂等键对应不同答案内容时返回 409 IDEMPOTENCY_CONFLICT。
 - 学习页统一交卷和错题巩固题组均调用该接口；单题重新作答仍调用上一接口。
 
+#### GET/PUT/DELETE /api/learning/projects/{projectId}/exercise-drafts
+
+状态：NEW，当前 Mock/API Repository 均已接入。未提交答案不进入 `LearningProjectDto.exercises`，通过独立草稿接口恢复：
+
+- `GET /exercise-drafts`：返回 `ApiResult<ExerciseDraftDto[]>`。
+- `PUT /exercise-drafts/{exerciseId}`：请求 `{ exerciseId, answer, language? }`，Path 与 body exerciseId 必须一致；按用户、项目、题目幂等 upsert，返回保存后的草稿。
+- `DELETE /exercise-drafts`：请求 body `{ exerciseIds: number[] }`，幂等批量清理。
+- 前端输入时先写 sessionStorage 即时缓存，并在 350ms 无新输入后调用 PUT；正式刷新时先取服务端草稿。提交答案成功时后端应在答题事务内清理对应草稿，前端 DELETE 是幂等确认。
+- 草稿接口失败只提示“草稿同步失败”，不得伪造提交成功；答案、评分、错题和进度仍只由正式答题接口产生。
+
 ### 10.7 自适应练习
 
 #### POST /api/learning/projects/{projectId}/tasks/{taskId}/adaptive-practice-jobs
@@ -1535,6 +1595,14 @@ type MistakeReviewRequest = {
 - 生成后创建 WrongReviewSetDto，并在答题结果中更新 correctStreak；连续正确次数达到后端规则时状态变为 mastered。
 
 当前前端通过项目详情读取错题，不要求单独实现 GET mistakes 和 mastery 接口。
+
+#### PUT /api/learning/projects/{projectId}/wrong-review-sets/{setId}/status
+
+请求：`{ status: "answering", clientRequestId: string }`。成功返回更新后的 `LearningProjectDto`。
+
+- 进入题组必须持久化 `WrongReviewSetDto.status=answering`，不能只修改前端 UI；刷新和跨设备打开项目后仍应处于作答中。
+- 同一 clientRequestId 幂等；题组已 completed 时返回 409，项目/题组不匹配返回 400，无权限返回 403。
+- Mock Repository 调用同名方法并保存相同状态变化；正式前端以接口返回的项目聚合替换本地项目。
 
 ### 10.9 学习资源
 
@@ -2414,7 +2482,7 @@ type ResourcePreviewDto = {
 
 ### 21.5 Mock 边界
 
-Mock Repository 使用与正式环境相同的 `ResourcePreviewDto`。生成的 PPT、表格、思维导图和文本读取现有结构化 Mock 实体；当前标签页刚上传的图片、PDF、DOCX、XLSX、文本和音频可使用内存 Blob URL。真实文件正文不写入 sessionStorage，因此整页刷新后只剩元数据时必须返回明确失败状态，不能生成假的文件内容。API 模式不得在预览接口失败后回退 Mock。
+Mock Repository 使用与正式环境相同的 `ResourcePreviewDto` 和 `waiting -> processing -> ready/failed` 状态机。生成的 PPT、表格、思维导图和文本读取现有结构化 Mock 实体；普通上传文件元数据写入按用户隔离的 sessionStorage，原始 Blob 写入浏览器 IndexedDB，并在内存缓存不可用时重新读取，因此当前标签页刷新后仍可预览和下载真实上传内容。浏览器拒绝 IndexedDB、存储被清理或文件不存在时展示明确失败，不把假文本冒充真实原件。正式 API Repository 不读取 IndexedDB，也不得在预览接口失败后回退 Mock。
 
 ## 22. 对话统一附件模型
 

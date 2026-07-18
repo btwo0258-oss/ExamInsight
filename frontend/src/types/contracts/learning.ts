@@ -161,6 +161,37 @@ export type LearningConfirmationResult = {
 
 export type LearningGenerationJob = AsyncJob<{ projectId: EntityId }>
 
+export type LearningSetupStateDto = {
+  setupId: string
+  knowledgeBaseId: EntityId | null
+  prompt: string
+  profile: LearningProfileData
+  mediaAssetIds: string[]
+  sourceResourceIds: string[]
+  uploadedFileNames: string[]
+  confirmationResourceId: string | null
+  confirmationDocument: string
+  phase: 'idle' | 'analyzing' | 'profile' | 'document' | 'generating'
+  profileMessageId: string
+  documentMessageId: string
+  updatedAt?: string
+}
+
+export type ActivePlanGenerationDto = {
+  jobId: string
+  draftPlanId: EntityId | null
+  sourceResourceIds: string[]
+  knowledgeBaseId: EntityId | null
+  startedAt: number
+}
+
+export type ExerciseDraftDto = {
+  exerciseId: EntityId
+  answer: string
+  language?: string
+  updatedAt?: string
+}
+
 export type AnswerResult = {
   correct: boolean
   score?: number

@@ -2,6 +2,7 @@ import { request } from '@/api/request'
 import { isMockDataSource } from '@/config/dataSource'
 import { courseKnowledgeBases } from '@/mock'
 import { mockSession } from '@/mock/storage'
+import { detachMockResourcesFromKnowledgeBase } from '@/repositories/libraryResource'
 import type { KnowledgeBaseDto } from '@/types/contracts/library'
 
 export interface KnowledgeBaseRepository {
@@ -93,6 +94,7 @@ const mockKnowledgeBaseRepository: KnowledgeBaseRepository = {
 
   async remove(id) {
     mockSession.set(DOMAIN, readMockList().filter((item) => item.id !== id))
+    detachMockResourcesFromKnowledgeBase(id)
   },
 
   async findByExamAnalysisId(examAnalysisId) {

@@ -136,6 +136,8 @@ projectId        // 可空，关联的学习项目 ID
 - 智能学习项目内上传和生成的资源自动关联当前项目和项目知识库。
 - 首页点击知识库进入 `/library/:id`；“开始智能学习”和详情“用于智能学习”进入 `/learning/new?knowledgeBaseId=:id`。
 - 未解析完成的资源不能作为正式 AI 上下文；前端根据状态禁用相关入口。
+- 上传或重试后 Store 对 Mock/API 使用同一列表轮询，直到资源进入 ready/failed；页面离开或没有处理中资源时停止轮询。
+- 删除知识库时只解除资料库资源的 knowledgeBaseId，不删除原文件；前端删除成功后立即清空当前关联并重新请求资源列表。知识库仍被会话或学习项目直接引用时由后端返回 409。
 - 正式环境刷新后重新调用 `/api/resources` 获取权威数据，不从 Storage 恢复业务资源。
 ### 4.3 智能学习
 
@@ -154,7 +156,7 @@ projectId        // 可空，关联的学习项目 ID
 2. 用户首次发送目标时创建 draft 项目和 `learning-setup` 会话，然后替换为 `/learning/setup/:conversationId?projectId=:projectId`。
 3. AI 返回学习画像后，页面在消息流内展示可编辑的 `LearningProfileCard`；用户确认画像后生成可编辑的 `LearningPlanDocument`。
 4. 用户确认文档后启动异步方案生成任务；成功后进入 `/learning/:projectId`。
-5. 从侧边栏打开历史 `learning-setup` 会话时，按会话消息恢复同一组 Card；Mock 未完成草稿额外使用 sessionStorage 支持当前标签页刷新恢复。
+5. 从侧边栏打开历史 `learning-setup` 会话时，按会话和项目恢复同一组 Card；Mock/API 都通过 Learning Repository 保存 `setup-state`，sessionStorage 只作为输入即时缓存。正式环境刷新或跨设备优先读取后端状态。
 
 #### 创建流程状态
 
@@ -194,15 +196,16 @@ projectId        // 可空，关联的学习项目 ID
 
 - 学生侧边栏的智能学习树直接订阅 Learning Store；首次挂载立即同步已经存在的项目，Store 为空时调用同一 `fetchPlans()`。不得让主页面有 Mock/API 项目而侧边栏保持空白。
 - 项目列表：加载、失败重试、无项目、筛选无结果、网格/列表偏好。
-- 方案制定对话：知识库可空，覆盖画像生成中/失败、Card 待确认、确认稿生成中/失败、文档待确认和项目生成中/失败；Mock setup 草稿和活动 plan jobId 使用 sessionStorage 刷新恢复。
+- 方案制定对话：知识库可空，覆盖画像生成中/失败、Card 待确认、确认稿生成中/失败、文档待确认和项目生成中/失败；Mock/API 通过同名 Repository 保存 setup-state 和活动 plan job 引用，sessionStorage 只用于本地即时恢复。
+- 保存 setup-state 前使用 `snapshotLearningProfile()` 把 Vue 响应式画像转换为纯 DTO，并独立复制 weakPoints/preferences 数组；禁止直接对响应式 Proxy 调用 structuredClone。
 - 计划、学习、错题和资源页：统一按路由 `projectId` 重新请求后端，处理加载失败和项目不存在；不再回退到第一个项目。
 - 答题、追加练习、错题巩固和资源生成：阻止重复提交，失败后保留当前页面数据并允许重试。
 - 任务完成：页面不提供绕过规则的“手动完成”；阅读、交卷和案例操作分别触发对应完成条件。
 - 学习资源：Mock 初次生成默认产出学习方案和思维导图，其余资源按需；正式模式只展示项目接口真实返回的资源，不在前端补造文件。
 - 上传资料：选择文件后立即进入全局资料库；新项目生成时通过 sourceResourceIds 关联新 projectId，知识库非空时同时关联 knowledgeBaseId；图片和音频的 mediaAssetIds 从画像一直传递到最终方案生成。
-- 方案确认稿：画像接口只返回画像；专用确认稿接口返回 content 和 resourceId，文件立即进入资料库；同一次配置流程使用 sessionStorage 中稳定的 setupId，重新生成只更新同一个 resourceId，不会与下一个新项目串档；创建项目时把用户最终编辑内容回写该资源。
-- 正式题组交卷：一次调用批量答案接口，禁止逐题请求造成部分成功；未提交草稿仅短期保存在 sessionStorage。
-- 正式项目响应：统一使用共享 LearningProjectDto，API Repository 不再用 `Record<string, any>`；未提交的 draftAnswer 和 codeDrafts 仍只属于前端草稿，不要求后端返回。
+- 方案确认稿：画像接口只返回画像；专用确认稿接口返回 content 和 resourceId，文件立即进入资料库；同一次配置流程使用稳定的 setupId，setup-state 在 Mock/API Repository 中持久化，重新生成只更新同一个 resourceId，不会与下一个新项目串档；创建项目时把用户最终编辑内容回写该资源。
+- 正式题组交卷：一次调用批量答案接口，禁止逐题请求造成部分成功；未提交草稿先写 sessionStorage 保证输入流畅，350ms 无新输入后通过 exercise-drafts API 保存，刷新时再读取服务端草稿。
+- 正式项目响应：统一使用共享 LearningProjectDto，API Repository 不再用 `Record<string, any>`；未提交的 draftAnswer 和 codeDrafts 不塞入项目 DTO，由独立草稿接口返回。
 - 正式资源恢复：资源状态为 generating 时资源页每 3 秒重新获取项目详情，约 120 秒后停止自动查询并提示稍后刷新。
 
 #### 学习助教上下文
@@ -214,10 +217,10 @@ projectId        // 可空，关联的学习项目 ID
 
 #### 路径倒退、异常与边界
 
-- `/learning/new` 首次发送后进入 `/learning/setup/:conversationId`；返回项目列表不会取消生成任务，再次打开同一 setup 会话可恢复 Card、确认文档和活动任务，创建成功后清理 Mock setup 草稿。
+- `/learning/new` 首次发送后进入 `/learning/setup/:conversationId`；返回项目列表不会取消生成任务，再次打开同一 setup 会话可恢复 Card、确认文档和活动任务，创建成功后同时清理 Mock/API setup-state。
 - `/learning/:id/study`、`/resources`、`/mistakes` 统一返回 `/learning/:id`；项目详情返回 `/learning/projects`。
 - 无效 projectId、无权限和 404 展示路由错误状态并返回项目列表，禁止回退到第一个 Mock 项目或新对话。
-- 方案生成中后退或刷新不自动取消后端任务；sessionStorage 中的活动 jobId 用于重新查询。failed/cancelled 清理活动 job，保留输入供重试。
+- 方案生成中后退或刷新不自动取消后端任务；前端先读本地活动 jobId，缺失时按 draft projectId 查询 active-plan-generation。failed/cancelled 清理恢复引用，保留输入供重试。
 - stage/task 查询参数无效时选择当前项目第一个未完成任务；不能访问其他项目中的实体。
 - 接口超时、断网或 5xx 保留用户输入和未提交答案；正式模式不切换 Mock、不伪造成功。401 进入登录处理，403/404 不提供重复提交按钮。
 - 删除项目不删除全局资料库文件，只解除 projectId；知识库关联保持。删除运行中项目由后端返回 409。
@@ -228,6 +231,7 @@ projectId        // 可空，关联的学习项目 ID
 - 创建画像、生成确认稿、确认创建项目、追加练习、错题巩固和资源生成都是明确按钮动作，前端不通过关键词猜测。
 - 学习助教的普通问答由后端结合 conversationType、项目状态和当前问题判断回答策略；需要检索时使用项目知识库 RAG。
 - 正式任务执行统一为“创建 job -> 后端异步执行 -> 前端查询 -> GET 项目权威结果”。Mock Generator 只模拟同一请求/响应和状态，不代表后端提示词或算法。
+- Mock 画像和方案任务同样从 pending 进入 running，再进入 succeeded/failed；开发验收输入包含 `[mock-fail]` 时生成稳定 failed 任务并保留 errorCode/errorMessage 和重试入口，页面不得假设 Mock 创建任务即同步完成。
 - 性能边界：初始题量 10 至 200，输入资源最多 20 个，媒体最多 5 个；计划 job 每秒查询且最多 120 次，生成资源恢复每 3 秒查询且约 120 秒停止，阅读行为约 10 秒聚合上报。
 
 ### 4.4 语音、拍照与上传照片
@@ -366,6 +370,7 @@ Mock 根据对话要求生成只读演示工作簿，并在下载时用 ExcelJS 
 - 学习画像和确认稿：Mock Repository 调用 `mock/generators`；API Repository 已固定调用画像生成任务和确认稿接口。
 - 学习方案、题目和原型评分：集中在 `mock/generators`，不再作为正式业务实现。
 - Mock 业务实体：通过 Repository 写入按用户隔离的 `sessionStorage`。
+- Mock 普通上传文件原始 Blob 通过 `mock/resourceFileStore.ts` 写入 IndexedDB，元数据仍在 sessionStorage；刷新后预览和下载读取同一真实 Blob，存储不可用时显示明确失败。
 - 正式数据源：通过 API Repository 请求后端，不读取 Mock Storage。
 - PPT：Mock Repository 生成演示大纲和 PPTX；正式 API 只提交结构化配置，由后端调用 PPT Provider 并保存文件。
 - 对话生成文件：Mock Chat Repository 在现有 SSE 上模拟 artifact 进度，图片、思维导图、DOCX、PDF、XLSX 都写入资料库并按项目上下文回写资源包；API 模式消费后端 artifact，并调用正式幂等回写接口确认同一资源已进入项目包，不执行关键词生成。API 失败不得回退 Mock。
@@ -400,12 +405,13 @@ PPT 生成使用独立的 PresentationJob，但仍遵守“创建任务、查询
 | Mock 登录 token、当前用户 | `sessionStorage` | 关闭标签页后结束 Mock 会话，不执行“记住我” |
 | 主题、侧边栏折叠、视图模式、模型偏好 | `localStorage` | 无敏感信息，行为与正式环境一致 |
 | 对话和消息 | `sessionStorage`，按用户和会话隔离 | 刷新可恢复，关闭标签页后无需保留 |
-| 资料库、文件元数据 | `sessionStorage`，按用户隔离 | 不保存真实文件内容 |
+| 资料库、文件元数据 | `sessionStorage`，按用户隔离 | 保存资源 DTO 和解析任务状态 |
+| Mock 普通上传文件原件 | `IndexedDB`，key 按用户和 resourceId 隔离 | 当前标签页刷新后仍可预览/下载；浏览器清理后不伪造内容 |
 | 图片/录音资产和识别任务元数据 | `sessionStorage`，按用户隔离 | 不保存真实二进制；关闭标签页后清除 |
 | 学习项目、任务、题目、答题和错题 | `sessionStorage`，按用户隔离 | 模拟当前会话内的后端业务数据 |
 | PPT 实体、大纲和任务元数据 | `sessionStorage`，按用户隔离 | 模拟刷新恢复；PPTX 二进制只在下载时生成，不持久化 |
 | 电子表格实体、只读预览和任务元数据 | `sessionStorage`，按用户隔离 | 模拟刷新恢复；XLSX 二进制只在下载时生成，不持久化 |
-| 未提交草稿、生成任务 id | `sessionStorage` | 用于刷新恢复和继续查询任务 |
+| 未提交草稿、生成任务 id | Mock Repository + `sessionStorage` 即时缓存 | 与正式 DTO/状态变化一致 |
 | 弹窗、筛选、当前选中项、加载状态 | Pinia 或组件内存 | 不需要跨会话持久化 |
 | AI 生成结果 | Mock Repository/Generator | 页面和 Store 不直接生成权威业务结果 |
 
@@ -424,11 +430,12 @@ Mock 是否跨浏览器启动保留不属于后端接口契约。正式环境通
 | 文档解析、向量化状态 | 后端任务/状态表 | 否，只展示状态 |
 | 学习项目、阶段、任务、进度 | 后端数据库 | 否，只缓存当前项目 |
 | 题目、答案、解析、答题结果、错题 | 后端数据库 | 否 |
-| AI 生成任务 | 后端任务表 | 前端仅把活动 `jobId` 和恢复所需的草稿 id 短期写入 `sessionStorage`，不保存结果 |
+| AI 生成任务 | 后端任务表 | active-plan-generation 保存恢复引用；sessionStorage 只是当前标签页缓存，不保存结果 |
 | PPT 配置、大纲、文件和预览 | 后端数据库 + 私有对象存储 | 否，只缓存当前 DTO；不得保存 Provider URL 或二进制 |
 | 电子表格请求、结构化工作簿和 XLSX | 后端数据库 + 私有对象存储 | 否，只缓存当前 DTO 和预览状态 |
 | UI 偏好 | `localStorage` | 是 |
-| 未提交草稿、返回路由、生成 `jobId` | `sessionStorage` | 只用于临时恢复，不作为业务权威数据 |
+| 学习创建状态、未提交答案草稿、活动生成引用 | 后端 setup-state/exercise-drafts/active-plan-generation | 前端 sessionStorage 只做即时缓存，后端用于刷新和跨设备恢复 |
+| 返回路由和纯 UI 临时状态 | `sessionStorage` | 仅当前标签页恢复，不作为业务权威数据 |
 | 访问令牌 | 后端签发的 Bearer JWT | 当前契约沿用现有后端 JWT；Cookie 方案如需启用必须另开契约版本同步迁移 |
 
 正式环境前端只做体验兜底：保存草稿、恢复路由、恢复生成任务查询、展示错误和重试。接口失败时不得在本地伪造创建成功、评分结果、学习进度或资料解析完成。
@@ -450,7 +457,7 @@ Repository 接口与共享 TypeScript 契约
 - API Repository 不捕获 `404` 后回退 Mock。
 - Store 只保存页面当前内存状态；正式模式刷新后重新调用后端接口。
 - 学习助教会话 id 仅在 Mock 模式写 `sessionStorage`；正式模式从后端会话列表及项目关联字段恢复。
-- 智能学习创建草稿、未提交答案草稿和活动生成 jobId 可在 API 模式短期写 sessionStorage；成功提交后立即清理，后端项目和答案仍是唯一权威。
+- 智能学习创建状态、未提交答案草稿和活动生成 jobId 在 API 模式写后端专用恢复接口，同时短期写 sessionStorage；成功提交后两处都清理，项目、答案和任务仍由后端负责权威结果。
 - 详细接口见 `docs/backend-api-contract.md`。
 
 ## 7. 后端接口约束摘要
@@ -502,7 +509,7 @@ interface CreateConversationRequest {
 - 所有上传和 AI 生成文件自动创建资源；`resourceId` 唯一，`knowledgeBaseId`、`projectId` 可空。
 - 知识库是否可用于对话/学习的明确字段，例如 `availableForAi`。
 
-文件状态建议固定为：`uploading`、`uploaded`、`parsing`、`ready`、`failed`。前端展示文案单独映射。
+资料库聚合状态固定为：`waiting`、`processing`、`ready`、`failed`。底层文档服务可保留自己的数字/解析状态，但必须在 `/api/resources` 映射成这四种值。
 
 ### 7.4 智能学习接口
 
@@ -512,11 +519,13 @@ interface CreateConversationRequest {
 - 查询生成任务状态。
 - 更新并确认学习画像。
 - 创建学习方案生成任务。
+- 保存/读取/清理学习创建 `setup-state` 和活动方案生成引用。
 - 学习项目列表、详情和删除/归档。
 - 阶段、任务、资源和题目详情。
 - 提交答题结果、任务行为和学习时长。
 - 错题列表、掌握状态和复习操作。
 - 题组批量交卷，保证答案、错题和进度原子更新。
+- 保存、读取和批量清理未提交 exercise drafts；进入错题巩固题组时持久化 answering 状态。
 - 学习助教在聊天请求中接收 projectId/stageId/taskId/exerciseId，并由后端校验后组装项目数据与 RAG 上下文。
 
 异步任务状态建议固定为：`pending`、`running`、`succeeded`、`failed`、`cancelled`。返回失败时应提供稳定的错误码和可展示信息。
@@ -569,7 +578,7 @@ interface CreateConversationRequest {
 - PPT 工作区第 4 步预览属于生成流程，必须保留；生成完成后从资料库、学习资源包或聊天卡片打开 PPT 时进入统一资源预览。
 - 统一页面覆盖加载、处理中、失败、不支持、超限、资源不存在和无权限状态，并提供下载兜底。
 - 文本/思维导图上限 10MB、图片 20MB、PDF/Word/PPT/Excel/音频 30MB；压缩包和视频不在线预览。
-- Mock 只在当前标签页保留上传文件 Blob，sessionStorage 只保存元数据；正式模式只调用 `/api/resources/:resourceId/preview`，失败不回退 Mock。
+- Mock 资源元数据写 sessionStorage、普通上传文件 Blob 写 IndexedDB，刷新后仍按同一 resourceId 预览和下载；IndexedDB 不可用或内容被清理时返回明确失败。正式模式只调用 `/api/resources/:resourceId/preview`，不读取 IndexedDB，失败不回退 Mock。
 - 对话统一附件可以携带受限 `previewData` 展示图片、思维导图、文档摘要、表格样例和 PPT 缩略页；完整预览仍按 resourceId 调接口，不能把对话摘要当作文件权威内容。
 - 电子表格 previewData 只读，附件不显示编辑按钮，不存在独立表格详情/编辑路由；关联调整在资料库资源层完成。
 - 思维导图保存后统一预览监听资源更新并立即重新拉取；正式环境由 `POST /api/mindmap/update` 返回 resourceId/version/previewData，刷新和跨设备场景仍由 `/api/resources/:resourceId/preview` 提供最新版。
@@ -730,5 +739,7 @@ src/
 - [x] PPT proposal 在页数旁增加知识库关联选择，沿用统一选择浮层和新建知识库弹窗；草稿、取消、关联和项目资源包回写均有 Mock/API 对应链路。
 - [x] 项目 AI 对话及学习画像流程生成文件统一进入资料库和项目资源包；知识库为可选关联，三处复用同一 resourceId，并以 artifactId/resourceId 幂等去重。
 - [x] 通用附件失败重试只重试原 artifact，保持已有 resourceId，不再重新生成整轮回答。
+- [x] 学习画像请求统一读取 KnowledgeBase Store，Mock 与正式 API 发送同一 knowledgeBaseId/source/subject 上下文；页面不再依赖 Mock 课程常量。
+- [x] 学习画像失败重试复用原消息并恢复 loading/success 状态；增加“制定方案 → 画像请求 → Card 展示 → 原位重试”页面级回归测试。
 
 后续每一项涉及代码或目录调整时，应单独确认范围后执行，避免一次性移动造成大量不可控变更。

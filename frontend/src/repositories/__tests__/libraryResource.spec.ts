@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { USER_KEY } from '@/api/request'
 import { libraryResourceRepository, rememberMockGeneratedResourcePreview } from '@/repositories/libraryResource'
+import { knowledgeBaseRepository } from '@/repositories/knowledgeBase'
 import type { LibraryResourceDto } from '@/types/contracts/library'
 
 describe('MockLibraryResourceRepository', () => {
@@ -10,6 +11,8 @@ describe('MockLibraryResourceRepository', () => {
     localStorage.clear()
     sessionStorage.setItem(USER_KEY, JSON.stringify({ id: 101 }))
   })
+
+  afterEach(() => vi.useRealTimers())
 
   it('uses the same CRUD contract as the API repository', async () => {
     const file = new File(['hello'], 'notes.md', { type: 'text/markdown' })
@@ -38,10 +41,41 @@ describe('MockLibraryResourceRepository', () => {
     expect(retried.errorMessage).toBeUndefined()
 
     const blob = await libraryResourceRepository.download(uploaded.resourceId)
-    expect(await blob.text()).toContain('renamed.md')
+    expect(await blob.text()).toBe('hello')
 
     await libraryResourceRepository.remove(uploaded.resourceId)
     expect((await libraryResourceRepository.list()).some((item) => item.resourceId === uploaded.resourceId)).toBe(false)
+  })
+
+  it('advances uploaded files through the same processing states used by the API', async () => {
+    const now = new Date('2026-07-18T08:00:00.000Z')
+    vi.useFakeTimers()
+    vi.setSystemTime(now)
+    const uploaded = await libraryResourceRepository.upload(
+      new File(['stateful'], 'stateful.md', { type: 'text/markdown' }),
+      'resource-library',
+      { projectId: null, knowledgeBaseId: null },
+    )
+    expect(uploaded.status).toBe('waiting')
+
+    vi.setSystemTime(now.getTime() + 400)
+    expect((await libraryResourceRepository.list()).find((item) => item.resourceId === uploaded.resourceId)?.status).toBe('processing')
+
+    vi.setSystemTime(now.getTime() + 1_000)
+    expect((await libraryResourceRepository.list()).find((item) => item.resourceId === uploaded.resourceId)?.status).toBe('ready')
+    expect((await libraryResourceRepository.preview(uploaded.resourceId)).textContent).toBe('stateful')
+  })
+
+  it('detaches resource associations when a knowledge base is deleted', async () => {
+    const knowledgeBase = await knowledgeBaseRepository.create({ name: '待删除资料库' })
+    const uploaded = await libraryResourceRepository.upload(
+      new File(['linked'], 'linked.md', { type: 'text/markdown' }),
+      'resource-library',
+      { projectId: null, knowledgeBaseId: Number(knowledgeBase.id) },
+    )
+
+    await knowledgeBaseRepository.remove(Number(knowledgeBase.id))
+    expect((await libraryResourceRepository.list()).find((item) => item.resourceId === uploaded.resourceId)?.knowledgeBaseId).toBeNull()
   })
 
   it('uses the unified preview contract and blocks oversized files before reading content', async () => {

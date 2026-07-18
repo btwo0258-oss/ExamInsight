@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -15,9 +14,10 @@ import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import { useLearningStore } from '@/stores/learning'
 import { useAuthStore } from '@/stores/auth'
 import LibraryKnowledgeCreateModal from '@/components/library/LibraryKnowledgeCreateModal.vue'
-import type { LearningProfileData } from '@/types/contracts/learning'
+import type { LearningProfileData, LearningSetupStateDto } from '@/types/contracts/learning'
 import { isMockDataSource } from '@/config/dataSource'
 import type { ChatClientAction } from '@/repositories/chat'
+import { snapshotLearningProfile } from '@/utils/learningSetup'
 
 const conversationStore = useConversationStore()
 const messageStore = useMessageStore()
@@ -59,7 +59,7 @@ const confirmationDocument = ref('')
 const decisionDismissed = ref(false)
 const retryAction = ref<null | (() => void | Promise<void>)>(null)
 const pendingClientAction = ref<ChatClientAction | undefined>()
-let learningTimer: ReturnType<typeof window.setTimeout> | undefined
+let learningTimer: number | undefined
 let tutorRequestKey = ''
 
 const emptyProfile = (): LearningProfileData => ({
@@ -82,20 +82,10 @@ const learningSetupId = ref<string>(crypto.randomUUID())
 const completedLearningSetupProjectIds = new Set<number>()
 let restoringLearningSetup = false
 
-type LearningSetupSessionState = {
-  setupId: string
-  knowledgeBaseId: number | null
-  prompt: string
-  profile: LearningProfileData
-  mediaAssetIds: string[]
-  sourceResourceIds: string[]
-  uploadedFileNames: string[]
-  confirmationResourceId: string | null
-  confirmationDocument: string
-  phase: LearningPhase
-  profileMessageId: string
-  documentMessageId: string
-}
+type LearningSetupSessionState = LearningSetupStateDto
+let learningSetupPersistTimer: number | undefined
+const pendingLearningSetups = new Map<number, LearningSetupSessionState>()
+let learningSetupPersistence = Promise.resolve()
 
 function learningSetupStorageKey(activeProjectId = projectId.value) {
   return activeProjectId ? `examinsight.learning.chat-setup.v1.${activeProjectId}` : null
@@ -108,27 +98,29 @@ function persistLearningSetup(activeProjectId = projectId.value) {
     setupId: learningSetupId.value,
     knowledgeBaseId: selectedKnowledgeBaseId.value,
     prompt: learningPrompt.value,
-    profile: learningProfile.value,
-    mediaAssetIds: learningMediaAssetIds.value,
-    sourceResourceIds: learningSourceResourceIds.value,
-    uploadedFileNames: learningUploadedFileNames.value,
+    profile: snapshotLearningProfile(learningProfile.value),
+    mediaAssetIds: [...learningMediaAssetIds.value],
+    sourceResourceIds: [...learningSourceResourceIds.value],
+    uploadedFileNames: [...learningUploadedFileNames.value],
     confirmationResourceId: learningConfirmationResourceId.value,
     confirmationDocument: confirmationDocument.value,
     phase: learningPhase.value,
     profileMessageId: currentProfileMessageId.value,
     documentMessageId: currentDocumentMessageId.value,
+    updatedAt: new Date().toISOString(),
   }
   sessionStorage.setItem(key, JSON.stringify(state))
+  pendingLearningSetups.set(activeProjectId, state)
+  if (learningSetupPersistTimer) window.clearTimeout(learningSetupPersistTimer)
+  learningSetupPersistTimer = window.setTimeout(() => {
+    learningSetupPersistTimer = undefined
+    void flushLearningSetupPersistence()
+  }, 300)
 }
 
-function restoreLearningSetup(activeProjectId = projectId.value) {
-  const key = learningSetupStorageKey(activeProjectId)
-  if (!key) return false
-  const raw = sessionStorage.getItem(key)
-  if (!raw) return false
+function applyLearningSetupState(state: Partial<LearningSetupSessionState>) {
+  restoringLearningSetup = true
   try {
-    const state = JSON.parse(raw) as Partial<LearningSetupSessionState>
-    restoringLearningSetup = true
     if (typeof state.setupId === 'string' && state.setupId) learningSetupId.value = state.setupId
     if (state.knowledgeBaseId === null || typeof state.knowledgeBaseId === 'number') selectedKnowledgeBaseId.value = state.knowledgeBaseId
     if (typeof state.prompt === 'string') learningPrompt.value = state.prompt
@@ -146,31 +138,90 @@ function restoreLearningSetup(activeProjectId = projectId.value) {
     else learningPhase.value = 'idle'
     if (typeof state.profileMessageId === 'string') currentProfileMessageId.value = state.profileMessageId
     if (typeof state.documentMessageId === 'string') currentDocumentMessageId.value = state.documentMessageId
-    return true
-  } catch {
-    sessionStorage.removeItem(key)
-    return false
   } finally {
     restoringLearningSetup = false
   }
 }
 
-function clearLearningSetup(activeProjectId = projectId.value) {
+function flushLearningSetupPersistence() {
+  const pending = [...pendingLearningSetups.entries()]
+  pendingLearningSetups.clear()
+  if (!pending.length) return learningSetupPersistence
+  learningSetupPersistence = learningSetupPersistence
+    .catch(() => undefined)
+    .then(async () => {
+      for (const [projectId, state] of pending) {
+        try {
+          await learningStore.saveLearningSetupState(projectId, state)
+        } catch (error) {
+          learningStore.errorMessage = error instanceof Error ? `学习创建状态同步失败：${error.message}` : '学习创建状态同步失败'
+        }
+      }
+    })
+  return learningSetupPersistence
+}
+
+async function restoreLearningSetup(activeProjectId = projectId.value) {
   const key = learningSetupStorageKey(activeProjectId)
+  if (!key || !activeProjectId) return false
+  const raw = sessionStorage.getItem(key)
+  let restored = false
+  let localState: Partial<LearningSetupSessionState> | null = null
+  if (raw) {
+    try {
+      localState = JSON.parse(raw) as Partial<LearningSetupSessionState>
+      applyLearningSetupState(localState)
+      restored = true
+    } catch {
+      sessionStorage.removeItem(key)
+    }
+  }
+  try {
+    const remote = await learningStore.getLearningSetupState(activeProjectId)
+    if (remote) {
+      const remoteTime = Date.parse(remote.updatedAt || '') || 0
+      const localTime = Date.parse(localState?.updatedAt || '') || 0
+      if (!localState || remoteTime >= localTime) {
+        applyLearningSetupState(remote)
+        sessionStorage.setItem(key, JSON.stringify(remote))
+      } else {
+        pendingLearningSetups.set(activeProjectId, localState as LearningSetupSessionState)
+        void flushLearningSetupPersistence()
+      }
+      restored = true
+    }
+  } catch (error) {
+    if (!restored) throw error
+  }
+  return restored
+}
+
+async function clearLearningSetup(activeProjectId = projectId.value) {
+  const key = learningSetupStorageKey(activeProjectId)
+  if (learningSetupPersistTimer) window.clearTimeout(learningSetupPersistTimer)
+  learningSetupPersistTimer = undefined
+  if (activeProjectId) pendingLearningSetups.delete(activeProjectId)
+  await learningSetupPersistence.catch(() => undefined)
   if (key) sessionStorage.removeItem(key)
-  if (activeProjectId) completedLearningSetupProjectIds.add(activeProjectId)
+  if (activeProjectId) {
+    completedLearningSetupProjectIds.add(activeProjectId)
+    try {
+      await learningStore.removeLearningSetupState(activeProjectId)
+    } catch (error) {
+      learningStore.errorMessage = error instanceof Error ? `清理学习创建状态失败：${error.message}` : '清理学习创建状态失败'
+    }
+  }
 }
 
 async function requestLearningProfile(text: string) {
-  const selectedCourse = courseKnowledgeBases.find((item) => item.id === selectedKnowledgeBaseId.value)
+  const knowledgeBase = selectedKnowledgeBase.value
   return learningStore.generateLearningProfile({
     conversationId: activeChatId.value,
     knowledgeBaseId: selectedKnowledgeBaseId.value,
     text,
     currentProfile: learningProfile.value,
-    source: selectedKnowledgeBase.value?.name || '无',
-    subject: selectedCourse?.course,
-    knowledgeTags: selectedCourse?.tags,
+    source: knowledgeBase?.name || '无',
+    subject: knowledgeBase?.name,
     supplementalRequirement: learningProfile.value.extra,
     mediaAssetIds: learningMediaAssetIds.value,
   })
@@ -214,7 +265,7 @@ async function loadConversationMessages(id: number) {
     return
   }
   if (isLearningSetupChat.value) {
-    restoreLearningSetup(projectId.value)
+    await restoreLearningSetup(projectId.value)
     restoreLearningCards(id)
   }
   const autoMsgKey = `chat_auto_msg_${id}`
@@ -249,14 +300,15 @@ const currentConversation = computed(() => {
 const pageTitle = computed(() => currentConversation.value?.title || '新对话')
 
 const messages = computed(() => {
-  if (!activeChatId.value) return []
-  const key = String(activeChatId.value)
+  const conversationId = activeChatId.value
+  if (!conversationId) return []
+  const key = String(conversationId)
   const allMsgs = messageStore.byConversation[key] || []
 
   const filtered = allMsgs.filter((m) => {
     if (!m.turnId) return true
 
-    const activeQ = messageStore.getActiveQVersion(activeChatId.value, m.turnId)
+    const activeQ = messageStore.getActiveQVersion(conversationId, m.turnId)
     const mQ = m.qVersion ?? 0
     const mA = m.aVersion ?? 0
 
@@ -264,7 +316,7 @@ const messages = computed(() => {
       return mQ === activeQ
     }
     if (m.role === 'assistant') {
-      const activeA = messageStore.getActiveAVersion(activeChatId.value, m.turnId, activeQ)
+      const activeA = messageStore.getActiveAVersion(conversationId, m.turnId, activeQ)
       return mQ === activeQ && mA === activeA
     }
     return true
@@ -272,14 +324,15 @@ const messages = computed(() => {
 
   const turnMinTime: Record<string, number> = {}
   for (const m of allMsgs) {
-    if (m.turnId && (!turnMinTime[m.turnId] || m.createTime < turnMinTime[m.turnId])) {
+    const previousTime = m.turnId ? turnMinTime[m.turnId] : undefined
+    if (m.turnId && (previousTime === undefined || m.createTime < previousTime)) {
       turnMinTime[m.turnId] = m.createTime
     }
   }
 
   return filtered.sort((a, b) => {
-    const timeA = a.turnId ? turnMinTime[a.turnId] : a.createTime
-    const timeB = b.turnId ? turnMinTime[b.turnId] : b.createTime
+    const timeA = a.turnId ? (turnMinTime[a.turnId] ?? a.createTime) : a.createTime
+    const timeB = b.turnId ? (turnMinTime[b.turnId] ?? b.createTime) : b.createTime
 
     if (timeA !== timeB) return timeA - timeB
     if (a.role !== b.role) return a.role === 'user' ? -1 : 1
@@ -493,23 +546,30 @@ async function ensureLearningConversation(text: string) {
   conversationStore.linkLearningProject(conversationId, activeProjectId, projectName, 'learning-setup')
   persistLearningSetup(activeProjectId)
   await router.replace({ path: `/learning/setup/${conversationId}`, query: { projectId: String(activeProjectId) } })
-  restoreLearningSetup(activeProjectId)
+  await restoreLearningSetup(activeProjectId)
   return conversationId
 }
 
-function showProfile(conversationId: number, text: string) {
+function showProfile(conversationId: number, text: string, existingMessageId?: string) {
   learningPhase.value = 'analyzing'
-  const skeleton = appendLearningMessage(conversationId, 'assistant', '', {
-    kind: 'learning-profile',
+  const loadingPatch = {
+    kind: 'learning-profile' as const,
+    content: '',
+    errorMsg: undefined,
     learningData: { loading: true, confirmed: false, profile: learningProfile.value },
-  })
-  currentProfileMessageId.value = skeleton.id
+  }
+  const profileMessage = existingMessageId
+    ? messageStore.getMessages(conversationId).find((message) => message.id === existingMessageId)
+    : undefined
+  const messageId = profileMessage?.id || appendLearningMessage(conversationId, 'assistant', '', loadingPatch).id
+  if (profileMessage) messageStore.updateLocalMessage(conversationId, messageId, loadingPatch)
+  currentProfileMessageId.value = messageId
   if (learningTimer) window.clearTimeout(learningTimer)
   learningTimer = window.setTimeout(async () => {
     try {
       const result = await requestLearningProfile(text)
       learningProfile.value = result.profile
-      messageStore.updateLocalMessage(conversationId, skeleton.id, {
+      messageStore.updateLocalMessage(conversationId, messageId, {
         learningData: { loading: false, confirmed: false, profile: learningProfile.value },
       })
       if (activeChatId.value === conversationId) {
@@ -517,7 +577,7 @@ function showProfile(conversationId: number, text: string) {
         persistLearningSetup()
       }
     } catch (error) {
-      messageStore.updateLocalMessage(conversationId, skeleton.id, {
+      messageStore.updateLocalMessage(conversationId, messageId, {
         kind: undefined,
         content: '学习画像生成失败，请重试。',
         learningData: undefined,
@@ -525,7 +585,7 @@ function showProfile(conversationId: number, text: string) {
       })
       if (activeChatId.value === conversationId) {
         learningPhase.value = 'idle'
-        reportFlowError(error, '学习画像生成失败', () => showProfile(conversationId, text))
+        reportFlowError(error, '学习画像生成失败', () => showProfile(conversationId, text, messageId))
       }
     }
   }, 850)
@@ -548,9 +608,11 @@ async function onSend(text: string, files?: File[], complete?: (success?: boolea
       projectId.value,
       selectedKnowledgeBaseId.value,
     )
-    const nextMediaIds = uploaded
-      .filter((item) => item.resourceId.startsWith('media:') && item.externalKey)
-      .map((item) => item.externalKey)
+    const nextMediaIds = uploaded.flatMap((item) => (
+      item.resourceId.startsWith('media:') && typeof item.externalKey === 'string'
+        ? [item.externalKey]
+        : []
+    ))
     learningMediaAssetIds.value = [...new Set([...learningMediaAssetIds.value, ...nextMediaIds])]
     learningSourceResourceIds.value = [...new Set([...learningSourceResourceIds.value, ...uploaded.map((item) => item.resourceId)])]
     learningUploadedFileNames.value = [...new Set([...learningUploadedFileNames.value, ...files.map((file) => file.name)])]
@@ -727,6 +789,7 @@ function scheduleLearningPlanGeneration(conversationId: number) {
   if (learningTimer) window.clearTimeout(learningTimer)
   learningTimer = window.setTimeout(async () => {
     try {
+      await flushLearningSetupPersistence()
       const profile = learningProfile.value
       const draftProjectId = projectId.value
       const generated = await learningStore.createPlan({
@@ -748,7 +811,7 @@ function scheduleLearningPlanGeneration(conversationId: number) {
         draftPlanId: draftProjectId,
         knowledgeBaseName: selectedKnowledgeBase.value?.name,
       })
-      clearLearningSetup(draftProjectId)
+      await clearLearningSetup(draftProjectId)
       if (activeChatId.value === conversationId) await router.push(`/learning/${generated.id}`)
     } catch (error) {
       if (activeChatId.value !== conversationId) return
@@ -760,13 +823,15 @@ function scheduleLearningPlanGeneration(conversationId: number) {
 
 async function resumeLearningPlanGeneration() {
   const draftProjectId = projectId.value
-  const active = learningStore.activePlanGeneration
-  if (!isLearningSetupChat.value || !draftProjectId || !active || active.draftPlanId !== draftProjectId) return
+  if (!isLearningSetupChat.value || !draftProjectId) return
   learningPhase.value = 'generating'
   try {
     const generated = await learningStore.resumePlanGeneration(draftProjectId)
-    if (!generated) return
-    clearLearningSetup(draftProjectId)
+    if (!generated) {
+      learningPhase.value = confirmationDocument.value ? 'document' : learningPrompt.value ? 'profile' : 'idle'
+      return
+    }
+    await clearLearningSetup(draftProjectId)
     await router.replace(`/learning/${generated.id}`)
   } catch (error) {
     learningPhase.value = confirmationDocument.value ? 'document' : 'profile'
@@ -866,7 +931,7 @@ async function initializeLearningChat() {
     if (project?.knowledgeBaseId !== null && project?.knowledgeBaseId !== undefined) {
       selectedKnowledgeBaseId.value = project.knowledgeBaseId
     }
-    restoreLearningSetup(projectId.value)
+    await restoreLearningSetup(projectId.value)
     if (activeChatId.value) restoreLearningCards(activeChatId.value)
     await resumeLearningPlanGeneration()
   } catch (error) {
@@ -895,6 +960,7 @@ watch(
 onUnmounted(() => {
   if (learningTimer) window.clearTimeout(learningTimer)
   persistLearningSetup()
+  void flushLearningSetupPersistence()
   window.removeEventListener('keydown', handleKeyDown)
 })
 
@@ -934,7 +1000,7 @@ watch(
     learningUploadedFileNames.value = []
     learningConfirmationResourceId.value = null
     learningSetupId.value = crypto.randomUUID()
-    if (activeProjectId) restoreLearningSetup(activeProjectId)
+    if (activeProjectId) void restoreLearningSetup(activeProjectId)
   },
   { flush: 'sync' },
 )

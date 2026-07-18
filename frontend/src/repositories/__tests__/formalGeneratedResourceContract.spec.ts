@@ -71,4 +71,47 @@ describe('formal generated-resource API contract', () => {
       conversationId: 9,
     }))
   })
+
+  it('uses formal APIs for recoverable learning setup state', async () => {
+    const state = {
+      setupId: 'setup-1',
+      knowledgeBaseId: null,
+      prompt: '学习 Java',
+      profile: { goal: '', subject: 'Java', foundation: '', weakPoints: [], period: '', dailyTime: '', preferences: [], source: '', extra: '' },
+      mediaAssetIds: [],
+      sourceResourceIds: [],
+      uploadedFileNames: [],
+      confirmationResourceId: null,
+      confirmationDocument: '',
+      phase: 'profile' as const,
+      profileMessageId: 'profile-1',
+      documentMessageId: '',
+    }
+    api.put.mockResolvedValueOnce({ data: { data: state } })
+    await learningRepository.saveSetupState(7, state)
+    expect(api.put).toHaveBeenCalledWith('/api/learning/projects/7/setup-state', state)
+
+    api.get.mockResolvedValueOnce({ data: { data: state } })
+    await learningRepository.getSetupState(7)
+    expect(api.get).toHaveBeenCalledWith('/api/learning/projects/7/setup-state')
+  })
+
+  it('uses formal APIs for active generation, drafts, and wrong-review state', async () => {
+    const active = { jobId: 'job-7', draftPlanId: 7, sourceResourceIds: [], knowledgeBaseId: null, startedAt: 1 }
+    api.put.mockResolvedValueOnce({ data: { data: active } })
+    await learningRepository.saveActivePlanGeneration(7, active)
+    expect(api.put).toHaveBeenCalledWith('/api/learning/projects/7/active-plan-generation', active)
+
+    const draft = { exerciseId: 3, answer: 'A' }
+    api.put.mockResolvedValueOnce({ data: { data: draft } })
+    await learningRepository.saveExerciseDraft(7, draft)
+    expect(api.put).toHaveBeenCalledWith('/api/learning/projects/7/exercise-drafts/3', draft)
+
+    api.put.mockResolvedValueOnce({ data: { data: { id: 7, resources: [], stages: [], exercises: [], wrongQuestions: [], dashboard: [], agents: [] } } })
+    await learningRepository.startWrongReviewSet(7, 9, 'review-1')
+    expect(api.put).toHaveBeenCalledWith('/api/learning/projects/7/wrong-review-sets/9/status', {
+      status: 'answering',
+      clientRequestId: 'review-1',
+    })
+  })
 })

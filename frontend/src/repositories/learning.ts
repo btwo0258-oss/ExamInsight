@@ -8,14 +8,17 @@ import type { Exercise, LearningPlan } from '@/mock/student'
 import type { AsyncJob } from '@/types/contracts/common'
 import type {
   AnswerResult,
+  ActivePlanGenerationDto,
   CreateLearningDraftInput,
   CreateLearningPlanInput,
   GeneratedProjectResourceRequest,
+  ExerciseDraftDto,
   LearningConfirmationRequest,
   LearningConfirmationResult,
   LearningProjectDto,
   LearningProfileRequest,
   LearningProfileResult,
+  LearningSetupStateDto,
   RecordLearningActivityRequest,
   SubmitAnswerRequest,
   SubmitAnswerBatchRequest,
@@ -30,6 +33,15 @@ export interface LearningRepository {
   createDraft(input: CreateLearningDraftInput): Promise<LearningPlan>
   updatePlan(id: number, input: UpdateLearningProjectRequest): Promise<LearningPlan>
   removePlan(id: number): Promise<void>
+  getSetupState(projectId: number): Promise<LearningSetupStateDto | null>
+  saveSetupState(projectId: number, state: LearningSetupStateDto): Promise<LearningSetupStateDto>
+  removeSetupState(projectId: number): Promise<void>
+  getActivePlanGeneration(projectId: number): Promise<ActivePlanGenerationDto | null>
+  saveActivePlanGeneration(projectId: number, state: ActivePlanGenerationDto): Promise<ActivePlanGenerationDto>
+  removeActivePlanGeneration(projectId: number): Promise<void>
+  listExerciseDrafts(projectId: number): Promise<ExerciseDraftDto[]>
+  saveExerciseDraft(projectId: number, draft: ExerciseDraftDto): Promise<ExerciseDraftDto>
+  removeExerciseDrafts(projectId: number, exerciseIds: number[]): Promise<void>
   startProfileGeneration(input: LearningProfileRequest): Promise<AsyncJob<LearningProfileResult>>
   generateConfirmation(input: LearningConfirmationRequest): Promise<LearningConfirmationResult>
   getGenerationJob<T>(jobId: string): Promise<AsyncJob<T>>
@@ -39,12 +51,24 @@ export interface LearningRepository {
   submitAnswers(input: SubmitAnswerBatchRequest): Promise<AnswerResult[]>
   startAdaptivePracticeGeneration(projectId: number, sourceTaskId: number, input: { mode: 'repeat' | 'reinforce'; count: number; difficultyMode: '保持难度' | '逐步提升' }): Promise<AsyncJob<{ projectId: number }>>
   startWrongReviewGeneration(projectId: number, wrongIds: number[], input: { count: number; difficultyMode: '保持难度' | '逐步提升' }): Promise<AsyncJob<{ projectId: number }>>
+  startWrongReviewSet(projectId: number, setId: number, clientRequestId: string): Promise<LearningPlan>
   startResourceGeneration(projectId: number, learningResourceId: number): Promise<AsyncJob<{ projectId: number }>>
   attachGeneratedResource(projectId: number, input: GeneratedProjectResourceRequest): Promise<LearningPlan>
   downloadResource(projectId: number, learningResourceId: number): Promise<Blob>
 }
 
 const JOB_DOMAIN = 'learning-jobs'
+const SETUP_DOMAIN = 'learning-setup-states'
+const ACTIVE_PLAN_DOMAIN = 'learning-active-plan-generations'
+const EXERCISE_DRAFT_DOMAIN = 'learning-exercise-drafts'
+
+type StoredMockJob<T> = AsyncJob<T> & {
+  mockStartedAt?: number
+  mockDurationMs?: number
+  mockResult?: T
+  mockFailureMessage?: string
+  mockPendingPlan?: { plan: LearningPlan; draftPlanId: number | null }
+}
 
 function readJobs() {
   return mockSession.get<Record<string, AsyncJob<unknown>>>(JOB_DOMAIN, {})
@@ -55,6 +79,29 @@ function saveJob<T>(job: AsyncJob<T>) {
   jobs[job.jobId] = job as AsyncJob<unknown>
   mockSession.set(JOB_DOMAIN, jobs)
   return job
+}
+
+function createPendingJob<T>(
+  prefix: string,
+  result: T,
+  durationMs = 750,
+  failureMessage?: string,
+  pendingPlan?: StoredMockJob<T>['mockPendingPlan'],
+) {
+  return saveJob<T>({
+    jobId: `mock-${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    status: 'pending',
+    progress: 0,
+    mockStartedAt: Date.now(),
+    mockDurationMs: durationMs,
+    mockResult: result,
+    mockFailureMessage: failureMessage,
+    mockPendingPlan: pendingPlan,
+  } as StoredMockJob<T>)
+}
+
+function readRecord<T>(domain: string) {
+  return mockSession.get<Record<string, T>>(domain, {})
 }
 
 const mockLearningRepository: LearningRepository = {
@@ -89,36 +136,119 @@ const mockLearningRepository: LearningRepository = {
   async removePlan(id) {
     saveLearningPlans(getLearningPlans().filter((item) => item.id !== id))
   },
+  async getSetupState(projectId) {
+    return readRecord<LearningSetupStateDto>(SETUP_DOMAIN)[String(projectId)] ?? null
+  },
+  async saveSetupState(projectId, state) {
+    const states = readRecord<LearningSetupStateDto>(SETUP_DOMAIN)
+    const saved = { ...state, updatedAt: new Date().toISOString() }
+    states[String(projectId)] = saved
+    mockSession.set(SETUP_DOMAIN, states)
+    return saved
+  },
+  async removeSetupState(projectId) {
+    const states = readRecord<LearningSetupStateDto>(SETUP_DOMAIN)
+    delete states[String(projectId)]
+    mockSession.set(SETUP_DOMAIN, states)
+  },
+  async getActivePlanGeneration(projectId) {
+    return readRecord<ActivePlanGenerationDto>(ACTIVE_PLAN_DOMAIN)[String(projectId)] ?? null
+  },
+  async saveActivePlanGeneration(projectId, state) {
+    const states = readRecord<ActivePlanGenerationDto>(ACTIVE_PLAN_DOMAIN)
+    states[String(projectId)] = state
+    mockSession.set(ACTIVE_PLAN_DOMAIN, states)
+    return state
+  },
+  async removeActivePlanGeneration(projectId) {
+    const states = readRecord<ActivePlanGenerationDto>(ACTIVE_PLAN_DOMAIN)
+    delete states[String(projectId)]
+    mockSession.set(ACTIVE_PLAN_DOMAIN, states)
+  },
+  async listExerciseDrafts(projectId) {
+    return readRecord<ExerciseDraftDto[]>(EXERCISE_DRAFT_DOMAIN)[String(projectId)] ?? []
+  },
+  async saveExerciseDraft(projectId, draft) {
+    const records = readRecord<ExerciseDraftDto[]>(EXERCISE_DRAFT_DOMAIN)
+    const drafts = records[String(projectId)] ?? []
+    const saved = { ...draft, updatedAt: new Date().toISOString() }
+    const index = drafts.findIndex((item) => item.exerciseId === draft.exerciseId)
+    if (index === -1) drafts.push(saved)
+    else drafts[index] = saved
+    records[String(projectId)] = drafts
+    mockSession.set(EXERCISE_DRAFT_DOMAIN, records)
+    return saved
+  },
+  async removeExerciseDrafts(projectId, exerciseIds) {
+    const records = readRecord<ExerciseDraftDto[]>(EXERCISE_DRAFT_DOMAIN)
+    const removed = new Set(exerciseIds)
+    records[String(projectId)] = (records[String(projectId)] ?? []).filter((item) => !removed.has(Number(item.exerciseId)))
+    mockSession.set(EXERCISE_DRAFT_DOMAIN, records)
+  },
   async startProfileGeneration(input) {
     const result = createMockLearningProfileResult(input)
-    return saveJob({
-      jobId: `mock-profile-${Date.now()}`,
-      status: 'succeeded',
-      progress: 100,
+    return createPendingJob(
+      'profile',
       result,
-    })
+      750,
+      /\[mock-fail\]/i.test(input.text) ? 'Mock 学习画像生成失败' : undefined,
+    )
   },
   async generateConfirmation(input) {
     return { content: buildMockLearningConfirmation(input), resourceId: '' }
   },
   async getGenerationJob<T>(jobId: string) {
-    const job = readJobs()[jobId]
+    const job = readJobs()[jobId] as StoredMockJob<T> | undefined
     if (!job) throw new Error('Generation job not found')
-    return job as AsyncJob<T>
+    if (!job.mockStartedAt || !job.mockDurationMs || !job.mockResult) return job
+    const elapsed = Date.now() - job.mockStartedAt
+    if (elapsed < 200) {
+      job.status = 'pending'
+      job.progress = 0
+    } else if (elapsed < job.mockDurationMs) {
+      job.status = 'running'
+      job.progress = Math.max(1, Math.min(99, Math.round((elapsed / job.mockDurationMs) * 100)))
+    } else if (job.mockFailureMessage) {
+      job.status = 'failed'
+      job.progress = 100
+      job.errorCode = 'MOCK_GENERATION_FAILED'
+      job.errorMessage = job.mockFailureMessage
+      delete job.result
+      delete job.mockFailureMessage
+      delete job.mockStartedAt
+      delete job.mockDurationMs
+      delete job.mockResult
+      delete job.mockPendingPlan
+    } else {
+      job.status = 'succeeded'
+      job.progress = 100
+      job.result = job.mockResult
+      if (job.mockPendingPlan) {
+        const plans = getLearningPlans()
+        const { plan, draftPlanId } = job.mockPendingPlan
+        const draftIndex = plans.findIndex((item) => item.id === draftPlanId)
+        if (draftIndex >= 0) plans.splice(draftIndex, 1, plan)
+        else if (!plans.some((item) => item.id === plan.id)) plans.unshift(plan)
+        saveLearningPlans(plans)
+      }
+      delete job.mockStartedAt
+      delete job.mockDurationMs
+      delete job.mockResult
+      delete job.mockPendingPlan
+    }
+    saveJob(job)
+    return job
   },
   async startPlanGeneration(input) {
     const plans = getLearningPlans()
     const plan = createMockLearningPlan(input, plans)
-    const draftIndex = plans.findIndex((item) => item.id === input.draftPlanId)
-    if (draftIndex >= 0) plans.splice(draftIndex, 1, plan)
-    else plans.unshift(plan)
-    saveLearningPlans(plans)
-    return saveJob({
-      jobId: `mock-plan-${Date.now()}`,
-      status: 'succeeded',
-      progress: 100,
-      result: { projectId: plan.id },
-    })
+    return createPendingJob(
+      'plan',
+      { projectId: plan.id },
+      900,
+      /\[mock-fail\]/i.test(input.prompt) ? 'Mock 学习方案生成失败' : undefined,
+      { plan, draftPlanId: input.draftPlanId == null ? null : Number(input.draftPlanId) },
+    )
   },
   async recordActivity(input) {
     const plan = getLearningPlans().find((item) => item.id === input.projectId)
@@ -152,30 +282,35 @@ const mockLearningRepository: LearningRepository = {
   async startAdaptivePracticeGeneration(projectId) {
     const plan = getLearningPlans().find((item) => item.id === projectId)
     if (!plan) throw new Error('Learning project not found')
-    return saveJob({
-      jobId: `mock-adaptive-practice-${Date.now()}`,
-      status: 'succeeded',
-      progress: 100,
-      result: { projectId },
-    })
+    return createPendingJob('adaptive-practice', { projectId })
   },
   async startWrongReviewGeneration(projectId) {
     const plan = getLearningPlans().find((item) => item.id === projectId)
     if (!plan) throw new Error('Learning project not found')
-    return saveJob({
-      jobId: `mock-wrong-review-${Date.now()}`,
-      status: 'succeeded',
-      progress: 100,
-      result: { projectId },
+    return createPendingJob('wrong-review', { projectId })
+  },
+  async startWrongReviewSet(projectId, setId) {
+    const plans = getLearningPlans()
+    const plan = plans.find((item) => item.id === projectId)
+    const set = plan?.wrongReviewSets?.find((item) => item.id === setId)
+    if (!plan || !set) throw new Error('Wrong review set not found')
+    set.status = '作答中'
+    set.exerciseIds.forEach((id) => {
+      const exercise = plan.exercises.find((item) => item.id === id)
+      if (!exercise) return
+      exercise.draftAnswer = undefined
+      exercise.userAnswer = undefined
+      exercise.submitted = false
+      exercise.gradingCorrect = undefined
+      exercise.gradingScore = undefined
+      exercise.gradingFeedback = undefined
+      if (exercise.type === '代码题') exercise.codeDrafts = {}
     })
+    saveLearningPlans(plans)
+    return plan
   },
   async startResourceGeneration(projectId) {
-    return saveJob({
-      jobId: `mock-resource-${Date.now()}`,
-      status: 'succeeded',
-      progress: 100,
-      result: { projectId },
-    })
+    return createPendingJob('resource', { projectId })
   },
   async attachGeneratedResource(projectId) {
     const plan = getLearningPlans().find((item) => item.id === projectId)
@@ -277,6 +412,33 @@ const apiLearningRepository: LearningRepository = {
   async removePlan(id) {
     await request.delete(`/api/learning/projects/${id}`)
   },
+  async getSetupState(projectId) {
+    return unwrap<LearningSetupStateDto | null>(await request.get(`/api/learning/projects/${projectId}/setup-state`))
+  },
+  async saveSetupState(projectId, state) {
+    return unwrap<LearningSetupStateDto>(await request.put(`/api/learning/projects/${projectId}/setup-state`, state))
+  },
+  async removeSetupState(projectId) {
+    await request.delete(`/api/learning/projects/${projectId}/setup-state`)
+  },
+  async getActivePlanGeneration(projectId) {
+    return unwrap<ActivePlanGenerationDto | null>(await request.get(`/api/learning/projects/${projectId}/active-plan-generation`))
+  },
+  async saveActivePlanGeneration(projectId, state) {
+    return unwrap<ActivePlanGenerationDto>(await request.put(`/api/learning/projects/${projectId}/active-plan-generation`, state))
+  },
+  async removeActivePlanGeneration(projectId) {
+    await request.delete(`/api/learning/projects/${projectId}/active-plan-generation`)
+  },
+  async listExerciseDrafts(projectId) {
+    return unwrap<ExerciseDraftDto[]>(await request.get(`/api/learning/projects/${projectId}/exercise-drafts`))
+  },
+  async saveExerciseDraft(projectId, draft) {
+    return unwrap<ExerciseDraftDto>(await request.put(`/api/learning/projects/${projectId}/exercise-drafts/${draft.exerciseId}`, draft))
+  },
+  async removeExerciseDrafts(projectId, exerciseIds) {
+    await request.delete(`/api/learning/projects/${projectId}/exercise-drafts`, { data: { exerciseIds } })
+  },
   async startProfileGeneration(input) {
     return unwrap<AsyncJob<LearningProfileResult>>(await request.post('/api/learning/profile-jobs', input))
   },
@@ -303,6 +465,12 @@ const apiLearningRepository: LearningRepository = {
   },
   async startWrongReviewGeneration(projectId, wrongIds, input) {
     return unwrap<AsyncJob<{ projectId: number }>>(await request.post(`/api/learning/projects/${projectId}/mistake-review-jobs`, { wrongIds, ...input }))
+  },
+  async startWrongReviewSet(projectId, setId, clientRequestId) {
+    return normalizeLearningPlan(unwrap<LearningProjectDto>(await request.put(
+      `/api/learning/projects/${projectId}/wrong-review-sets/${setId}/status`,
+      { status: 'answering', clientRequestId },
+    )))
   },
   async startResourceGeneration(projectId, learningResourceId) {
     return unwrap<AsyncJob<{ projectId: number }>>(await request.post(`/api/learning/projects/${projectId}/resource-jobs`, { learningResourceId }))

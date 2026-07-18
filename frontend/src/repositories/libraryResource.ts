@@ -2,6 +2,11 @@ import { request } from '@/api/request'
 import { isMockDataSource } from '@/config/dataSource'
 import { recentUploads } from '@/mock'
 import { mockSession } from '@/mock/storage'
+import {
+  deleteMockResourceFile,
+  readMockResourceFile,
+  saveMockResourceFile,
+} from '@/mock/resourceFileStore'
 import { RESOURCE_PREVIEW_LIMITS } from '@/types/contracts/library'
 import type {
   LibraryResourceDto,
@@ -33,7 +38,64 @@ export interface LibraryResourceRepository {
 
 const DOMAIN = 'resources'
 const GENERATED_PREVIEW_DOMAIN = 'resources.generated-previews'
-const mockPreviewFiles = new Map<string, File>()
+const PROCESSING_DOMAIN = 'resources.processing-jobs'
+
+type MockResourceProcessingJob = {
+  startedAt: number
+  durationMs: number
+  shouldFail: boolean
+}
+
+function readProcessingJobs() {
+  return mockSession.get<Record<string, MockResourceProcessingJob>>(PROCESSING_DOMAIN, {})
+}
+
+function startMockProcessing(resourceId: string, fileName: string, allowFailure = true) {
+  const jobs = readProcessingJobs()
+  jobs[resourceId] = {
+    startedAt: Date.now(),
+    durationMs: 900,
+    shouldFail: allowFailure && /(?:^|[._-])(fail|broken)(?:[._-]|$)/i.test(fileName),
+  }
+  mockSession.set(PROCESSING_DOMAIN, jobs)
+}
+
+function advanceMockProcessing(resources: LibraryResourceDto[]) {
+  const jobs = readProcessingJobs()
+  let resourcesChanged = false
+  let jobsChanged = false
+  const now = Date.now()
+  resources.forEach((resource) => {
+    const job = jobs[resource.resourceId]
+    if (!job) return
+    if (resource.status === 'ready' || resource.status === 'failed') {
+      delete jobs[resource.resourceId]
+      jobsChanged = true
+      return
+    }
+    const elapsed = now - job.startedAt
+    const nextStatus: LibraryResourceProcessingStatus = elapsed < 250
+      ? 'waiting'
+      : elapsed < job.durationMs
+        ? 'processing'
+        : job.shouldFail
+          ? 'failed'
+          : 'ready'
+    if (resource.status !== nextStatus) {
+      resource.status = nextStatus
+      resource.updatedAt = '刚刚'
+      resource.errorMessage = nextStatus === 'failed' ? 'Mock 文件解析失败，可重试解析' : undefined
+      resourcesChanged = true
+    }
+    if (nextStatus === 'ready' || nextStatus === 'failed') {
+      delete jobs[resource.resourceId]
+      jobsChanged = true
+    }
+  })
+  if (resourcesChanged) mockSession.set(DOMAIN, resources)
+  if (jobsChanged) mockSession.set(PROCESSING_DOMAIN, jobs)
+  return resources
+}
 
 function externalId(resource: LibraryResourceDto, prefix: string) {
   return resource.externalKey?.startsWith(prefix) ? resource.externalKey.slice(prefix.length) : undefined
@@ -67,9 +129,22 @@ function previewLimit(resource: LibraryResourceDto, kind: ResourcePreviewKind) {
   return RESOURCE_PREVIEW_LIMITS.document
 }
 
-export function rememberMockLibraryResourceFile(resourceId: string, file: File) {
+export async function rememberMockLibraryResourceFile(resourceId: string, file: File) {
   if (!isMockDataSource) return
-  mockPreviewFiles.set(resourceId, file)
+  await saveMockResourceFile(resourceId, file)
+}
+
+export function detachMockResourcesFromKnowledgeBase(knowledgeBaseId: number) {
+  if (!isMockDataSource) return
+  const resources = mockSession.get(DOMAIN, initialMockResources())
+  let changed = false
+  resources.forEach((resource) => {
+    if (resource.knowledgeBaseId !== knowledgeBaseId) return
+    resource.knowledgeBaseId = null
+    resource.updatedAt = '刚刚'
+    changed = true
+  })
+  if (changed) mockSession.set(DOMAIN, resources)
 }
 
 export function rememberMockGeneratedResourcePreview(resourceId: string, preview: ArtifactInlinePreview) {
@@ -161,10 +236,10 @@ function initialMockResources(): LibraryResourceDto[] {
 
 const mockRepository: LibraryResourceRepository = {
   initial() {
-    return mockSession.get(DOMAIN, initialMockResources())
+    return advanceMockProcessing(mockSession.get(DOMAIN, initialMockResources()))
   },
   async list(knowledgeBaseId) {
-    const resources = mockSession.get(DOMAIN, initialMockResources())
+    const resources = advanceMockProcessing(mockSession.get(DOMAIN, initialMockResources()))
     return knowledgeBaseId === undefined
       ? resources
       : resources.filter((item) => item.knowledgeBaseId === knowledgeBaseId)
@@ -189,11 +264,16 @@ const mockRepository: LibraryResourceRepository = {
     const resources = mockSession.get(DOMAIN, initialMockResources())
     resources.unshift(resource)
     mockSession.set(DOMAIN, resources)
-    mockPreviewFiles.set(resource.resourceId, file)
+    startMockProcessing(resource.resourceId, file.name)
+    await saveMockResourceFile(resource.resourceId, file)
     return resource
   },
   async remove(resourceId) {
     mockSession.set(DOMAIN, mockSession.get(DOMAIN, initialMockResources()).filter((item) => item.resourceId !== resourceId))
+    const jobs = readProcessingJobs()
+    delete jobs[resourceId]
+    mockSession.set(PROCESSING_DOMAIN, jobs)
+    await deleteMockResourceFile(resourceId)
   },
   async retry(resourceId) {
     const resources = mockSession.get(DOMAIN, initialMockResources())
@@ -203,6 +283,7 @@ const mockRepository: LibraryResourceRepository = {
     resource.errorMessage = undefined
     resource.updatedAt = '刚刚'
     mockSession.set(DOMAIN, resources)
+    startMockProcessing(resource.resourceId, resource.name, false)
     return resource
   },
   async rename(resourceId, name) {
@@ -227,7 +308,7 @@ const mockRepository: LibraryResourceRepository = {
     return resource
   },
   async preview(resourceId) {
-    const resource = mockSession.get(DOMAIN, initialMockResources()).find((item) => item.resourceId === resourceId)
+    const resource = advanceMockProcessing(mockSession.get(DOMAIN, initialMockResources())).find((item) => item.resourceId === resourceId)
     if (!resource) throw new Error('资料不存在或已被删除')
 
     const kind = previewKind(resource)
@@ -263,12 +344,12 @@ const mockRepository: LibraryResourceRepository = {
       }
     }
 
-    const file = mockPreviewFiles.get(resourceId)
+    const file = await readMockResourceFile(resourceId)
     if (!file) {
       return {
         ...base,
         status: 'failed',
-        errorMessage: 'Mock 环境只保留文件元数据，刷新后无法恢复原文件预览，可重新上传或下载查看',
+        errorMessage: 'Mock 文件内容不存在或已被清理，请重新上传',
       }
     }
 
@@ -287,7 +368,9 @@ const mockRepository: LibraryResourceRepository = {
     if (resource.fileType === 'mindmap' && preview?.mindMap) {
       return new Blob([JSON.stringify(preview.mindMap, null, 2)], { type: 'application/vnd.examinsight.mindmap+json' })
     }
-    return new Blob([`Mock 文件：${resource.name}\nMock 环境不保存真实上传文件内容。`], { type: 'text/plain;charset=utf-8' })
+    const uploadedFile = await readMockResourceFile(resourceId)
+    if (uploadedFile) return uploadedFile
+    return new Blob([`Mock 文件：${resource.name}\n文件内容不存在或已被清理。`], { type: 'text/plain;charset=utf-8' })
   },
 }
 

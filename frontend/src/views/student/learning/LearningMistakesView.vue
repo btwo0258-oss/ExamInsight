@@ -142,7 +142,7 @@ async function createReinforcement() {
     reinforcementOpen.value = false
     activeModule.value = 'sets'
     openSet(set.id)
-    learningStore.startWrongReviewSet(plan.value.id, set.id)
+    await learningStore.startWrongReviewSet(plan.value.id, set.id)
   } catch (error) {
     actionError.value = error instanceof Error ? error.message : '巩固题组生成失败'
   } finally {
@@ -158,12 +158,20 @@ function openSet(setId: number) {
   setResult.value = undefined
 }
 
-function startSet() {
+async function startSet() {
   if (!activeSet.value) return
-  learningStore.startWrongReviewSet(plan.value.id, activeSet.value.id)
-  currentSetExerciseId.value = activeSet.value.exerciseIds[0]
-  setAnswer.value = ''
-  setResult.value = undefined
+  operationPending.value = true
+  actionError.value = ''
+  try {
+    await learningStore.startWrongReviewSet(plan.value.id, activeSet.value.id)
+    currentSetExerciseId.value = activeSet.value.exerciseIds[0]
+    setAnswer.value = ''
+    setResult.value = undefined
+  } catch (error) {
+    actionError.value = error instanceof Error ? error.message : '开始错题巩固失败'
+  } finally {
+    operationPending.value = false
+  }
 }
 
 function selectSetAnswer(answer: string) {

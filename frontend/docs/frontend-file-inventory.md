@@ -45,10 +45,13 @@
 | `src/repositories/*` | Mock/API 双实现和正式 HTTP 端点；页面不得直接选择数据源 |
 | `src/types/contracts/*` | 前后端共享 DTO、任务和状态类型 |
 | `src/mock/storage.ts` | Mock 业务数据的用户隔离 `sessionStorage` 访问 |
+| `src/mock/resourceFileStore.ts` | Mock 普通上传文件 Blob 的 IndexedDB 持久化与内存降级；key 复用用户隔离命名，刷新后仍可按 resourceId 预览/下载 |
 | `src/mock/generators/*` | 仅 Mock 使用的画像、方案、题目和评分演示逻辑 |
-| `src/types/contracts/learning.ts` | 智能学习正式项目/阶段/任务/资源/题目/错题 DTO 及请求响应；知识库可空，方案输入使用 sourceResourceIds/mediaAssetIds，题组使用批量答案请求 |
-| `src/repositories/learning.ts` | 智能学习 Mock/API 双 Repository；除项目 CRUD、任务和答题外，提供 `/resources/generated` 正式幂等端点，把生成文件回写项目资源包 |
-| `src/stores/learning.ts` | 编排项目状态、学习行为与生成资源闭环；Mock 按 artifactId/resourceId upsert 项目资源，API 调正式回写接口并采用后端返回的项目聚合 |
+| `src/types/contracts/learning.ts` | 智能学习正式项目/阶段/任务/资源/题目/错题 DTO 及请求响应；包含 setup-state、active plan generation、exercise draft 和项目生成资源契约 |
+| `src/repositories/learning.ts` | 智能学习 Mock/API 双 Repository；覆盖项目、创建状态、异步任务恢复、草稿、错题题组、答题和 `/resources/generated` 项目资源回写 |
+| `src/stores/learning.ts` | 编排项目状态、学习行为、草稿防抖保存、生成任务跨设备恢复与生成资源闭环；API 状态采用后端返回聚合，Mock 复现相同状态变化 |
+| `src/utils/learningSetup.ts` | 把 Vue 响应式学习画像显式复制为可缓存、可请求、可 structuredClone 的纯 DTO，隔离 Proxy 序列化错误 |
+| `src/utils/__tests__/learningSetup.spec.ts` | 使用真实 reactive 画像验证快照无 Proxy、数组独立且可被 structuredClone |
 | `src/stores/learningTutor.ts` | 建立项目助教会话；Mock 提供模拟摘要，API 仅传 project/stage/task/exercise 上下文 ID |
 | `src/mock/generators/learning.ts` | Mock 方案、题目、默认方案/思维导图、按需资源内容和原型评分；API 模式不得调用 |
 | `src/mock/generators/__tests__/learningWorkflow.spec.ts` | 覆盖空知识库、项目 ready 状态、默认资源、题量和任务题目关联 |
@@ -73,8 +76,11 @@
 | `src/utils/presentation.ts` | PresentationDto 与消息卡转换、工作区路由参数组装；被消息与工作区共同复用 |
 | `src/utils/stream.ts` | 解析现有 SSE 事件边界；聊天 Repository 在同一流上消费文本、PPT proposal 和统一 artifact 事件 |
 | `src/repositories/__tests__/presentation.spec.ts` | 创建、大纲、生成、自动资源 ID 和 PPTX 下载测试 |
-| `src/repositories/__tests__/formalGeneratedResourceContract.spec.ts` | 正式 API 的项目资源回写、PPT 关联与单附件稳定重试端点测试 |
+| `src/repositories/__tests__/formalGeneratedResourceContract.spec.ts` | 正式 API 的项目资源回写、PPT 关联、单附件稳定重试、学习创建恢复、草稿和错题题组端点测试 |
+| `src/repositories/__tests__/formalRepositoryParity.spec.ts` | 正式资料库、知识库和智能学习主链路的 HTTP 方法、路径、请求体与文件响应测试 |
+| `src/repositories/__tests__/learningWorkflowParity.spec.ts` | Mock 学习创建状态、活动生成引用、草稿、异步任务状态机和错题题组持久化测试 |
 | `src/stores/__tests__/learningResourceSync.spec.ts` | Mock 项目资源新增、更新和幂等去重测试 |
+| `src/views/student/chat/__tests__/StudentChatLearningProfile.spec.ts` | 学习方案页面交互回归测试；覆盖知识库上下文生成画像、画像 Card 展示，以及失败后在原消息内重试 |
 | `tests/e2e/presentation-workflow.spec.ts` | 浏览器验证配置、大纲编辑、生成和预览主链路 |
 | `src/types/contracts/spreadsheet.ts` | 对话生成请求、消息任务卡、只读工作簿、上下文、状态和任务 DTO |
 | `src/repositories/spreadsheet.ts` | SpreadsheetRepository 及 Mock/API 双实现；创建即启动任务，Mock 完成时自动归档并在下载时生成 XLSX |
@@ -82,7 +88,8 @@
 | `src/utils/spreadsheet.ts` | SpreadsheetDto 与迁移期旧消息卡转换；新对话结果使用只读 artifact，不生成 editorRoute |
 | `src/repositories/__tests__/spreadsheet.spec.ts` | 对话直达生成、上下文、自动资料库归档和 XLSX 下载测试 |
 | `src/types/contracts/library.ts` | 全局资源 DTO；统一 `resourceId`、`knowledgeBaseId`、`projectId`、预览状态和分类型大小限制 |
-| `src/repositories/libraryResource.ts` | `/api/resources` Mock/API 双实现，处理上传、关联、重命名、统一预览、下载和删除；Mock 原文件只保存在当前标签页内存 |
+| `src/repositories/libraryResource.ts` | `/api/resources` Mock/API 双实现，处理上传、解析状态、关联、重命名、统一预览、下载和删除；Mock 原文件由 IndexedDB 恢复，状态按 waiting/processing/ready/failed 推进 |
+| `src/repositories/__tests__/libraryResource.spec.ts` | Mock 资源 CRUD、真实上传内容下载、解析状态推进、预览上限、知识库删除解绑及生成 DOCX/PDF 二进制测试 |
 | `src/views/student/resource/ResourcePreviewView.vue` | 唯一主线只读预览工作区；资料库、知识库详情、智能学习资源包和聊天生成文件都按 resourceId 进入 |
 | `src/stores/message.ts` | 消费现有 SSE；ready artifact 在 Mock/API 分别执行同义归档/刷新与项目回写；单附件重试保持 artifact/resource 身份；思维导图保存后同步完整树与配置 |
 | `src/utils/resourcePreview.ts` | 统一生成资源预览路由，携带受控来源和内部 returnTo |
@@ -95,7 +102,7 @@
 | 文件 | 新职责 |
 | --- | --- |
 | `src/components/common/AppInput.vue` | Web 左侧通用附件支持文档、Office、ZIP、图片和音频，右侧显示模型/语音/发送；移动端最左侧 `+` 与附件、照片、拍照图标共用一个向上生长的竖向 pill |
-| `src/views/student/chat/StudentChatView.vue` | 启用普通聊天和学习方案对话的媒体入口，传递会话、知识库、学习项目及来源资源上下文 |
+| `src/views/student/chat/StudentChatView.vue` | 启用普通聊天和学习方案对话的媒体入口，统一从 KnowledgeBase Store 传递会话、知识库、学习项目及来源资源上下文；画像失败重试复用原消息 |
 | `src/components/library/UploadMaterialModal.vue` | 仅保留通用上传/拖拽入口；支持与输入框一致的附件格式，但不显示独立照片或拍照图标 |
 | `src/stores/message.ts` | 图片先上传、音频先转写为媒体资产，再把 mediaAssetIds 交给聊天接口；Office/ZIP 走 DocumentRepository |
 | `src/stores/libraryResource.ts` | 图片和音频走 MediaRepository，其余支持附件走资料库资源上传，避免页面直接判断数据源 |
@@ -106,15 +113,15 @@
 
 | 文件 | 职责 |
 | --- | --- |
-| `src/views/student/chat/StudentChatView.vue` | `/learning/new` 与 `/learning/setup/:id` 创建主线；按“需求对话 → 学习画像 Card → 可编辑确认文档 → 用户确认 → 异步生成项目”推进，并用 setupId、项目草稿和活动 job 恢复状态 |
+| `src/views/student/chat/StudentChatView.vue` | `/learning/new` 与 `/learning/setup/:id` 创建主线；按“需求对话 → 学习画像 Card → 可编辑确认文档 → 用户确认 → 异步生成项目”推进；画像请求只读取共享 KnowledgeBase Store，本地即时缓存并通过 Learning Repository 同步 setup-state，按项目恢复活动 job |
 | `src/views/student/learning/LearningProjectsView.vue` | 项目列表、状态筛选和入口；draft/configuring 返回 `/learning/new?projectId=:id` |
 | `src/views/student/learning/LearningPlanView.vue` | 项目聚合详情、阶段入口、画像、资源摘要和项目助教抽屉 |
 | `src/views/student/learning/LearningStudyView.vue` | 阅读、题组交卷、追加练习、案例结果与任务推进；没有绕过完成规则的手动完成按钮 |
-| `src/views/student/learning/LearningMistakesView.vue` | 错题重答、掌握状态、巩固题组生成和批量交卷 |
+| `src/views/student/learning/LearningMistakesView.vue` | 错题重答、掌握状态、巩固题组生成和批量交卷；进入题组先持久化 answering 状态，失败保留页面并可重试 |
 | `src/views/student/learning/LearningResourcesView.vue` | 默认/按需资源生成、下载、统一预览跳转和 generating 刷新恢复；不再维护页面私有预览弹窗 |
 | `src/components/learning/LearningTutorPanel.vue` | 复用对话消息展示和输入，向 Store 提供当前阶段/任务/题目，不自行拼正式 RAG |
 | `src/components/layout/StudentSidebar.vue` | 项目新建、重命名、删除与导航；历史 learning-setup 会话进入 `/learning/setup/:conversationId?projectId=:projectId` 并恢复原 Card 对话 |
-| `src/stores/libraryResource.ts` | 所有学习上传/生成文件进入全局资料库；项目生成后补关联，项目删除时只解除 projectId |
+| `src/stores/libraryResource.ts` | 所有学习上传/生成文件进入全局资料库；项目生成后补关联，项目删除只解除 projectId；上传/重试后统一轮询解析状态，知识库删除时解除 knowledgeBaseId |
 | `src/repositories/chat.ts`、`src/stores/message.ts` | 学习助教正式请求透传 projectId/stageId/taskId/exerciseId，API 不注入前端 tutorContext |
 
 统一选择浮层对现有主线文件的影响：
