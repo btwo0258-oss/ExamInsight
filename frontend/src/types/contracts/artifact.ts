@@ -8,6 +8,12 @@ export type MindMapTreeNode = {
   children?: MindMapTreeNode[]
 }
 
+export type MindMapRenderConfig = {
+  theme?: string
+  layout?: string
+  themeConfig?: Record<string, unknown>
+}
+
 export type ArtifactTablePreview = {
   sheetName?: string
   columns: string[]
@@ -29,6 +35,7 @@ export type ArtifactInlinePreview = {
   text?: string
   table?: ArtifactTablePreview
   mindMap?: MindMapTreeNode
+  mindMapConfig?: MindMapRenderConfig
   slides?: ArtifactSlidePreview[]
 }
 
@@ -39,6 +46,7 @@ export type ChatArtifactDto = {
   sourceMessageId?: EntityId | string | null
   conversationId?: EntityId | null
   projectId?: EntityId | null
+  learningResourceId?: EntityId | null
   knowledgeBaseId?: EntityId | null
   title: string
   fileName: string

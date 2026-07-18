@@ -2,11 +2,12 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import MindMap from 'simple-mind-map'
 import 'simple-mind-map/dist/simpleMindMap.esm.css'
-import type { MindMapTreeNode } from '@/types/contracts/artifact'
-import { mindMapRenderData, mindMapThemeConfig } from '@/utils/mindMapTheme'
+import type { MindMapRenderConfig, MindMapTreeNode } from '@/types/contracts/artifact'
+import { mindMapRenderData, resolveMindMapRenderConfig } from '@/utils/mindMapTheme'
 
 const props = withDefaults(defineProps<{
   tree: MindMapTreeNode
+  renderConfig?: MindMapRenderConfig
   compact?: boolean
 }>(), { compact: false })
 
@@ -18,15 +19,16 @@ async function render() {
   if (!container.value) return
   instance?.destroy()
   container.value.innerHTML = ''
+  const renderConfig = resolveMindMapRenderConfig(props.renderConfig)
   instance = new MindMap({
     el: container.value,
     data: mindMapRenderData(props.tree),
-    theme: 'classic',
-    layout: 'logicalStructure',
+    theme: renderConfig.theme || 'classic',
+    layout: renderConfig.layout || 'logicalStructure',
     readonly: true,
     mousewheelAction: 'zoom',
     initRootNodePosition: ['center', 'center'],
-    themeConfig: mindMapThemeConfig(),
+    ...(renderConfig.themeConfig ? { themeConfig: renderConfig.themeConfig } : {}),
   } as any)
   window.setTimeout(() => {
     const root = (instance as any)?.renderer?.root
@@ -34,7 +36,7 @@ async function render() {
   }, 80)
 }
 
-watch(() => props.tree, () => void render(), { deep: true })
+watch(() => [props.tree, props.renderConfig], () => void render(), { deep: true })
 onMounted(() => void render())
 onBeforeUnmount(() => {
   instance?.destroy()

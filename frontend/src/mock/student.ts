@@ -66,7 +66,17 @@ export type LearningStage = {
 export type LearningResource = {
   id: number
   resourceId?: string
-  group: '学习方案' | '个性化学习手册' | 'PPT' | '思维导图' | '代码案例' | '图片'
+  group:
+    | '学习方案'
+    | '个性化学习手册'
+    | 'PPT'
+    | '思维导图'
+    | '代码案例'
+    | '图片'
+    | '文档'
+    | '电子表格'
+    | '音频'
+    | '其他文件'
   title: string
   desc: string
   status: LearningResourceStatus
@@ -76,7 +86,11 @@ export type LearningResource = {
   previewUrl?: string
   mindMapId?: number
   mindMapTreeData?: unknown
+  mindMapRenderConfig?: import('@/types/contracts/artifact').MindMapRenderConfig
   presentationId?: string
+  artifactId?: string
+  source?: 'default' | 'ai-conversation' | 'learning-profile'
+  updatedAt?: string
   errorMessage?: string
 }
 

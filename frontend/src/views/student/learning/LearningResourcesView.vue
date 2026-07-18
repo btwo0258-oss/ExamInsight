@@ -150,6 +150,10 @@ async function exportResource(resource: ResourceWithMeta) {
     思维导图: 'json',
     代码案例: 'java',
     图片: 'png',
+    文档: 'docx',
+    电子表格: 'xlsx',
+    音频: 'mp3',
+    其他文件: 'bin',
   }
   operationPendingId.value = resource.id
   actionError.value = ''

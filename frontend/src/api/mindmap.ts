@@ -1,7 +1,8 @@
 import { request } from "./request";
 import { isMockDataSource } from '@/config/dataSource'
 import { mockSession } from '@/mock/storage'
-import type { ArtifactInlinePreview } from '@/types/contracts/artifact'
+import type { ArtifactInlinePreview, MindMapRenderConfig } from '@/types/contracts/artifact'
+import { mockMindMapRenderConfig } from '@/utils/mindMapTheme'
 
 export interface MindMap {
   id: number;
@@ -9,6 +10,7 @@ export interface MindMap {
   knowledgeBaseId?: number;
   title: string;
   content: string;
+  renderConfig?: MindMapRenderConfig;
   createTime: string;
   updateTime: string;
 }
@@ -17,6 +19,7 @@ export interface MindMapCreateReq {
   title: string;
   knowledgeBaseId?: number | null;
   content: string;
+  renderConfig?: MindMapRenderConfig;
 }
 
 export interface MindMapUpdateReq {
@@ -24,6 +27,7 @@ export interface MindMapUpdateReq {
   title?: string;
   knowledgeBaseId?: number | null;
   content?: string;
+  renderConfig?: MindMapRenderConfig;
 }
 
 export interface MindMapUpdateResult {
@@ -75,7 +79,7 @@ export async function createMindMap(data: MindMapCreateReq): Promise<number> {
     const items = mockMaps()
     const id = nextMockId(items)
     const now = new Date().toISOString()
-    items.unshift({ id, userId: 1, knowledgeBaseId: data.knowledgeBaseId ?? undefined, title: data.title, content: data.content, createTime: now, updateTime: now })
+    items.unshift({ id, userId: 1, knowledgeBaseId: data.knowledgeBaseId ?? undefined, title: data.title, content: data.content, renderConfig: data.renderConfig, createTime: now, updateTime: now })
     saveMockMaps(items)
     return id
   }
@@ -90,6 +94,7 @@ export async function updateMindMap(data: MindMapUpdateReq): Promise<MindMapUpda
     if (!item) throw new Error('思维导图不存在')
     if (data.title !== undefined) item.title = data.title
     if (data.content !== undefined) item.content = data.content
+    if (data.renderConfig !== undefined) item.renderConfig = structuredClone(data.renderConfig)
     if (data.knowledgeBaseId !== undefined) item.knowledgeBaseId = data.knowledgeBaseId ?? undefined
     item.updateTime = new Date().toISOString()
     saveMockMaps(items)
@@ -103,7 +108,7 @@ export async function updateMindMap(data: MindMapUpdateReq): Promise<MindMapUpda
       updateTime: item.updateTime,
       updatedAt: item.updateTime,
       previewData: data.content
-        ? { kind: 'mindmap', mindMap: JSON.parse(data.content) }
+        ? { kind: 'mindmap', mindMap: JSON.parse(data.content), mindMapConfig: item.renderConfig }
         : undefined,
     }
   }
@@ -147,6 +152,7 @@ export interface MindMapGenerateResult {
   id: number;
   title: string;
   treeData: any;
+  renderConfig?: MindMapRenderConfig;
 }
 
 export async function generateMindMapFromAi(
@@ -156,8 +162,9 @@ export async function generateMindMapFromAi(
   if (isMockDataSource) {
     const resolvedTitle = title?.trim() || 'AI 思维导图'
     const treeData = mockTree(content, resolvedTitle)
-    const id = await createMindMap({ title: resolvedTitle, content: JSON.stringify(treeData) })
-    return { id, title: resolvedTitle, treeData }
+    const renderConfig = mockMindMapRenderConfig()
+    const id = await createMindMap({ title: resolvedTitle, content: JSON.stringify(treeData), renderConfig })
+    return { id, title: resolvedTitle, treeData, renderConfig }
   }
   const res = await request.post("/api/mindmap/generate-from-ai", { content, title });
   return res.data?.data ?? res.data;

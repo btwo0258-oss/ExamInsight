@@ -1,11 +1,13 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import * as mindmapApi from '@/api/mindmap'
+import { resolveMindMapRenderConfig } from '@/utils/mindMapTheme'
 
 export const useMindMapStore = defineStore('mindmap', () => {
   const mindMapList = ref<mindmapApi.MindMap[]>([])
   const currentMapId = ref<number | null>(null)
   const mapTitle = ref('未命名思维导图')
+  const renderConfig = ref(resolveMindMapRenderConfig())
 
   const treeData = ref<any>({
     data: { text: '中心主题' },
@@ -43,6 +45,7 @@ export const useMindMapStore = defineStore('mindmap', () => {
       const map = await mindmapApi.getMindMapDetail(id)
       currentMapId.value = map.id
       mapTitle.value = map.title
+      renderConfig.value = resolveMindMapRenderConfig(map.renderConfig)
       if (map.content) {
         try {
           treeData.value = JSON.parse(map.content)
@@ -64,14 +67,15 @@ export const useMindMapStore = defineStore('mindmap', () => {
     const id = await mindmapApi.createMindMap({
       title,
       knowledgeBaseId,
-      content: JSON.stringify(initialData)
+      content: JSON.stringify(initialData),
+      renderConfig: renderConfig.value,
     })
     await fetchList()
     return id
   }
 
   const updateMap = async (id: number, title?: string, content?: string, knowledgeBaseId?: number | null) => {
-    const result = await mindmapApi.updateMindMap({ id, title, content, knowledgeBaseId })
+    const result = await mindmapApi.updateMindMap({ id, title, content, knowledgeBaseId, renderConfig: renderConfig.value })
     if (title && id === currentMapId.value) {
       mapTitle.value = title
     }
@@ -98,6 +102,7 @@ export const useMindMapStore = defineStore('mindmap', () => {
       children: []
     }
     mapTitle.value = title
+    renderConfig.value = resolveMindMapRenderConfig()
     currentMapId.value = null
   }
 
@@ -105,6 +110,7 @@ export const useMindMapStore = defineStore('mindmap', () => {
     mindMapList.value = []
     currentMapId.value = null
     mapTitle.value = '未命名思维导图'
+    renderConfig.value = resolveMindMapRenderConfig()
     treeData.value = {
       data: { text: '中心主题' },
       children: []
@@ -117,6 +123,7 @@ export const useMindMapStore = defineStore('mindmap', () => {
     mindMapList,
     currentMapId,
     mapTitle,
+    renderConfig,
     treeData,
     pinnedIds,
     togglePin,

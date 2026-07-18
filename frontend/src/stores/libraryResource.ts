@@ -29,6 +29,9 @@ function generatedFormat(group: LearningResource['group']) {
   if (group === '思维导图') return '思维导图'
   if (group === '代码案例') return 'ZIP'
   if (group === '图片') return '图片'
+  if (group === '文档') return '文档'
+  if (group === '电子表格') return 'XLSX'
+  if (group === '音频') return '音频'
   return 'PDF'
 }
 
@@ -37,6 +40,9 @@ function generatedFileType(group: LearningResource['group']): ResourceFileType {
   if (group === '思维导图') return 'mindmap'
   if (group === '代码案例') return 'archive'
   if (group === '图片') return 'image'
+  if (group === '电子表格') return 'spreadsheet'
+  if (group === '音频') return 'audio'
+  if (group === '其他文件') return 'other'
   return 'document'
 }
 

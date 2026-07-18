@@ -10,6 +10,7 @@ import type {
   AnswerResult,
   CreateLearningDraftInput,
   CreateLearningPlanInput,
+  GeneratedProjectResourceRequest,
   LearningConfirmationRequest,
   LearningConfirmationResult,
   LearningProjectDto,
@@ -39,6 +40,7 @@ export interface LearningRepository {
   startAdaptivePracticeGeneration(projectId: number, sourceTaskId: number, input: { mode: 'repeat' | 'reinforce'; count: number; difficultyMode: '保持难度' | '逐步提升' }): Promise<AsyncJob<{ projectId: number }>>
   startWrongReviewGeneration(projectId: number, wrongIds: number[], input: { count: number; difficultyMode: '保持难度' | '逐步提升' }): Promise<AsyncJob<{ projectId: number }>>
   startResourceGeneration(projectId: number, learningResourceId: number): Promise<AsyncJob<{ projectId: number }>>
+  attachGeneratedResource(projectId: number, input: GeneratedProjectResourceRequest): Promise<LearningPlan>
   downloadResource(projectId: number, learningResourceId: number): Promise<Blob>
 }
 
@@ -175,6 +177,11 @@ const mockLearningRepository: LearningRepository = {
       result: { projectId },
     })
   },
+  async attachGeneratedResource(projectId) {
+    const plan = getLearningPlans().find((item) => item.id === projectId)
+    if (!plan) throw new Error('Learning project not found')
+    return plan
+  },
   async downloadResource(projectId, learningResourceId) {
     const resource = getLearningPlans().find((item) => item.id === projectId)?.resources.find((item) => item.id === learningResourceId)
     if (!resource) throw new Error('学习资源不存在')
@@ -299,6 +306,11 @@ const apiLearningRepository: LearningRepository = {
   },
   async startResourceGeneration(projectId, learningResourceId) {
     return unwrap<AsyncJob<{ projectId: number }>>(await request.post(`/api/learning/projects/${projectId}/resource-jobs`, { learningResourceId }))
+  },
+  async attachGeneratedResource(projectId, input) {
+    return normalizeLearningPlan(unwrap<LearningProjectDto>(
+      await request.put(`/api/learning/projects/${projectId}/resources/generated`, input),
+    ))
   },
   async downloadResource(projectId, learningResourceId) {
     const response = await request.get(`/api/learning/projects/${projectId}/resources/${learningResourceId}/download`, { responseType: 'blob' })

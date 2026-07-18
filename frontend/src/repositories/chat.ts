@@ -1,4 +1,4 @@
-import { getStoredToken } from '@/api/request'
+import { getStoredToken, request } from '@/api/request'
 import { generateMindMapFromAi } from '@/api/mindmap'
 import { isMockDataSource } from '@/config/dataSource'
 import { spreadsheetRepository } from '@/repositories/spreadsheet'
@@ -39,8 +39,17 @@ export type ChatStreamPayload = {
   clientAction?: ChatClientAction
 }
 
+export type RetryChatArtifactRequest = {
+  artifact: ChatArtifactDto
+  conversationId: number
+  sourceMessageId: string
+  clientRequestId: string
+}
+
 export interface ChatRepository {
   stream(payload: ChatStreamPayload, options?: { signal?: AbortSignal }): Promise<AsyncGenerator<ChatStreamEvent>>
+  retryArtifact(input: RetryChatArtifactRequest): Promise<ChatArtifactDto>
+  getArtifact(artifactId: string): Promise<ChatArtifactDto>
 }
 
 function presentationIntent(content: string) {
@@ -133,7 +142,7 @@ async function createMockArtifacts(payload: ChatStreamPayload): Promise<ChatArti
       fileType: 'mindmap',
       format: '思维导图',
       mimeType: 'application/vnd.examinsight.mindmap+json',
-      preview: { kind: 'mindmap', mindMap: generated.treeData },
+      preview: { kind: 'mindmap', mindMap: generated.treeData, mindMapConfig: generated.renderConfig },
     })]
   }
 
@@ -332,6 +341,21 @@ const mockChatRepository: ChatRepository = {
       }
     })()
   },
+  async retryArtifact(input) {
+    await new Promise((resolve) => window.setTimeout(resolve, 180))
+    return {
+      ...input.artifact,
+      artifactId: input.artifact.artifactId,
+      resourceId: input.artifact.resourceId || `chat:${input.artifact.artifactId}`,
+      status: 'ready',
+      progress: 100,
+      errorCode: undefined,
+      errorMessage: undefined,
+    }
+  },
+  async getArtifact() {
+    throw new Error('Mock 重试会直接返回最终状态')
+  },
 }
 
 const apiChatRepository: ChatRepository = {
@@ -414,6 +438,21 @@ const apiChatRepository: ChatRepository = {
         if (delta) yield { type: 'text-delta', delta } as const
       }
     })()
+  },
+  async retryArtifact(input) {
+    const { artifact, ...context } = input
+    const response = await request.post(`/api/chat/artifacts/${encodeURIComponent(artifact.artifactId)}/retry`, {
+      ...context,
+      projectId: artifact.projectId ?? null,
+      knowledgeBaseId: artifact.knowledgeBaseId ?? null,
+      learningResourceId: artifact.learningResourceId ?? null,
+      resourceId: artifact.resourceId,
+    })
+    return (response.data?.data ?? response.data) as ChatArtifactDto
+  },
+  async getArtifact(artifactId) {
+    const response = await request.get(`/api/chat/artifacts/${encodeURIComponent(artifactId)}`)
+    return (response.data?.data ?? response.data) as ChatArtifactDto
   },
 }
 

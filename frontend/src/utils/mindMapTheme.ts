@@ -1,31 +1,15 @@
-import type { MindMapTreeNode } from '@/types/contracts/artifact'
+import { isMockDataSource } from '@/config/dataSource'
+import type { MindMapRenderConfig, MindMapTreeNode } from '@/types/contracts/artifact'
 
 export const MIND_MAP_ACCENT = '#4f9b8d'
 
-const PRESENTATION_STYLE_KEYS = [
-  'fillColor',
-  'color',
-  'borderColor',
-  'borderWidth',
-  'borderRadius',
-  'fontSize',
-  'fontWeight',
-  'shape',
-] as const
-
-/** Content is shared; presentation-only node overrides are removed so every surface stays visually identical. */
+/** Keep the complete authoritative tree, including backend-generated node styles. */
 export function mindMapRenderData(tree: MindMapTreeNode): MindMapTreeNode {
-  const cloned = structuredClone(tree)
-  const visit = (node: MindMapTreeNode) => {
-    PRESENTATION_STYLE_KEYS.forEach((key) => delete node.data[key])
-    node.children?.forEach(visit)
-  }
-  visit(cloned)
-  return cloned
+  return structuredClone(tree)
 }
 
-/** Shared by chat preview, full resource preview, and the editable canvas. */
-export function mindMapThemeConfig() {
+/** Mock-only visual preset. Formal data keeps the backend-provided render configuration. */
+export function mockMindMapThemeConfig() {
   return {
     backgroundColor: '#ffffff',
     lineColor: '#646965',
@@ -70,4 +54,18 @@ export function mindMapThemeConfig() {
       marginY: 14,
     },
   }
+}
+
+export function mockMindMapRenderConfig(): MindMapRenderConfig {
+  return {
+    theme: 'classic',
+    layout: 'logicalStructure',
+    themeConfig: mockMindMapThemeConfig(),
+  }
+}
+
+export function resolveMindMapRenderConfig(config?: MindMapRenderConfig | null): MindMapRenderConfig {
+  if (config) return structuredClone(config)
+  if (isMockDataSource) return mockMindMapRenderConfig()
+  return { theme: 'classic', layout: 'logicalStructure' }
 }

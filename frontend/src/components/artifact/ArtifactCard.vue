@@ -98,7 +98,7 @@ const previewFallback = computed(() => ({
 
     <div v-else-if="isReady && preview.kind !== 'none'" class="artifact-card__preview">
       <img v-if="preview.kind === 'image' && preview.imageUrl" :src="preview.imageUrl" :alt="artifact.title" />
-      <MindMapStaticPreview v-else-if="preview.kind === 'mindmap' && preview.mindMap" :tree="preview.mindMap" compact />
+      <MindMapStaticPreview v-else-if="preview.kind === 'mindmap' && preview.mindMap" :tree="preview.mindMap" :render-config="preview.mindMapConfig" compact />
       <div v-else-if="preview.kind === 'spreadsheet' && preview.table" class="artifact-table">
         <table>
           <thead><tr><th v-for="column in preview.table.columns" :key="column">{{ column }}</th></tr></thead>

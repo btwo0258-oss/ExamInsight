@@ -83,6 +83,10 @@ const resourceColors: Record<LearningResource['group'], string> = {
   思维导图: '#8b5cf6',
   代码案例: '#2563eb',
   图片: '#ec4899',
+  文档: '#0f766e',
+  电子表格: '#15803d',
+  音频: '#c2410c',
+  其他文件: '#64748b',
 }
 
 function resourceIcon(group: LearningResource['group']) {

@@ -42,6 +42,7 @@ export function presentationCardToArtifact(card: PresentationChatCardDto): ChatA
     sourceMessageId: card.sourceMessageId,
     conversationId: card.conversationId,
     projectId: card.projectId,
+    learningResourceId: card.learningResourceId,
     knowledgeBaseId: card.knowledgeBaseId,
     title,
     fileName: card.fileName || `${title}.pptx`,

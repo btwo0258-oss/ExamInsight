@@ -12,6 +12,7 @@ import type {
   PresentationTemplateDto,
   StartPresentationGenerationRequest,
   UpdatePresentationDraftRequest,
+  UpdatePresentationAssociationsRequest,
   UpdatePresentationOutlineRequest,
   UpdatePresentationSlideRequest,
 } from '@/types/contracts/presentation'
@@ -22,6 +23,8 @@ export interface PresentationRepository {
   get(id: string): Promise<PresentationDto>
   create(input: CreatePresentationRequest): Promise<PresentationDto>
   updateDraft(id: string, input: UpdatePresentationDraftRequest): Promise<PresentationDto>
+  updateAssociations(id: string, input: UpdatePresentationAssociationsRequest): Promise<PresentationDto>
+  cancelDraft(id: string, clientRequestId: string): Promise<PresentationDto>
   startOutlineGeneration(id: string, clientRequestId: string): Promise<PresentationOutlineJob>
   updateOutline(id: string, input: UpdatePresentationOutlineRequest): Promise<PresentationDto>
   updateSlide(id: string, slideId: string, input: UpdatePresentationSlideRequest): Promise<PresentationDto>
@@ -396,6 +399,22 @@ const mockPresentationRepository: PresentationRepository = {
     presentation.updatedAt = now()
     return structuredClone(updateMockPresentation(presentation))
   },
+  async updateAssociations(presentationId, input) {
+    const presentation = getMockPresentation(presentationId)
+    presentation.knowledgeBaseId = input.knowledgeBaseId ?? null
+    presentation.projectId = input.projectId ?? null
+    presentation.learningResourceId = input.learningResourceId ?? presentation.learningResourceId ?? null
+    presentation.updatedAt = now()
+    return structuredClone(updateMockPresentation(presentation))
+  },
+  async cancelDraft(presentationId) {
+    const presentation = getMockPresentation(presentationId)
+    if (presentation.activeJobId) await this.cancelJob(presentation.activeJobId)
+    presentation.status = 'cancelled'
+    presentation.activeJobId = undefined
+    presentation.updatedAt = now()
+    return structuredClone(updateMockPresentation(presentation))
+  },
   async startOutlineGeneration(presentationId) {
     const presentation = getMockPresentation(presentationId)
     const job = createJob('outline', presentation.id)
@@ -502,6 +521,12 @@ const apiPresentationRepository: PresentationRepository = {
   },
   async updateDraft(id, input) {
     return unwrap<PresentationDto>(await request.put(`/api/presentations/${id}/draft`, input))
+  },
+  async updateAssociations(id, input) {
+    return unwrap<PresentationDto>(await request.put(`/api/presentations/${id}/associations`, input))
+  },
+  async cancelDraft(id, clientRequestId) {
+    return unwrap<PresentationDto>(await request.post(`/api/presentations/${id}/cancel`, { clientRequestId }))
   },
   async startOutlineGeneration(id, clientRequestId) {
     return unwrap<PresentationOutlineJob>(await request.post(`/api/presentations/${id}/outline-jobs`, { clientRequestId }))

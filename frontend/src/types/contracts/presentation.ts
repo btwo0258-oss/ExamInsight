@@ -101,6 +101,10 @@ export type UpdatePresentationDraftRequest = PresentationContext & {
   clientRequestId: string
 }
 
+export type UpdatePresentationAssociationsRequest = Pick<PresentationContext, 'knowledgeBaseId' | 'projectId' | 'learningResourceId'> & {
+  clientRequestId: string
+}
+
 export type UpdatePresentationOutlineRequest = {
   slides: PresentationSlideOutline[]
   clientRequestId: string

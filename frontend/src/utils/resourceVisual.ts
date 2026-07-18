@@ -85,5 +85,8 @@ export function resourceVisualTypeFromLearningGroup(group: string): ResourceVisu
   if (group === '思维导图') return 'mindmap'
   if (group === '代码案例') return 'code'
   if (group === '图片') return 'image'
+  if (group === '文档') return 'document'
+  if (group === '电子表格') return 'spreadsheet'
+  if (group === '音频') return 'audio'
   return 'other'
 }

@@ -19,6 +19,9 @@ import type { ChatArtifactDto } from '@/types/contracts/artifact'
 import { upsertArtifact } from '@/utils/artifact'
 import { useLibraryResourceStore } from '@/stores/libraryResource'
 import { rememberMockGeneratedResourcePreview } from '@/repositories/libraryResource'
+import { presentationRepository } from '@/repositories/presentation'
+import { toPresentationChatCard } from '@/utils/presentation'
+import { chatRepository } from '@/repositories/chat'
 
 export type ChatRole = "user" | "assistant" | "system";
 
@@ -68,6 +71,37 @@ function uid() {
 
 function clientRequestId() {
   return globalThis.crypto?.randomUUID?.() ?? `media-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+async function synchronizeReadyArtifact(artifact: ChatArtifactDto) {
+  if (artifact.status !== 'ready' || !artifact.resourceId) return
+  const libraryStore = useLibraryResourceStore()
+  if (isMockDataSource) {
+    const origin = artifact.fileType === 'presentation'
+      ? 'presentation'
+      : artifact.fileType === 'spreadsheet'
+        ? 'spreadsheet'
+        : artifact.fileType === 'mindmap'
+          ? 'mindmap'
+          : 'chat'
+    libraryStore.addGeneratedFile({
+      resourceId: artifact.resourceId,
+      externalKey: artifact.artifactId,
+      name: artifact.fileName,
+      format: artifact.format,
+      fileType: artifact.fileType,
+      mimeType: artifact.mimeType,
+      origin,
+      projectId: Number(artifact.projectId) || null,
+      knowledgeBaseId: Number(artifact.knowledgeBaseId) || null,
+      status: 'ready',
+      sizeBytes: artifact.sizeBytes,
+    })
+    rememberMockGeneratedResourcePreview(artifact.resourceId, artifact.preview)
+  }
+  const { useLearningStore } = await import('@/stores/learning')
+  await useLearningStore().syncGeneratedArtifact(artifact)
+  if (!isMockDataSource) await libraryStore.fetchList()
 }
 
 function isAbortError(error: unknown) {
@@ -194,6 +228,7 @@ export const useMessageStore = defineStore("message", () => {
     tree: ChatArtifactDto['preview']['mindMap'],
     title: string,
     explicitResourceId?: string,
+    renderConfig?: ChatArtifactDto['preview']['mindMapConfig'],
   ) {
     const artifactId = `mindmap:${mindMapId}`;
     const resourceIds = new Set<string>();
@@ -210,13 +245,56 @@ export const useMessageStore = defineStore("message", () => {
             ...artifact,
             title,
             fileName: `${title}.mindmap`,
-            preview: { kind: 'mindmap', mindMap: tree },
+            preview: { kind: 'mindmap', mindMap: tree, mindMapConfig: renderConfig },
           };
         });
       });
       if (changed) saveLocal(Number(conversationId), messages);
     });
     return resourceIds;
+  }
+
+  async function retryArtifact(conversationId: number, messageId: string, artifactId: string) {
+    initLocalIfNeeded(conversationId)
+    const list = byConversation.value[String(conversationId)]!
+    const messageIndex = list.findIndex((message) => message.id === messageId)
+    const current = list[messageIndex]?.artifacts?.find((artifact) => artifact.artifactId === artifactId)
+    if (messageIndex < 0 || !current || ['queued', 'generating'].includes(current.status)) return
+    const patchArtifact = (artifact: ChatArtifactDto) => {
+      list[messageIndex].artifacts = upsertArtifact(list[messageIndex].artifacts ?? [], artifact)
+      saveLocal(conversationId, list)
+    }
+    patchArtifact({ ...current, status: 'generating', progress: 0, errorCode: undefined, errorMessage: undefined })
+    try {
+      let next = await chatRepository.retryArtifact({
+        artifact: current,
+        conversationId,
+        sourceMessageId: messageId,
+        clientRequestId: clientRequestId(),
+      })
+      if (next.artifactId !== current.artifactId) throw new Error('重试结果与原文件任务不一致')
+      if (current.resourceId && next.resourceId && next.resourceId !== current.resourceId) {
+        throw new Error('重试不能替换原资源标识')
+      }
+      patchArtifact(next)
+      for (let attempt = 0; ['queued', 'generating'].includes(next.status) && attempt < 120; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 500))
+        next = await chatRepository.getArtifact(current.artifactId)
+        if (next.artifactId !== current.artifactId) throw new Error('重试状态与原文件任务不一致')
+        patchArtifact(next)
+      }
+      if (['queued', 'generating'].includes(next.status)) throw new Error('文件重试超时，请稍后再试')
+      if (next.status === 'ready') await synchronizeReadyArtifact(next)
+      return next
+    } catch (error) {
+      patchArtifact({
+        ...current,
+        status: 'failed',
+        progress: 0,
+        errorMessage: error instanceof Error ? error.message : '文件重试失败',
+      })
+      throw error
+    }
   }
 
   function initLocalIfNeeded(conversationId: number) {
@@ -770,12 +848,25 @@ export const useMessageStore = defineStore("message", () => {
             fullContent += chunk.delta;
             list[targetIdx].content = fullContent;
           } else if (chunk.type === 'presentation-card') {
-            list[targetIdx].kind = 'presentation';
-            list[targetIdx].presentationData = {
+            let presentationData = {
               ...chunk.data,
               conversationId: chunk.data.conversationId ?? conversationId,
               sourceMessageId: chunk.data.sourceMessageId ?? assistantMsg.id,
             };
+            if (presentationData.view === 'proposal' && !presentationData.presentationId) {
+              const draft = await presentationRepository.create({
+                ...presentationData.config,
+                conversationId: presentationData.conversationId,
+                sourceMessageId: presentationData.sourceMessageId,
+                knowledgeBaseId: presentationData.knowledgeBaseId ?? null,
+                projectId: presentationData.projectId ?? null,
+                learningResourceId: presentationData.learningResourceId ?? null,
+                clientRequestId: clientRequestId(),
+              });
+              presentationData = toPresentationChatCard(draft);
+            }
+            list[targetIdx].kind = 'presentation';
+            list[targetIdx].presentationData = presentationData;
           } else if (chunk.type === 'spreadsheet-card') {
             list[targetIdx].kind = 'spreadsheet';
             list[targetIdx].spreadsheetData = {
@@ -789,30 +880,15 @@ export const useMessageStore = defineStore("message", () => {
               conversationId: chunk.data.conversationId ?? conversationId,
               sourceMessageId: chunk.data.sourceMessageId ?? assistantMsg.id,
             };
+            const previousArtifact = list[targetIdx].artifacts?.find(
+              (item) => item.artifactId === artifact.artifactId,
+            );
             list[targetIdx].artifacts = upsertArtifact(list[targetIdx].artifacts ?? [], artifact);
-            if (isMockDataSource && artifact.status === 'ready' && artifact.resourceId) {
-              const libraryStore = useLibraryResourceStore();
-              const origin = artifact.fileType === 'presentation'
-                ? 'presentation'
-                : artifact.fileType === 'spreadsheet'
-                  ? 'spreadsheet'
-                  : artifact.fileType === 'mindmap'
-                    ? 'mindmap'
-                    : 'chat';
-              libraryStore.addGeneratedFile({
-                resourceId: artifact.resourceId,
-                externalKey: artifact.artifactId,
-                name: artifact.fileName,
-                format: artifact.format,
-                fileType: artifact.fileType,
-                mimeType: artifact.mimeType,
-                origin,
-                projectId: Number(artifact.projectId) || null,
-                knowledgeBaseId: Number(artifact.knowledgeBaseId) || null,
-                status: 'ready',
-                sizeBytes: artifact.sizeBytes,
-              });
-              rememberMockGeneratedResourcePreview(artifact.resourceId, artifact.preview);
+            const shouldSynchronize = artifact.status === 'ready'
+              && Boolean(artifact.resourceId)
+              && (previousArtifact?.status !== 'ready' || previousArtifact.resourceId !== artifact.resourceId);
+            if (shouldSynchronize) {
+              await synchronizeReadyArtifact(artifact);
             }
           }
           saveLocal(conversationId, list);
@@ -1207,6 +1283,7 @@ export const useMessageStore = defineStore("message", () => {
     appendLocalMessage,
     updateLocalMessage,
     syncMindMapArtifact,
+    retryArtifact,
     isStreaming,
     errorMessage,
     byConversation,

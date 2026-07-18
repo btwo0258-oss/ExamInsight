@@ -8,7 +8,7 @@ import { useMessageStore } from '@/stores/message'
 import { useLibraryResourceStore } from '@/stores/libraryResource'
 import { rememberMockGeneratedResourcePreview } from '@/repositories/libraryResource'
 import { publishResourcePreviewUpdate } from '@/utils/resourcePreviewSync'
-import { mindMapRenderData, mindMapThemeConfig } from '@/utils/mindMapTheme'
+import { mindMapRenderData, resolveMindMapRenderConfig } from '@/utils/mindMapTheme'
 
 // simple-mind-map
 import MindMap from 'simple-mind-map'
@@ -76,17 +76,18 @@ const initMindMap = (data: any) => {
   if (!renderData.children) {
     renderData.children = []
   }
+  const renderConfig = resolveMindMapRenderConfig(store.renderConfig)
 
   mindMap.value = new MindMap({
     el: mindMapContainer.value,
     data: renderData,
-    theme: 'classic',
-    layout: 'logicalStructure',
+    theme: renderConfig.theme || 'classic',
+    layout: renderConfig.layout || 'logicalStructure',
     readonly: false,
     enableFreeDrag: true,
     mousewheelAction: 'zoom',
     initRootNodePosition: ['center', 'center'],
-    themeConfig: mindMapThemeConfig()
+    ...(renderConfig.themeConfig ? { themeConfig: renderConfig.themeConfig } : {})
   } as any)
 
   // 注册事件
@@ -266,15 +267,17 @@ const handleSave = async () => {
     if (store.currentMapId) {
       const result = await store.updateMap(store.currentMapId, title, JSON.stringify(data))
       const savedTree = result?.previewData?.mindMap ?? data
-      const resourceIds = messageStore.syncMindMapArtifact(store.currentMapId, savedTree, title, result?.resourceId)
+      const savedConfig = result?.previewData?.mindMapConfig ?? store.renderConfig
+      const savedPreview = { kind: 'mindmap' as const, mindMap: savedTree, mindMapConfig: savedConfig }
+      const resourceIds = messageStore.syncMindMapArtifact(store.currentMapId, savedTree, title, result?.resourceId, savedConfig)
       const libraryResource = libraryResourceStore.resources.find((item) => item.externalKey === `mindmap:${store.currentMapId}`)
       if (libraryResource?.resourceId) resourceIds.add(libraryResource.resourceId)
       resourceIds.forEach((resourceId) => {
-        rememberMockGeneratedResourcePreview(resourceId, { kind: 'mindmap', mindMap: savedTree })
+        rememberMockGeneratedResourcePreview(resourceId, savedPreview)
         publishResourcePreviewUpdate({
           resourceId,
           artifactId: `mindmap:${store.currentMapId}`,
-          preview: { kind: 'mindmap', mindMap: savedTree },
+          preview: savedPreview,
           version: result?.version,
         })
       })
@@ -284,10 +287,11 @@ const handleSave = async () => {
       store.currentMapId = id
       if (result?.resourceId) {
         const savedTree = result.previewData?.mindMap ?? data
+        const savedConfig = result.previewData?.mindMapConfig ?? store.renderConfig
         publishResourcePreviewUpdate({
           resourceId: result.resourceId,
           artifactId: `mindmap:${id}`,
-          preview: { kind: 'mindmap', mindMap: savedTree },
+          preview: { kind: 'mindmap', mindMap: savedTree, mindMapConfig: savedConfig },
           version: result.version,
         })
       }

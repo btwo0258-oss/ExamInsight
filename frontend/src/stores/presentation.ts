@@ -92,6 +92,24 @@ export const usePresentationStore = defineStore('presentation', () => {
     }
   }
 
+  async function updateAssociations(input: { knowledgeBaseId?: number | null; projectId?: number | null; learningResourceId?: number | null }) {
+    if (!current.value) throw new Error('PPT 不存在')
+    isSaving.value = true
+    errorMessage.value = ''
+    try {
+      current.value = await presentationRepository.updateAssociations(current.value.id, {
+        ...input,
+        clientRequestId: clientRequestId(),
+      })
+      return current.value
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : 'PPT 关联保存失败'
+      throw error
+    } finally {
+      isSaving.value = false
+    }
+  }
+
   async function generateOutline() {
     if (!current.value) throw new Error('PPT 草稿不存在')
     isSaving.value = true
@@ -226,6 +244,7 @@ export const usePresentationStore = defineStore('presentation', () => {
     load,
     createDraft,
     updateDraft,
+    updateAssociations,
     generateOutline,
     createAndGenerateOutline,
     saveOutline,

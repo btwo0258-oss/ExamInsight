@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { CodeLanguageKey, Exercise, LearningPlan, WrongQuestion } from '@/mock'
+import type { CodeLanguageKey, Exercise, LearningPlan, LearningResource, WrongQuestion } from '@/mock'
 import { useLibraryResourceStore } from '@/stores/libraryResource'
 import { learningRepository } from '@/repositories/learning'
 import {
@@ -12,12 +12,38 @@ import {
 import type {
   CreateLearningDraftInput,
   CreateLearningPlanInput,
+  GeneratedProjectResourceRequest,
   LearningConfirmationRequest,
   LearningProfileRequest,
   LearningProfileResult,
 } from '@/types/contracts/learning'
 import type { AsyncJob } from '@/types/contracts/common'
+import type { ChatArtifactDto } from '@/types/contracts/artifact'
+import type { ResourceFileType } from '@/types/contracts/library'
 import { isApiDataSource } from '@/config/dataSource'
+
+export type ProjectGeneratedResourceInput = Omit<GeneratedProjectResourceRequest, 'clientRequestId'> & {
+  projectId: number
+}
+
+function generatedResourceRequestId(projectId: number, artifactId: string, resourceId: string) {
+  return `project-resource:${projectId}:${artifactId}:${resourceId}`
+}
+
+function projectResourceGroup(fileType: ResourceFileType): LearningResource['group'] {
+  if (fileType === 'presentation') return 'PPT'
+  if (fileType === 'mindmap') return '思维导图'
+  if (fileType === 'spreadsheet') return '电子表格'
+  if (fileType === 'image') return '图片'
+  if (fileType === 'archive') return '代码案例'
+  if (fileType === 'audio') return '音频'
+  if (fileType === 'document' || fileType === 'pdf') return '文档'
+  return '其他文件'
+}
+
+function artifactExternalId(artifactId: string, prefix: string) {
+  return artifactId.startsWith(prefix) ? artifactId.slice(prefix.length) : undefined
+}
 
 export type UpdateLearningPlanInput = {
   targetType: string
@@ -285,17 +311,48 @@ export const useLearningStore = defineStore('learning', () => {
 
   async function generateLearningConfirmation(input: LearningConfirmationRequest) {
     const result = await learningRepository.generateConfirmation(input)
-    if (isApiDataSource) return result
+    const artifactId = `learning-confirmation:${input.projectId ?? input.setupId}`
+    const fileName = `${input.profile.subject || '智能学习'}-方案确认稿.md`
+    if (isApiDataSource) {
+      if (input.projectId && result.resourceId) {
+        await attachGeneratedResourceToProject({
+          projectId: Number(input.projectId),
+          resourceId: result.resourceId,
+          artifactId,
+          title: `${input.profile.subject || '智能学习'}方案确认稿`,
+          fileName,
+          fileType: 'document',
+          content: result.content,
+          preview: { kind: 'document', text: result.content },
+          source: 'learning-profile',
+        })
+      } else if (input.projectId) await fetchPlan(Number(input.projectId))
+      await libraryResourceStore.fetchList()
+      return result
+    }
     const archived = libraryResourceStore.addGeneratedFile({
-      resourceId: input.confirmationResourceId ?? undefined,
-      externalKey: `learning-confirmation:${input.projectId ?? input.setupId}`,
-      name: `${input.profile.subject || '智能学习'}-方案确认稿.md`,
+      resourceId: result.resourceId || input.confirmationResourceId || undefined,
+      externalKey: artifactId,
+      name: fileName,
       format: 'Markdown',
       fileType: 'document',
       origin: 'learning',
       projectId: input.projectId ?? null,
       knowledgeBaseId: input.knowledgeBaseId,
     })
+    if (input.projectId) {
+      await attachGeneratedResourceToProject({
+        projectId: Number(input.projectId),
+        resourceId: archived.resourceId,
+        artifactId,
+        title: `${input.profile.subject || '智能学习'}方案确认稿`,
+        fileName,
+        fileType: 'document',
+        content: result.content,
+        preview: { kind: 'document', text: result.content },
+        source: 'learning-profile',
+      })
+    }
     return { content: result.content, resourceId: archived.resourceId }
   }
 
@@ -350,10 +407,23 @@ export const useLearningStore = defineStore('learning', () => {
     if (draftIndex >= 0) plans.value.splice(draftIndex, 1, plan)
     else replacePlanFromServer(plan)
     archiveMockPlanResources(plan)
-    if (!isApiDataSource && sourceResourceIds.length) {
+    if (sourceResourceIds.length) {
       await Promise.all(sourceResourceIds.map((resourceId) =>
         libraryResourceStore.updateAssociations(resourceId, { projectId: plan.id, knowledgeBaseId }),
       ))
+      await Promise.all(sourceResourceIds.map(async (resourceId) => {
+        const source = libraryResourceStore.resources.find((resource) => resource.resourceId === resourceId)
+        if (!source) return
+        await attachGeneratedResourceToProject({
+          projectId: plan.id,
+          resourceId,
+          artifactId: source.externalKey || `learning-source:${resourceId}`,
+          title: source.name.replace(/\.[^.]+$/, ''),
+          fileName: source.name,
+          fileType: source.fileType,
+          source: 'learning-profile',
+        })
+      }))
     }
     setActivePlanGeneration(null)
     persist()
@@ -1089,6 +1159,92 @@ export const useLearningStore = defineStore('learning', () => {
     return plan
   }
 
+  async function attachGeneratedResourceToProject(input: ProjectGeneratedResourceInput) {
+    if (isApiDataSource) {
+      const plan = await learningRepository.attachGeneratedResource(input.projectId, {
+        learningResourceId: input.learningResourceId,
+        resourceId: input.resourceId,
+        artifactId: input.artifactId,
+        title: input.title,
+        fileName: input.fileName,
+        fileType: input.fileType,
+        preview: input.preview,
+        content: input.content,
+        source: input.source,
+        clientRequestId: generatedResourceRequestId(input.projectId, input.artifactId, input.resourceId),
+      })
+      replacePlanFromServer(plan)
+      return plan
+    }
+    let plan = getPlan(input.projectId)
+    if (!plan) {
+      try {
+        plan = await fetchPlan(input.projectId)
+      } catch {
+        return undefined
+      }
+    }
+    const explicitId = Number(input.learningResourceId)
+    let resource = Number.isFinite(explicitId) && explicitId > 0
+      ? plan.resources.find((item) => item.id === explicitId)
+      : undefined
+    resource ??= plan.resources.find((item) => (
+      item.resourceId === input.resourceId
+      || item.artifactId === input.artifactId
+    ))
+    if (!resource) {
+      resource = {
+        id: Math.max(0, ...plan.resources.map((item) => item.id)) + 1,
+        group: projectResourceGroup(input.fileType),
+        title: input.title,
+        desc: input.source === 'learning-profile' ? '通过学习画像流程生成的项目资源。' : '由当前项目 AI 对话生成的资源。',
+        status: '已生成',
+        action: '查看',
+      }
+      plan.resources.push(resource)
+    }
+    resource.group = projectResourceGroup(input.fileType)
+    resource.title = input.title
+    resource.fileName = input.fileName
+    resource.resourceId = input.resourceId
+    resource.artifactId = input.artifactId
+    resource.source = input.source
+    resource.updatedAt = '刚刚'
+    resource.status = '已生成'
+    resource.action = '查看'
+    resource.errorMessage = undefined
+    if (input.content !== undefined) resource.content = input.content
+    if (input.preview?.text !== undefined) resource.content = input.preview.text
+    if (input.preview?.imageUrl) resource.previewUrl = input.preview.imageUrl
+    if (input.preview?.mindMap) {
+      resource.mindMapTreeData = input.preview.mindMap
+      resource.mindMapRenderConfig = input.preview.mindMapConfig
+      const id = Number(artifactExternalId(input.artifactId, 'mindmap:'))
+      if (Number.isFinite(id) && id > 0) resource.mindMapId = id
+    }
+    const presentationId = artifactExternalId(input.artifactId, 'presentation:')
+    if (presentationId) resource.presentationId = presentationId
+    plan.updatedAt = '刚刚'
+    persist()
+    return plan
+  }
+
+  async function syncGeneratedArtifact(artifact: ChatArtifactDto) {
+    const projectId = Number(artifact.projectId)
+    if (!Number.isFinite(projectId) || projectId <= 0 || artifact.status !== 'ready' || !artifact.resourceId) return
+    return attachGeneratedResourceToProject({
+      projectId,
+      learningResourceId: artifact.learningResourceId == null ? null : Number(artifact.learningResourceId),
+      resourceId: artifact.resourceId,
+      artifactId: artifact.artifactId,
+      title: artifact.title,
+      fileName: artifact.fileName,
+      fileType: artifact.fileType,
+      preview: artifact.preview,
+      source: 'ai-conversation',
+    })
+  }
+
   return {
     plans,
     activePlanGeneration,
@@ -1123,6 +1279,8 @@ export const useLearningStore = defineStore('learning', () => {
     generateResource,
     downloadResource,
     attachPresentationResult,
+    attachGeneratedResourceToProject,
+    syncGeneratedArtifact,
     flushLearningActivities,
   }
 })

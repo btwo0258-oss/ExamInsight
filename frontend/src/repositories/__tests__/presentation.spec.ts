@@ -86,4 +86,28 @@ describe('MockPresentationRepository', () => {
     expect(blob.size).toBeGreaterThan(0)
     expect((await presentationRepository.get(created.id)).fileSize).toBe(blob.size)
   })
+
+  it('persists proposal associations and cancellation in Mock state', async () => {
+    const created = await presentationRepository.create({
+      topic: '网络复习',
+      title: '网络复习',
+      pageCount: 5,
+      templateId: 'ink-focus',
+      aspectRatio: '16:9',
+      style: 'academic',
+      audience: 'student',
+      language: 'zh-CN',
+      projectId: 7,
+      clientRequestId: 'create-presentation-association',
+    })
+    const associated = await presentationRepository.updateAssociations(created.id, {
+      projectId: 7,
+      knowledgeBaseId: 12,
+      learningResourceId: null,
+      clientRequestId: 'associate-presentation',
+    })
+    expect(associated.knowledgeBaseId).toBe(12)
+    expect((await presentationRepository.get(created.id)).knowledgeBaseId).toBe(12)
+    expect((await presentationRepository.cancelDraft(created.id, 'cancel-presentation')).status).toBe('cancelled')
+  })
 })

@@ -9,6 +9,21 @@ import type {
   WrongReviewSet,
 } from '@/mock/student'
 import type { AsyncJob, EntityId } from './common'
+import type { ArtifactInlinePreview } from './artifact'
+import type { ResourceFileType } from './library'
+
+export type GeneratedProjectResourceRequest = {
+  learningResourceId?: EntityId | null
+  resourceId: string
+  artifactId: string
+  title: string
+  fileName: string
+  fileType: ResourceFileType
+  preview?: ArtifactInlinePreview
+  content?: string
+  source: 'ai-conversation' | 'learning-profile'
+  clientRequestId: string
+}
 
 export type LearningProjectStatus = 'draft' | 'configuring' | 'ready' | 'in_progress' | 'completed'
 export type LearningTaskStatus = 'not_started' | 'in_progress' | 'completed' | 'needs_review' | 'locked'

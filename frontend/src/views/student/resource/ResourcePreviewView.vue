@@ -120,9 +120,14 @@ function applyLearningPreview(value: ResourcePreviewDto) {
   if (learningResource.previewUrl) value.previewUrl = learningResource.previewUrl
   if (value.previewKind === 'mindmap') {
     value.mindMapId = learningResource.mindMapId
-    ;(value as ResourcePreviewDto & { mindMapTreeData?: unknown }).mindMapTreeData = learningResource.mindMapTreeData ?? {
+    const mindMap = learningResource.mindMapTreeData ?? {
       data: { text: learningResource.title },
       children: plan.dashboard.map((item) => ({ data: { text: item.label }, children: [] })),
+    }
+    value.previewData = {
+      kind: 'mindmap',
+      mindMap: mindMap as NonNullable<ResourcePreviewDto['previewData']>['mindMap'],
+      mindMapConfig: learningResource.mindMapRenderConfig,
     }
   }
 }
@@ -310,7 +315,7 @@ onBeforeUnmount(() => {
         </section>
 
         <section v-else-if="preview?.previewKind === 'mindmap'" class="mindmap-document">
-          <MindMapStaticPreview v-if="preview.previewData?.mindMap" :tree="preview.previewData.mindMap" />
+          <MindMapStaticPreview v-if="preview.previewData?.mindMap" :tree="preview.previewData.mindMap" :render-config="preview.previewData.mindMapConfig" />
           <LearningMindMapPreview v-else :title="resource?.name || '思维导图'" :tree-data="(preview as ResourcePreviewDto & { mindMapTreeData?: unknown }).mindMapTreeData" />
         </section>
 

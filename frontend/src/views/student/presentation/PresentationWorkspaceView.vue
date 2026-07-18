@@ -356,9 +356,9 @@ async function generatePresentation() {
   try {
     await presentationStore.saveOutline(outline.value)
     const presentation = await presentationStore.generate()
-    await archivePresentation(presentation)
+    const resourceId = await archivePresentation(presentation)
     await syncConversationCard(presentation)
-    await attachLearningResource(presentation.id, presentation.fileName || `${presentation.config.title}.pptx`)
+    await syncProjectResource(presentation, resourceId)
     selectedSlideIndex.value = 0
     step.value = 'preview'
   } catch (error) {
@@ -372,9 +372,9 @@ async function retryGeneration() {
   step.value = 'generating'
   try {
     const presentation = await presentationStore.retry()
-    await archivePresentation(presentation)
+    const resourceId = await archivePresentation(presentation)
     await syncConversationCard(presentation)
-    await attachLearningResource(presentation.id, presentation.fileName || `${presentation.config.title}.pptx`)
+    await syncProjectResource(presentation, resourceId)
     step.value = 'preview'
   } catch (error) {
     if (presentationStore.current) await syncConversationCard(presentationStore.current)
@@ -382,25 +382,40 @@ async function retryGeneration() {
   }
 }
 
-async function attachLearningResource(presentationId: string, fileName: string) {
-  const planId = numberQuery('projectId')
-  const resourceId = numberQuery('learningResourceId')
-  if (planId === null || resourceId === null) return
-  await learningStore.attachPresentationResult(planId, resourceId, presentationId, fileName)
+async function syncProjectResource(presentation: PresentationDto, resourceId: string) {
+  const projectId = Number(presentation.projectId ?? numberQuery('projectId'))
+  if (!Number.isFinite(projectId) || projectId <= 0 || !resourceId) return
+  await learningStore.attachGeneratedResourceToProject({
+    projectId,
+    learningResourceId: presentation.learningResourceId ?? numberQuery('learningResourceId'),
+    resourceId,
+    artifactId: `presentation:${presentation.id}`,
+    title: presentation.config.title || presentation.config.topic,
+    fileName: presentation.fileName || `${presentation.config.title}.pptx`,
+    fileType: 'presentation',
+    preview: {
+      kind: 'presentation',
+      slides: presentation.previewPages.slice(0, 4).map((slide) => ({ title: slide.title, points: slide.points })),
+    },
+    source: 'ai-conversation',
+  })
 }
 
 async function archivePresentation(presentation: PresentationDto) {
   if (isMockDataSource) {
-    libraryResourceStore.addPresentation(
+    const archived = libraryResourceStore.addPresentation(
       presentation.id,
       presentation.fileName || `${presentation.config.title}.pptx`,
       presentation.projectId == null ? null : Number(presentation.projectId),
       presentation.knowledgeBaseId == null ? null : Number(presentation.knowledgeBaseId),
       presentation.fileSize ?? 0,
     )
-    return
+    return archived.resourceId
   }
   await libraryResourceStore.fetchList()
+  return presentation.resourceId
+    || libraryResourceStore.resources.find((resource) => resource.externalKey === `presentation:${presentation.id}`)?.resourceId
+    || ''
 }
 
 async function downloadPresentation() {
@@ -425,12 +440,17 @@ async function updateKnowledgeBaseAssociation() {
   if (!presentation?.resourceId) return
   localError.value = ''
   try {
-    await libraryResourceStore.updateAssociations(presentation.resourceId, {
+    const updated = await presentationStore.updateAssociations({
       projectId: presentation.projectId == null ? null : Number(presentation.projectId),
       knowledgeBaseId: selectedKnowledgeBaseId.value,
+      learningResourceId: presentation.learningResourceId == null ? null : Number(presentation.learningResourceId),
     })
-    presentation.knowledgeBaseId = selectedKnowledgeBaseId.value
-    await syncConversationCard(presentation)
+    await libraryResourceStore.updateAssociations(presentation.resourceId, {
+      projectId: updated.projectId == null ? null : Number(updated.projectId),
+      knowledgeBaseId: selectedKnowledgeBaseId.value,
+    })
+    await syncProjectResource(updated, updated.resourceId || presentation.resourceId)
+    await syncConversationCard(updated)
     showMessage(selectedKnowledgeBaseId.value === null ? '已取消知识库关联' : '已加入知识库')
   } catch (error) {
     setError(error, '更新知识库关联失败')

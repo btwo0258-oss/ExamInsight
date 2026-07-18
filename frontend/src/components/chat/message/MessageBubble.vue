@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-nocheck
-import { computed, watch, onMounted, ref } from "vue";
+import { computed, watch, onMounted, onBeforeUnmount, ref } from "vue";
 import { useRoute, useRouter } from 'vue-router'
 import type { ChatMessage } from "@/stores/message";
 import { useMessageStore } from "@/stores/message";
@@ -25,6 +25,8 @@ import type { PresentationChatCardDto } from '@/types/contracts/presentation'
 import { presentationRouteQuery, toPresentationChatCard } from '@/utils/presentation'
 import { resourcePreviewRoute } from '@/utils/resourcePreview'
 import { resourceVisualTypeFromFile } from '@/utils/resourceVisual'
+import { isMockDataSource } from '@/config/dataSource'
+import { useLearningStore } from '@/stores/learning'
 import { presentationCardToArtifact, spreadsheetCardToArtifact, upsertArtifact } from '@/utils/artifact'
 import type { ChatArtifactDto } from '@/types/contracts/artifact'
 
@@ -50,12 +52,14 @@ const isUser = computed(() => props.message.role === "user");
 const messageStore = useMessageStore();
 const presentationStore = usePresentationStore()
 const libraryResourceStore = useLibraryResourceStore()
+const learningStore = useLearningStore()
 const appState = useAppState();
 const route = useRoute()
 const router = useRouter()
 const presentationBusy = ref(false)
 const presentationError = ref('')
 const artifactBusyId = ref('')
+let presentationDraftSyncTimer: number | undefined
 
 const displayArtifacts = computed(() => {
   let artifacts = [...(props.message.artifacts ?? [])]
@@ -233,7 +237,27 @@ function patchPresentationCard(data: PresentationChatCardDto) {
 function updatePresentationCard(data: PresentationChatCardDto) {
   presentationError.value = ''
   patchPresentationCard(data)
+  window.clearTimeout(presentationDraftSyncTimer)
+  if (!data.presentationId || data.view !== 'proposal') return
+  presentationDraftSyncTimer = window.setTimeout(async () => {
+    try {
+      const updated = await presentationRepository.updateDraft(data.presentationId!, {
+        config: data.config,
+        conversationId: props.conversationId ?? data.conversationId ?? null,
+        sourceMessageId: data.sourceMessageId ?? props.message.id,
+        knowledgeBaseId: data.knowledgeBaseId ?? null,
+        projectId: data.projectId ?? null,
+        learningResourceId: data.learningResourceId ?? null,
+        clientRequestId: globalThis.crypto?.randomUUID?.() ?? `presentation-draft-${Date.now()}`,
+      })
+      patchPresentationCard(toPresentationChatCard(updated))
+    } catch (error) {
+      presentationError.value = error instanceof Error ? error.message : 'PPT 草稿保存失败'
+    }
+  }, 450)
 }
+
+onBeforeUnmount(() => window.clearTimeout(presentationDraftSyncTimer))
 
 async function openPresentationSettings(data = props.message.presentationData) {
   if (!data) return
@@ -277,8 +301,25 @@ async function openPresentation(data = props.message.presentationData) {
   await openPresentationSettings(data)
 }
 
-function cancelPresentationCard() {
+async function cancelPresentationCard() {
   if (!props.conversationId) return
+  window.clearTimeout(presentationDraftSyncTimer)
+  const presentationId = props.message.presentationData?.presentationId
+  if (presentationId) {
+    presentationBusy.value = true
+    presentationError.value = ''
+    try {
+      await presentationRepository.cancelDraft(
+        presentationId,
+        globalThis.crypto?.randomUUID?.() ?? `presentation-cancel-${Date.now()}`,
+      )
+    } catch (error) {
+      presentationError.value = error instanceof Error ? error.message : '取消 PPT 创建失败'
+      presentationBusy.value = false
+      return
+    }
+    presentationBusy.value = false
+  }
   messageStore.updateLocalMessage(props.conversationId, props.message.id, {
     kind: undefined,
     presentationData: undefined,
@@ -292,16 +333,28 @@ async function generatePresentationOutline() {
   presentationBusy.value = true
   presentationError.value = ''
   try {
-    const presentation = await presentationStore.createAndGenerateOutline({
-      ...card.config,
-      topic: card.config.topic.trim(),
-      title: card.config.title.trim() || card.config.topic.trim(),
+    window.clearTimeout(presentationDraftSyncTimer)
+    const input = {
+      config: {
+        ...card.config,
+        topic: card.config.topic.trim(),
+        title: card.config.title.trim() || card.config.topic.trim(),
+      },
       conversationId: props.conversationId ?? card.conversationId ?? null,
       sourceMessageId: card.sourceMessageId ?? props.message.id,
       knowledgeBaseId: card.knowledgeBaseId ?? null,
       projectId: card.projectId ?? null,
       learningResourceId: card.learningResourceId ?? null,
-    })
+    }
+    let presentation
+    if (card.presentationId) {
+      await presentationStore.load(card.presentationId)
+      await presentationStore.updateDraft(input)
+      presentation = await presentationStore.generateOutline()
+    } else {
+      const { config, ...context } = input
+      presentation = await presentationStore.createAndGenerateOutline({ ...config, ...context })
+    }
     const nextCard = toPresentationChatCard(presentation)
     patchPresentationCard(nextCard)
     await router.push({
@@ -344,6 +397,38 @@ async function retryPresentation() {
   try {
     await presentationStore.load(card.presentationId)
     const presentation = await presentationStore.retry()
+    let resourceId = presentation.resourceId || ''
+    if (isMockDataSource) {
+      resourceId = libraryResourceStore.addPresentation(
+        presentation.id,
+        presentation.fileName || `${presentation.config.title}.pptx`,
+        presentation.projectId == null ? null : Number(presentation.projectId),
+        presentation.knowledgeBaseId == null ? null : Number(presentation.knowledgeBaseId),
+        presentation.fileSize ?? 0,
+      ).resourceId
+    } else {
+      await libraryResourceStore.fetchList()
+      resourceId ||= libraryResourceStore.resources.find(
+        (resource) => resource.externalKey === `presentation:${presentation.id}`,
+      )?.resourceId || ''
+    }
+    const projectId = Number(presentation.projectId)
+    if (resourceId && Number.isFinite(projectId) && projectId > 0) {
+      await learningStore.attachGeneratedResourceToProject({
+        projectId,
+        learningResourceId: presentation.learningResourceId == null ? null : Number(presentation.learningResourceId),
+        resourceId,
+        artifactId: `presentation:${presentation.id}`,
+        title: presentation.config.title || presentation.config.topic,
+        fileName: presentation.fileName || `${presentation.config.title}.pptx`,
+        fileType: 'presentation',
+        preview: {
+          kind: 'presentation',
+          slides: presentation.previewPages.slice(0, 4).map((slide) => ({ title: slide.title, points: slide.points })),
+        },
+        source: 'ai-conversation',
+      })
+    }
     patchPresentationCard(toPresentationChatCard(presentation))
   } catch (error) {
     presentationError.value = error instanceof Error ? error.message : 'PPT 重试失败'
@@ -391,8 +476,16 @@ async function downloadArtifact(artifact: ChatArtifactDto) {
   }
 }
 
-async function retryArtifact() {
-  await onRegenerate()
+async function retryArtifact(artifact: ChatArtifactDto) {
+  if (!props.conversationId || artifactBusyId.value) return
+  artifactBusyId.value = artifact.artifactId
+  try {
+    await messageStore.retryArtifact(props.conversationId, props.message.id, artifact.artifactId)
+  } catch {
+    // The store keeps the same card and writes the retry error into it.
+  } finally {
+    artifactBusyId.value = ''
+  }
 }
 </script>
 
@@ -478,7 +571,7 @@ async function retryArtifact() {
               @open="openArtifact(artifact)"
               @edit="editArtifact(artifact)"
               @download="downloadArtifact(artifact)"
-              @retry="retryArtifact"
+              @retry="retryArtifact(artifact)"
             />
           </div>
           <span v-if="isStreaming" class="cursor" />

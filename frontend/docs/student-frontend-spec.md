@@ -98,7 +98,7 @@
 - ready artifact 必须包含 resourceId，并与资料库中的同一资源记录对应；操作顺序固定为“编辑（支持时，最左）→ 下载 → 预览（最右）”。预览统一进入 `/resources/:resourceId/preview`，仅支持编辑的类型按 editorRoute 进入对应编辑页。
 - 对话内可直接展示图片、轻量思维导图、文档摘要、表格前几行和 PPT 缩略页；完整文件、长内容和重型编辑器不直接挂载在消息列表。
 - 消息气泡下方不再提供“生成思维导图”按钮；欢迎页“生成思维导图”仍是自然语言快捷入口。聊天抽屉删除，生成结果先显示统一附件，编辑时进入 `/mindmap/:id`。
-- 思维导图聊天预览、全页预览和编辑页读取同一份树数据，统一使用 simple-mind-map 的 logicalStructure 与绿色节点主题；预览只读并自动居中，编辑页保留节点操作。保存成功后按同一 resourceId/version 立即刷新已打开预览和聊天附件，未打开页面下次从正式资源预览接口读取最新版，不把生成时快照当作权威数据。
+- 思维导图聊天预览、全页预览和编辑页读取同一份完整树数据与 `renderConfig`；预览只读并自动居中，编辑页保留节点操作。Mock 无配置时可使用绿色 logicalStructure 示例，正式环境不得强制绿色或删除后端生成的节点样式。保存成功后按同一 resourceId/version 立即刷新已打开预览和聊天附件，未打开页面下次从正式资源预览接口读取最新版，不把生成时快照当作权威数据。
 
 ### 4.2 资料库与知识库
 
@@ -108,7 +108,7 @@
 - 知识库：资源的可选归类和 AI 检索上下文，不保存第二份文件。
 - 学习项目：资源的另一种可选关联，不取代资料库或知识库。
 - 首页 `/library` 同时展示知识库入口和全局资料；详情 `/library/:id` 展示单个知识库关联的资料。
-- 所有上传文件、PPT、电子表格、思维导图和智能学习生成文件都自动进入资料库；只有明确选择知识库或项目时才建立对应关联。
+- 所有上传文件、PPT、电子表格、思维导图和智能学习生成文件都自动进入资料库；项目 AI 对话及学习画像流程产生的文件还必须进入对应项目资源包，选择知识库时再关联同一个资源。三处引用同一 `resourceId`，不复制文件。
 
 #### 页面状态
 
@@ -312,9 +312,9 @@ projectId        // 可空，关联的学习项目 ID
 2. 大纲生成：创建或更新草稿后由 AI 填充大纲。
 3. 大纲确认：用户检查、编辑、增删和排序；此步骤不可跳过。
 4. 最终生成：用户点击“确认大纲并生成”，展示异步任务进度。
-5. 预览：展示页面、下载 PPTX；生成成功时文件已经自动进入资料库。
+5. 预览：展示页面、下载 PPTX；生成成功时文件已经自动进入资料库，并在项目上下文中同步进入项目资源包。
 
-配置页不能直接生成最终 PPT。“生成大纲”也不会自动继续到最终生成。知识库选择只决定引用和关联；选择“无”时 PPT 仍进入资料库，但 knowledgeBaseId 为空。
+配置页不能直接生成最终 PPT。“生成大纲”也不会自动继续到最终生成。proposal 一出现即绑定正式 Presentation 草稿，页数旁知识库选择、其他配置与取消操作都会持久化；选择“无”时 PPT 仍进入资料库，但 knowledgeBaseId 为空。项目对话没有 `learningResourceId` 时也会新建项目资源条目。
 
 #### 状态与倒退
 
@@ -368,7 +368,7 @@ Mock 根据对话要求生成只读演示工作簿，并在下载时用 ExcelJS 
 - Mock 业务实体：通过 Repository 写入按用户隔离的 `sessionStorage`。
 - 正式数据源：通过 API Repository 请求后端，不读取 Mock Storage。
 - PPT：Mock Repository 生成演示大纲和 PPTX；正式 API 只提交结构化配置，由后端调用 PPT Provider 并保存文件。
-- 对话生成文件：Mock Chat Repository 在现有 SSE 上模拟 artifact 进度，图片、思维导图、DOCX、PDF、XLSX 都写入资料库并使用正式页面预览；API 模式只消费后端 artifact，不执行关键词生成。
+- 对话生成文件：Mock Chat Repository 在现有 SSE 上模拟 artifact 进度，图片、思维导图、DOCX、PDF、XLSX 都写入资料库并按项目上下文回写资源包；API 模式消费后端 artifact，并调用正式幂等回写接口确认同一资源已进入项目包，不执行关键词生成。API 失败不得回退 Mock。
 - Mock 下载按格式生成有效演示文件：PptxGenJS 生成 PPTX、ExcelJS 生成 XLSX、JSZip 组装 DOCX、pdf-lib 生成 PDF，图片使用有效 SVG；这些生成器只用于原型验证，不进入正式 API 路径。
 - 电子表格：Mock Repository 根据对话上下文生成演示工作簿和 XLSX，但对话结果使用通用 ArtifactCard；正式 API 由后端 AI 生成结构化 JSON，再生成并保存 XLSX。
 - 数据源由 `VITE_DATA_SOURCE=mock|api` 在构建时决定，正式构建强制使用 `api`。
@@ -530,6 +530,8 @@ interface CreateConversationRequest {
 - `POST /api/chat/stream`：在原请求中增加 `mediaAssetIds: string[]`，引用已上传图片或已转写音频，不直接发送 Base64/二进制。
 - `POST /api/chat/stream`：PPT 快捷入口增加 `clientAction: 'presentation.create'`；PPT 意图返回 `event: presentation-card`，并把同一 PresentationChatCardDto 持久化到助手消息。
 - `POST /api/chat/stream`：所有文件结果统一返回 `event: artifact`；迁移期前端兼容旧 `spreadsheet-card`，但表格不再拥有独立结果 UI。
+- `POST /api/chat/artifacts/:artifactId/retry`、`GET /api/chat/artifacts/:artifactId`：只重试并恢复同一附件任务，保持 artifactId 和已有 resourceId，不重新生成整轮回答。
+- `PUT /api/learning/projects/:projectId/resources/generated`：按 artifactId/resourceId 幂等回写项目资源包，覆盖项目 AI 对话和学习画像流程的所有生成文件。
 
 正式接口不得返回公开永久文件 URL；文件访问必须经过权限校验或短期签名 URL。详细字段和错误码见零猜测交接契约第 18 节。
 
@@ -538,13 +540,15 @@ interface CreateConversationRequest {
 - `GET /api/presentations/templates`：获取本系统业务模板，不返回讯飞模板 ID。
 - `POST /api/presentations`：创建带上下文和 clientRequestId 的 PPT 草稿。
 - `PUT /api/presentations/:id/draft`：同步工作区配置和对话卡。
+- `PUT /api/presentations/:id/associations`：同步 Presentation、资料库、知识库和项目资源包关联。
+- `POST /api/presentations/:id/cancel`：持久化取消 proposal/draft。
 - `POST /api/presentations/:id/outline-jobs`：创建大纲任务。
 - `PUT /api/presentations/:id/outline`：保存用户确认后的大纲。
 - `POST /api/presentations/:id/generation-jobs`：创建或重试 PPT 生成任务。
 - `GET /api/presentations/jobs/:jobId`、`POST /api/presentations/jobs/:jobId/cancel`：查询和取消任务。
 - `GET /api/presentations/:id`、`GET /api/presentations/:id/download`：刷新恢复和下载权威文件。
 
-生成 ready 时后端自动创建资料库资源，不存在手动保存接口。前端不接讯飞 API；正式后端必须隐藏 Provider 密钥、任务 ID、模板 ID 和文件 URL。详细约束见零猜测交接契约第 19 节。
+生成 ready 时后端自动创建资料库资源；有 projectId 时无论是否存在 learningResourceId 都同步项目资源包，不存在手动保存接口。前端不接讯飞 API；正式后端必须隐藏 Provider 密钥、任务 ID、模板 ID 和文件 URL。详细约束见零猜测交接契约第 19 节。
 
 ### 7.7 电子表格接口
 
@@ -722,7 +726,9 @@ src/
 - [x] 保留 PPT 生成工作区第 4 步预览，删除旧文档预览弹窗和学习资源页重复预览弹窗。
 - [x] 对完全无引用、无独有逻辑且已有替代实现的文件二次确认后删除；保留产品指定的 RobotAI Learning SVG。
 - [x] 统一附件操作为编辑（最左）/下载/预览（最右）；电子表格移除编辑能力和独立详情路由，仅保留统一只读预览。
-- [x] 思维导图聊天预览、统一预览和编辑页共用树数据/渲染主题，保存后 Mock 与正式 API 路径均按 resourceId/version 实时刷新。
-- [x] PPT proposal 在页数旁增加知识库关联选择，沿用统一选择浮层和新建知识库弹窗。
+- [x] 思维导图聊天预览、统一预览和编辑页共用完整树数据/后端渲染配置；Mock 才提供绿色缺省样式，保存后 Mock 与正式 API 路径均按 resourceId/version 实时刷新。
+- [x] PPT proposal 在页数旁增加知识库关联选择，沿用统一选择浮层和新建知识库弹窗；草稿、取消、关联和项目资源包回写均有 Mock/API 对应链路。
+- [x] 项目 AI 对话及学习画像流程生成文件统一进入资料库和项目资源包；知识库为可选关联，三处复用同一 resourceId，并以 artifactId/resourceId 幂等去重。
+- [x] 通用附件失败重试只重试原 artifact，保持已有 resourceId，不再重新生成整轮回答。
 
 后续每一项涉及代码或目录调整时，应单独确认范围后执行，避免一次性移动造成大量不可控变更。
