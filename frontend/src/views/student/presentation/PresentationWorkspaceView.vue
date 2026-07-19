@@ -37,6 +37,7 @@ import type {
 } from '@/types/contracts/presentation'
 import type { PresentationDto } from '@/types/contracts/presentation'
 import { toPresentationChatCard } from '@/utils/presentation'
+import { downloadBlob } from '@/utils/download'
 
 type WorkspaceStep = 'config' | 'outline' | 'generating' | 'preview'
 
@@ -423,12 +424,7 @@ async function downloadPresentation() {
   localError.value = ''
   try {
     const blob = await presentationStore.download()
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = currentPresentation.value.fileName || `${currentPresentation.value.config.title}.pptx`
-    link.click()
-    URL.revokeObjectURL(url)
+    downloadBlob(blob, currentPresentation.value.fileName || `${currentPresentation.value.config.title}.pptx`)
     showMessage('PPT 已开始下载')
   } catch (error) {
     setError(error, 'PPT 下载失败')

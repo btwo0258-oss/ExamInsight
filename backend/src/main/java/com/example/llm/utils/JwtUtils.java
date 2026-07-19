@@ -2,20 +2,29 @@ package com.example.llm.utils;
 
 import cn.hutool.jwt.JWT;
 import cn.hutool.jwt.JWTUtil;
-import cn.hutool.jwt.signers.JWTSignerUtil;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
+@Component
 public class JwtUtils {
 
-    // 生产环境中应将密钥配置在 application.yml 中
-    private static final byte[] KEY = "LLM_QA_SECRET_KEY_123456".getBytes();
+    private final byte[] key;
+
+    public JwtUtils(@Value("${app.jwt.secret}") String secret) {
+        if (secret == null || secret.length() < 32) {
+            throw new IllegalStateException("JWT_SECRET 必须配置且长度不能少于 32 个字符");
+        }
+        this.key = secret.getBytes(StandardCharsets.UTF_8);
+    }
 
     /**
      * 生成 Token
      */
-    public static String generateToken(Long userId) {
+    public String generateToken(Long userId) {
         Map<String, Object> payload = new HashMap<>();
         payload.put("userId", userId);
         // 签发时间
@@ -23,16 +32,16 @@ public class JwtUtils {
         // 过期时间 (7天)
         payload.put(JWT.EXPIRES_AT, System.currentTimeMillis() / 1000 + 60 * 60 * 24 * 7);
 
-        return JWTUtil.createToken(payload, KEY);
+        return JWTUtil.createToken(payload, key);
     }
 
     /**
      * 验证 Token 并获取 userId
      * @return 如果验证失败或过期，返回 null
      */
-    public static Long getUserIdFromToken(String token) {
+    public Long getUserIdFromToken(String token) {
         try {
-            boolean verify = JWTUtil.verify(token, KEY);
+            boolean verify = JWTUtil.verify(token, key);
             if (!verify) {
                 return null;
             }

@@ -150,6 +150,7 @@ export async function getMindMapDetail(id: number): Promise<MindMap> {
 
 export interface MindMapGenerateResult {
   id: number;
+  resourceId?: string;
   title: string;
   treeData: any;
   renderConfig?: MindMapRenderConfig;

@@ -1,8 +1,12 @@
-import { ref } from 'vue'
-import { defineStore } from 'pinia'
-import { mediaRepository } from '@/repositories/media'
-import { rememberMockLibraryResourceFile, resourceFileType, resourceFormat } from '@/repositories/libraryResource'
-import { getMediaSource, isAudioFile, isImageFile } from '@/utils/file'
+import { ref } from "vue";
+import { defineStore } from "pinia";
+import { mediaRepository } from "@/repositories/media";
+import {
+  rememberMockLibraryResourceFile,
+  resourceFileType,
+  resourceFormat,
+} from "@/repositories/libraryResource";
+import { getMediaSource, isAudioFile, isImageFile } from "@/utils/file";
 import {
   deleteLibraryResource,
   downloadLibraryResource,
@@ -12,280 +16,296 @@ import {
   saveLibraryResources,
   updateLibraryResourceAssociations,
   uploadLibraryResource,
-} from '@/api/libraryResource'
-import type { LearningResource } from '@/mock'
+} from "@/api/libraryResource";
+import type { LearningResource } from "@/mock";
+import { downloadBlob } from "@/utils/download";
 import type {
   LibraryResourceDto,
   ResourceAssociations,
   ResourceFileType,
   ResourceOrigin,
-} from '@/types/contracts/library'
+} from "@/types/contracts/library";
 
-export type LibraryResource = LibraryResourceDto
+export type LibraryResource = LibraryResourceDto;
 
-function generatedFormat(group: LearningResource['group']) {
-  if (group === '学习方案' || group === '个性化学习手册') return 'Markdown'
-  if (group === 'PPT') return 'PPT'
-  if (group === '思维导图') return '思维导图'
-  if (group === '代码案例') return 'ZIP'
-  if (group === '图片') return '图片'
-  if (group === '文档') return '文档'
-  if (group === '电子表格') return 'XLSX'
-  if (group === '音频') return '音频'
-  return 'PDF'
+function generatedFormat(group: LearningResource["group"]) {
+  if (group === "学习方案" || group === "个性化学习手册") return "Markdown";
+  if (group === "PPT") return "PPT";
+  if (group === "思维导图") return "思维导图";
+  if (group === "代码案例") return "ZIP";
+  if (group === "图片") return "图片";
+  if (group === "文档") return "文档";
+  if (group === "电子表格") return "XLSX";
+  if (group === "音频") return "音频";
+  return "PDF";
 }
 
-function generatedFileType(group: LearningResource['group']): ResourceFileType {
-  if (group === 'PPT') return 'presentation'
-  if (group === '思维导图') return 'mindmap'
-  if (group === '代码案例') return 'archive'
-  if (group === '图片') return 'image'
-  if (group === '电子表格') return 'spreadsheet'
-  if (group === '音频') return 'audio'
-  if (group === '其他文件') return 'other'
-  return 'document'
+function generatedFileType(group: LearningResource["group"]): ResourceFileType {
+  if (group === "PPT") return "presentation";
+  if (group === "思维导图") return "mindmap";
+  if (group === "代码案例") return "archive";
+  if (group === "图片") return "image";
+  if (group === "电子表格") return "spreadsheet";
+  if (group === "音频") return "audio";
+  if (group === "其他文件") return "other";
+  return "document";
 }
 
 function clientRequestId() {
-  return globalThis.crypto?.randomUUID?.() ?? `media-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  return (
+    globalThis.crypto?.randomUUID?.() ??
+    `media-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
 }
 
-export const useLibraryResourceStore = defineStore('libraryResource', () => {
+export const useLibraryResourceStore = defineStore("libraryResource", () => {
   // Do not expose mock seed data before a user has authenticated.
-  const resources = ref<LibraryResource[]>([])
-  const isLoading = ref(false)
-  const isMutating = ref(false)
-  const errorMessage = ref<string | null>(null)
-  let sequence = 0
-  let processingPollTimer: number | null = null
+  const resources = ref<LibraryResource[]>([]);
+  const isLoading = ref(false);
+  const isMutating = ref(false);
+  const isInitialized = ref(false);
+  const errorMessage = ref<string | null>(null);
+  let sequence = 0;
+  let processingPollTimer: number | null = null;
 
   function stopProcessingPoll() {
-    if (processingPollTimer !== null) window.clearTimeout(processingPollTimer)
-    processingPollTimer = null
+    if (processingPollTimer !== null) window.clearTimeout(processingPollTimer);
+    processingPollTimer = null;
   }
 
   function scheduleProcessingPoll() {
-    if (!resources.value.some((item) => item.status === 'waiting' || item.status === 'processing')) {
-      stopProcessingPoll()
-      return
+    if (
+      !resources.value.some((item) => item.status === "waiting" || item.status === "processing")
+    ) {
+      stopProcessingPoll();
+      return;
     }
-    if (processingPollTimer !== null) return
+    if (processingPollTimer !== null) return;
     processingPollTimer = window.setTimeout(async () => {
-      processingPollTimer = null
+      processingPollTimer = null;
       try {
-        await fetchList()
+        await fetchList();
       } catch {
         // fetchList already exposes the error; keep the pending items retryable.
       } finally {
-        scheduleProcessingPoll()
+        scheduleProcessingPoll();
       }
-    }, 700)
+    }, 700);
   }
 
   function persist() {
-    saveLibraryResources(resources.value)
+    saveLibraryResources(resources.value);
   }
 
   function upsert(item: LibraryResource) {
-    const index = resources.value.findIndex((resource) => resource.resourceId === item.resourceId)
-    if (index === -1) resources.value.unshift(item)
-    else resources.value[index] = item
+    const index = resources.value.findIndex((resource) => resource.resourceId === item.resourceId);
+    if (index === -1) resources.value.unshift(item);
+    else resources.value[index] = item;
   }
 
-  async function fetchList(knowledgeBaseId?: number) {
-    if (isLoading.value) return
-    isLoading.value = true
-    errorMessage.value = null
+  async function fetchList(knowledgeBaseId?: number, force = false) {
+    if (isLoading.value) return;
+    if (!force && isInitialized.value && knowledgeBaseId === undefined) return;
+    if (knowledgeBaseId !== undefined && !Number.isFinite(knowledgeBaseId)) return;
+    isLoading.value = true;
+    errorMessage.value = null;
     try {
-      const items = await listLibraryResources(knowledgeBaseId)
-      if (knowledgeBaseId === undefined) resources.value = items
-      else {
+      const items = await listLibraryResources(knowledgeBaseId);
+      if (knowledgeBaseId === undefined) {
+        resources.value = items;
+        isInitialized.value = true;
+      } else {
         resources.value = [
           ...resources.value.filter((item) => item.knowledgeBaseId !== knowledgeBaseId),
           ...items,
-        ]
+        ];
       }
-      scheduleProcessingPoll()
+      scheduleProcessingPoll();
     } catch (error) {
-      errorMessage.value = error instanceof Error ? error.message : '获取资料失败'
-      throw error
+      errorMessage.value = error instanceof Error ? error.message : "获取资料失败";
+      throw error;
     } finally {
-      isLoading.value = false
+      isLoading.value = false;
     }
   }
 
   async function uploadFiles(
     files: File[],
-    origin: Extract<ResourceOrigin, 'resource-library' | 'chat' | 'learning'>,
+    origin: Extract<ResourceOrigin, "resource-library" | "chat" | "learning">,
     projectId: number | null = null,
     knowledgeBaseId: number | null = null,
   ) {
-    if (isMutating.value) return []
-    isMutating.value = true
-    errorMessage.value = null
-    const uploaded: LibraryResource[] = []
-    const associations: ResourceAssociations = { projectId, knowledgeBaseId }
+    if (isMutating.value) return [];
+    isMutating.value = true;
+    errorMessage.value = null;
+    const uploaded: LibraryResource[] = [];
+    const associations: ResourceAssociations = { projectId, knowledgeBaseId };
     try {
       for (const file of files) {
-        let item: LibraryResource
+        let item: LibraryResource;
         if (isImageFile(file)) {
           const asset = await mediaRepository.uploadImage(file, {
             source: getMediaSource(file),
-            purpose: origin === 'learning' ? 'learning-input' : 'library-resource',
+            purpose: origin === "learning" ? "learning-input" : "library-resource",
             knowledgeBaseId,
             projectId,
             clientRequestId: clientRequestId(),
-          })
+          });
           item = {
             resourceId: `media:${asset.id}`,
             name: asset.fileName,
-            format: resourceFormat(asset.fileName, '图片'),
-            fileType: 'image',
+            format: resourceFormat(asset.fileName, "图片"),
+            fileType: "image",
             mimeType: asset.mimeType,
             sizeBytes: asset.size,
-            status: asset.status === 'failed' ? 'failed' : asset.status === 'ready' ? 'ready' : 'processing',
+            status:
+              asset.status === "failed"
+                ? "failed"
+                : asset.status === "ready"
+                  ? "ready"
+                  : "processing",
             errorMessage: asset.errorMessage,
-            updatedAt: '刚刚',
-            sourceType: 'uploaded',
+            updatedAt: "刚刚",
+            sourceType: "uploaded",
             origin,
             ...associations,
             externalKey: asset.id,
-          }
+          };
         } else if (isAudioFile(file)) {
           const transcription = await mediaRepository.transcribeAudio(file, {
-            source: 'upload',
-            purpose: origin === 'learning' ? 'learning-input' : 'library-resource',
+            source: "upload",
+            purpose: origin === "learning" ? "learning-input" : "library-resource",
             knowledgeBaseId,
             projectId,
             clientRequestId: clientRequestId(),
-            language: 'zh-CN',
-          })
-          const asset = transcription.asset
+            language: "zh-CN",
+          });
+          const asset = transcription.asset;
           item = {
             resourceId: `media:${asset.id}`,
             name: asset.fileName,
-            format: resourceFormat(asset.fileName, '音频'),
-            fileType: 'audio',
+            format: resourceFormat(asset.fileName, "音频"),
+            fileType: "audio",
             mimeType: asset.mimeType,
             sizeBytes: asset.size,
-            status: asset.status === 'failed' ? 'failed' : asset.status === 'ready' ? 'ready' : 'processing',
+            status:
+              asset.status === "failed"
+                ? "failed"
+                : asset.status === "ready"
+                  ? "ready"
+                  : "processing",
             errorMessage: asset.errorMessage,
-            updatedAt: '刚刚',
-            sourceType: 'uploaded',
+            updatedAt: "刚刚",
+            sourceType: "uploaded",
             origin,
             ...associations,
             externalKey: asset.id,
-          }
+          };
         } else {
-          item = await uploadLibraryResource(file, origin, associations)
+          item = await uploadLibraryResource(file, origin, associations);
         }
-        await rememberMockLibraryResourceFile(item.resourceId, file)
-        upsert(item)
-        uploaded.push(item)
+        await rememberMockLibraryResourceFile(item.resourceId, file);
+        upsert(item);
+        uploaded.push(item);
       }
-      persist()
-      scheduleProcessingPoll()
-      return uploaded
+      persist();
+      scheduleProcessingPoll();
+      return uploaded;
     } catch (error) {
-      errorMessage.value = error instanceof Error ? error.message : '上传资料失败'
-      throw error
+      errorMessage.value = error instanceof Error ? error.message : "上传资料失败";
+      throw error;
     } finally {
-      isMutating.value = false
+      isMutating.value = false;
     }
   }
 
   async function remove(resourceId: string) {
-    isMutating.value = true
-    errorMessage.value = null
+    isMutating.value = true;
+    errorMessage.value = null;
     try {
-      await deleteLibraryResource(resourceId)
-      resources.value = resources.value.filter((item) => item.resourceId !== resourceId)
-      persist()
+      await deleteLibraryResource(resourceId);
+      resources.value = resources.value.filter((item) => item.resourceId !== resourceId);
+      persist();
     } catch (error) {
-      errorMessage.value = error instanceof Error ? error.message : '删除资料失败'
-      throw error
+      errorMessage.value = error instanceof Error ? error.message : "删除资料失败";
+      throw error;
     } finally {
-      isMutating.value = false
+      isMutating.value = false;
     }
   }
 
   async function retry(resourceId: string) {
-    isMutating.value = true
-    errorMessage.value = null
+    isMutating.value = true;
+    errorMessage.value = null;
     try {
-      upsert(await retryLibraryResource(resourceId))
-      persist()
-      scheduleProcessingPoll()
+      upsert(await retryLibraryResource(resourceId));
+      persist();
+      scheduleProcessingPoll();
     } catch (error) {
-      errorMessage.value = error instanceof Error ? error.message : '重试解析失败'
-      throw error
+      errorMessage.value = error instanceof Error ? error.message : "重试解析失败";
+      throw error;
     } finally {
-      isMutating.value = false
+      isMutating.value = false;
     }
   }
 
   async function rename(resourceId: string, name: string) {
-    if (!name.trim()) return
-    isMutating.value = true
-    errorMessage.value = null
+    if (!name.trim()) return;
+    isMutating.value = true;
+    errorMessage.value = null;
     try {
-      upsert(await renameLibraryResource(resourceId, name.trim()))
-      persist()
+      upsert(await renameLibraryResource(resourceId, name.trim()));
+      persist();
     } catch (error) {
-      errorMessage.value = error instanceof Error ? error.message : '重命名失败'
-      throw error
+      errorMessage.value = error instanceof Error ? error.message : "重命名失败";
+      throw error;
     } finally {
-      isMutating.value = false
+      isMutating.value = false;
     }
   }
 
   async function updateAssociations(resourceId: string, associations: ResourceAssociations) {
-    isMutating.value = true
-    errorMessage.value = null
+    isMutating.value = true;
+    errorMessage.value = null;
     try {
-      upsert(await updateLibraryResourceAssociations(resourceId, associations))
-      persist()
+      upsert(await updateLibraryResourceAssociations(resourceId, associations));
+      persist();
     } catch (error) {
-      errorMessage.value = error instanceof Error ? error.message : '更新资料关联失败'
-      throw error
+      errorMessage.value = error instanceof Error ? error.message : "更新资料关联失败";
+      throw error;
     } finally {
-      isMutating.value = false
+      isMutating.value = false;
     }
   }
 
   async function download(resourceId: string, name: string) {
-    isMutating.value = true
-    errorMessage.value = null
+    isMutating.value = true;
+    errorMessage.value = null;
     try {
-      const blob = await downloadLibraryResource(resourceId)
-      const url = URL.createObjectURL(blob)
-      const anchor = document.createElement('a')
-      anchor.href = url
-      anchor.download = name
-      anchor.click()
-      URL.revokeObjectURL(url)
+      const blob = await downloadLibraryResource(resourceId);
+      downloadBlob(blob, name);
     } catch (error) {
-      errorMessage.value = error instanceof Error ? error.message : '下载资料失败'
-      throw error
+      errorMessage.value = error instanceof Error ? error.message : "下载资料失败";
+      throw error;
     } finally {
-      isMutating.value = false
+      isMutating.value = false;
     }
   }
 
   function addFile(
     file: File,
-    origin: Extract<ResourceOrigin, 'resource-library' | 'chat' | 'learning'>,
+    origin: Extract<ResourceOrigin, "resource-library" | "chat" | "learning">,
     projectId: number | null = null,
     knowledgeBaseId: number | null = null,
   ) {
-    const signature = `${origin}:${file.name}:${file.size}:${file.lastModified}`
-    const existing = resources.value.find((item) => item.externalKey === signature)
+    const signature = `${origin}:${file.name}:${file.size}:${file.lastModified}`;
+    const existing = resources.value.find((item) => item.externalKey === signature);
     if (existing) {
-      existing.projectId = projectId
-      existing.knowledgeBaseId = knowledgeBaseId
-      existing.updatedAt = '刚刚'
-      persist()
-      return existing
+      existing.projectId = projectId;
+      existing.knowledgeBaseId = knowledgeBaseId;
+      existing.updatedAt = "刚刚";
+      persist();
+      return existing;
     }
 
     const item: LibraryResource = {
@@ -295,43 +315,46 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
       fileType: resourceFileType(file.name, file.type),
       mimeType: file.type || undefined,
       sizeBytes: file.size,
-      status: 'ready',
-      updatedAt: '刚刚',
-      sourceType: 'uploaded',
+      status: "ready",
+      updatedAt: "刚刚",
+      sourceType: "uploaded",
       origin,
       projectId,
       knowledgeBaseId,
       externalKey: signature,
-    }
-    resources.value.unshift(item)
-    void rememberMockLibraryResourceFile(item.resourceId, file)
-    persist()
-    return item
+    };
+    resources.value.unshift(item);
+    void rememberMockLibraryResourceFile(item.resourceId, file);
+    persist();
+    return item;
   }
 
   function addFiles(
     files: File[],
-    origin: Extract<ResourceOrigin, 'resource-library' | 'chat' | 'learning'>,
+    origin: Extract<ResourceOrigin, "resource-library" | "chat" | "learning">,
     projectId: number | null = null,
     knowledgeBaseId: number | null = null,
   ) {
-    return files.map((file) => addFile(file, origin, projectId, knowledgeBaseId))
+    return files.map((file) => addFile(file, origin, projectId, knowledgeBaseId));
   }
 
   function addGeneratedFile(input: {
-    resourceId?: string
-    externalKey: string
-    name: string
-    format: string
-    fileType: ResourceFileType
-    mimeType?: string
-    origin: Extract<ResourceOrigin, 'chat' | 'learning' | 'presentation' | 'spreadsheet' | 'mindmap'>
-    projectId?: number | null
-    knowledgeBaseId?: number | null
-    status?: LibraryResource['status']
-    sizeBytes?: number
+    resourceId?: string;
+    externalKey: string;
+    name: string;
+    format: string;
+    fileType: ResourceFileType;
+    mimeType?: string;
+    origin: Extract<
+      ResourceOrigin,
+      "chat" | "learning" | "presentation" | "spreadsheet" | "mindmap"
+    >;
+    projectId?: number | null;
+    knowledgeBaseId?: number | null;
+    status?: LibraryResource["status"];
+    sizeBytes?: number;
   }) {
-    const existing = resources.value.find((item) => item.externalKey === input.externalKey)
+    const existing = resources.value.find((item) => item.externalKey === input.externalKey);
     if (existing) {
       Object.assign(existing, {
         name: input.name,
@@ -341,12 +364,12 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
         origin: input.origin,
         projectId: input.projectId ?? null,
         knowledgeBaseId: input.knowledgeBaseId ?? null,
-        status: input.status ?? 'ready',
+        status: input.status ?? "ready",
         sizeBytes: input.sizeBytes ?? existing.sizeBytes,
-        updatedAt: '刚刚',
-      })
-      persist()
-      return existing
+        updatedAt: "刚刚",
+      });
+      persist();
+      return existing;
     }
 
     const item: LibraryResource = {
@@ -356,49 +379,55 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
       fileType: input.fileType,
       mimeType: input.mimeType,
       sizeBytes: input.sizeBytes ?? 0,
-      status: input.status ?? 'ready',
-      updatedAt: '刚刚',
-      sourceType: 'generated',
+      status: input.status ?? "ready",
+      updatedAt: "刚刚",
+      sourceType: "generated",
       origin: input.origin,
       projectId: input.projectId ?? null,
       knowledgeBaseId: input.knowledgeBaseId ?? null,
       externalKey: input.externalKey,
-    }
-    resources.value.unshift(item)
-    persist()
-    return item
+    };
+    resources.value.unshift(item);
+    persist();
+    return item;
   }
 
-  function addGeneratedResource(resource: LearningResource, planId: number, projectId: number | null, knowledgeBaseId: number | null) {
+  function addGeneratedResource(
+    resource: LearningResource,
+    planId: number,
+    projectId: number | null,
+    knowledgeBaseId: number | null,
+  ) {
     const archived = addGeneratedFile({
       externalKey: `learning:${planId}:${resource.id}`,
       name: resource.fileName ?? resource.title,
       format: generatedFormat(resource.group),
       fileType: generatedFileType(resource.group),
-      origin: 'learning',
+      origin: "learning",
       projectId,
       knowledgeBaseId,
-      status: resource.status === '生成中'
-        ? 'processing'
-        : resource.status === '生成失败'
-          ? 'failed'
-          : resource.status === '未选择'
-            ? 'waiting'
-            : 'ready',
-    })
-    resource.resourceId = archived.resourceId
-    return archived
+      status:
+        resource.status === "生成中"
+          ? "processing"
+          : resource.status === "生成失败"
+            ? "failed"
+            : resource.status === "未选择"
+              ? "waiting"
+              : "ready",
+    });
+    resource.resourceId = archived.resourceId;
+    return archived;
   }
 
   function addChatGenerated(name: string, knowledgeBaseId: number | null = null) {
     return addGeneratedFile({
       externalKey: `mindmap:${Date.now()}-${sequence++}`,
       name,
-      format: '思维导图',
-      fileType: 'mindmap',
-      origin: 'mindmap',
+      format: "思维导图",
+      fileType: "mindmap",
+      origin: "mindmap",
       knowledgeBaseId,
-    })
+    });
   }
 
   function addPresentation(
@@ -412,65 +441,71 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
       resourceId: `presentation:${presentationId}`,
       externalKey: `presentation:${presentationId}`,
       name,
-      format: 'PPT',
-      fileType: 'presentation',
-      origin: 'presentation',
+      format: "PPT",
+      fileType: "presentation",
+      origin: "presentation",
       projectId,
       knowledgeBaseId,
       sizeBytes,
-    })
+    });
   }
 
-  function addPlanExportMarkdown(name: string, planId: number, projectId: number | null, knowledgeBaseId: number | null) {
+  function addPlanExportMarkdown(
+    name: string,
+    planId: number,
+    projectId: number | null,
+    knowledgeBaseId: number | null,
+  ) {
     return addGeneratedFile({
       externalKey: `learning:${planId}:export-markdown`,
       name,
-      format: 'Markdown',
-      fileType: 'document',
-      origin: 'learning',
+      format: "Markdown",
+      fileType: "document",
+      origin: "learning",
       projectId,
       knowledgeBaseId,
-    })
+    });
   }
 
   function detachProject(projectId: number) {
-    let changed = false
+    let changed = false;
     resources.value.forEach((resource) => {
-      if (resource.projectId !== projectId) return
-      resource.projectId = null
-      resource.updatedAt = '刚刚'
-      changed = true
-    })
-    if (changed) persist()
+      if (resource.projectId !== projectId) return;
+      resource.projectId = null;
+      resource.updatedAt = "刚刚";
+      changed = true;
+    });
+    if (changed) persist();
   }
 
   function detachKnowledgeBase(knowledgeBaseId: number) {
-    let changed = false
+    let changed = false;
     resources.value.forEach((resource) => {
-      if (resource.knowledgeBaseId !== knowledgeBaseId) return
-      resource.knowledgeBaseId = null
-      resource.updatedAt = '刚刚'
-      changed = true
-    })
-    if (changed) persist()
+      if (resource.knowledgeBaseId !== knowledgeBaseId) return;
+      resource.knowledgeBaseId = null;
+      resource.updatedAt = "刚刚";
+      changed = true;
+    });
+    if (changed) persist();
   }
 
   function clearError() {
-    errorMessage.value = null
+    errorMessage.value = null;
   }
 
   function clearAll() {
-    stopProcessingPoll()
-    resources.value = []
-    isLoading.value = false
-    isMutating.value = false
-    errorMessage.value = null
+    stopProcessingPoll();
+    resources.value = [];
+    isLoading.value = false;
+    isMutating.value = false;
+    errorMessage.value = null;
   }
 
   return {
     resources,
     isLoading,
     isMutating,
+    isInitialized,
     errorMessage,
     fetchList,
     uploadFiles,
@@ -490,5 +525,5 @@ export const useLibraryResourceStore = defineStore('libraryResource', () => {
     addPlanExportMarkdown,
     detachProject,
     detachKnowledgeBase,
-  }
-})
+  };
+});

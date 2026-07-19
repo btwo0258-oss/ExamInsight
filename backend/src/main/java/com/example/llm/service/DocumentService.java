@@ -4,17 +4,18 @@ import com.baomidou.mybatisplus.extension.service.IService;
 import com.example.llm.dto.DocUploadReq;
 import com.example.llm.entity.Document;
 import com.example.llm.vo.DocStatusVO;
+import com.example.llm.vo.DocumentVO;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
 public interface DocumentService extends IService<Document> {
     
-    Document uploadDocument(Long userId, Long kbId, MultipartFile file);
+    DocumentVO uploadDocument(Long userId, Long kbId, MultipartFile file);
 
-    List<Document> getDocumentList(Long userId, Long kbId);
+    List<DocumentVO> getDocumentList(Long userId, Long kbId);
 
-    Document getDocumentDetail(Long userId, Long docId);
+    DocumentVO getDocumentDetail(Long userId, Long docId);
 
     void deleteDocument(Long userId, Long docId);
 

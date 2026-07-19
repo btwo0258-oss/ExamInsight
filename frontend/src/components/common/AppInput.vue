@@ -167,11 +167,14 @@ function send() {
     return
   }
 
+  const submittedFiles = [...files.value]
+  text.value = ''
+  files.value = []
   submitting.value = true
-  emit('send', trimmedText, [...files.value], (success = true) => {
-    if (success) {
-      text.value = ''
-      files.value = []
+  emit('send', trimmedText, submittedFiles, (success = true) => {
+    if (!success) {
+      if (!text.value) text.value = trimmedText
+      if (files.value.length === 0) files.value = submittedFiles
     }
     submitting.value = false
     if (!success) nextTick(() => areaEl.value?.focus())

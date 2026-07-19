@@ -8,7 +8,13 @@ public class ConversationListVO {
     private Long id;
     private String title;
     private Long kbId;
-    private String kbName; // name of the associated knowledge base
+    private String kbName;
     private Integer messageCount;
+    private Integer totalTokens;
+    private Boolean isPinned;
+    private Long learningProjectId;
+    private String learningProjectName;
+    private String conversationType;
+    private LocalDateTime createTime;
     private LocalDateTime updateTime;
 }

@@ -1,4 +1,5 @@
 import { request } from "./request";
+import { downloadBlob } from "@/utils/download";
 
 export interface ResourceItem {
   id: number;
@@ -75,13 +76,7 @@ export async function downloadResource(id: number): Promise<void> {
     }
 
     const blob = await response.blob();
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(link.href);
+    downloadBlob(blob, filename);
   } catch (error) {
     console.error("Download failed:", error);
     throw error;

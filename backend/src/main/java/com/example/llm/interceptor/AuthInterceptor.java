@@ -13,15 +13,17 @@ import org.springframework.web.servlet.HandlerInterceptor;
 @Component
 public class AuthInterceptor implements HandlerInterceptor {
 
+    private final JwtUtils jwtUtils;
+
+    public AuthInterceptor(JwtUtils jwtUtils) {
+        this.jwtUtils = jwtUtils;
+    }
+
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
         if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
             return true;
         }
-
-        System.out.println("========== 请求路径: " + request.getRequestURI());
-        System.out.println("========== Authorization: " + request.getHeader("Authorization"));
-        System.out.println("========== token: " + request.getHeader("token"));
 
         // 支持从 Authorization 请求头或 token 请求头中获取
         String token = request.getHeader("Authorization");
@@ -37,13 +39,14 @@ public class AuthInterceptor implements HandlerInterceptor {
             // 去除可能包含的引号 (用户从JSON响应中复制时可能带上引号)
             token = token.replace("\"", "").trim();
             
-            Long userId = JwtUtils.getUserIdFromToken(token);
+            Long userId = jwtUtils.getUserIdFromToken(token);
             if (userId != null) {
                 UserContext.setUserId(userId);
                 return true;
             }
         }
 
+        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
         response.setContentType("application/json;charset=utf-8");
         response.getWriter().write(JSON.toJSONString(Result.error(401, "未认证或Token已过期，请重新登录")));
         return false;

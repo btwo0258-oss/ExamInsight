@@ -6,4 +6,5 @@ import lombok.Data;
 public class MindMapGenerateReq {
     private String content;
     private String title;
+    private Long kbId;
 }

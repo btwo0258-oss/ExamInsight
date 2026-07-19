@@ -1,379 +1,423 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import AppIcon from '@/components/common/AppIcon.vue'
-import ResourceTypeIcon from '@/components/common/ResourceTypeIcon.vue'
-import StudentShell from '@/components/layout/StudentShell.vue'
-import UploadMaterialModal from '@/components/library/UploadMaterialModal.vue'
-import LibraryKnowledgeCreateModal from '@/components/library/LibraryKnowledgeCreateModal.vue'
-import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
-import { useLibraryResourceStore } from '@/stores/libraryResource'
-import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
-import type { LibraryResource } from '@/stores/libraryResource'
-import type { KnowledgeBase } from '@/api/knowledgeBase'
-import type { ResourceFileType, ResourceSourceType } from '@/types/contracts/library'
-import { presentationRepository } from '@/repositories/presentation'
-import { spreadsheetRepository } from '@/repositories/spreadsheet'
-import { resourcePreviewRoute } from '@/utils/resourcePreview'
-import { resourceVisualTypeFromFile } from '@/utils/resourceVisual'
+import { computed, onMounted, ref, watch } from "vue";
+import { useRouter } from "vue-router";
+import AppIcon from "@/components/common/AppIcon.vue";
+import ResourceTypeIcon from "@/components/common/ResourceTypeIcon.vue";
+import StudentShell from "@/components/layout/StudentShell.vue";
+import UploadMaterialModal from "@/components/library/UploadMaterialModal.vue";
+import LibraryKnowledgeCreateModal from "@/components/library/LibraryKnowledgeCreateModal.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
+import { useLibraryResourceStore } from "@/stores/libraryResource";
+import { useKnowledgeBaseStore } from "@/stores/knowledgeBase";
+import type { LibraryResource } from "@/stores/libraryResource";
+import type { KnowledgeBase } from "@/api/knowledgeBase";
+import type { ResourceFileType, ResourceSourceType } from "@/types/contracts/library";
+import { presentationRepository } from "@/repositories/presentation";
+import { spreadsheetRepository } from "@/repositories/spreadsheet";
+import { resourcePreviewRoute } from "@/utils/resourcePreview";
+import { resourceVisualTypeFromFile } from "@/utils/resourceVisual";
+import { downloadBlob } from "@/utils/download";
 
-type LibraryFilter = 'all' | 'knowledge' | 'mindmap' | 'image' | 'file'
-type ViewMode = 'grid' | 'list'
-type AdvancedFileType = Extract<ResourceFileType, 'image' | 'document' | 'spreadsheet' | 'presentation' | 'pdf'>
+type LibraryFilter = "all" | "knowledge" | "mindmap" | "image" | "file";
+type ViewMode = "grid" | "list";
+type AdvancedFileType = Extract<
+  ResourceFileType,
+  "image" | "document" | "spreadsheet" | "presentation" | "pdf"
+>;
 type LibraryAsset =
-  | { kind: 'knowledge'; id: string; source: KnowledgeBase }
-  | { kind: 'file'; id: string; source: LibraryResource }
+  | { kind: "knowledge"; id: string; source: KnowledgeBase }
+  | { kind: "file"; id: string; source: LibraryResource };
 
-const router = useRouter()
-const libraryResourceStore = useLibraryResourceStore()
-const knowledgeBaseStore = useKnowledgeBaseStore()
-const uploadOpen = ref(false)
-const newKnowledgeOpen = ref(false)
-const newMenuOpen = ref(false)
-const activeFilter = ref<LibraryFilter>('all')
-const viewMode = ref<ViewMode>(localStorage.getItem('examinsight.ui.library-view') === 'list' ? 'list' : 'grid')
-const searchQuery = ref('')
-const selectedIds = ref<string[]>([])
-const knowledgeMenuId = ref<string | null>(null)
-const fileMenuId = ref<string | null>(null)
-const filterMenuOpen = ref(false)
-const sourceFilter = ref<ResourceSourceType | null>(null)
-const fileTypeFilter = ref<AdvancedFileType | null>(null)
-const moveModalOpen = ref(false)
-const moveResourceIds = ref<string[]>([])
-const moveTargetKnowledgeBaseId = ref<number | null>(null)
-const deleteTargets = ref<LibraryAsset[]>([])
-const actionError = ref('')
+const router = useRouter();
+const libraryResourceStore = useLibraryResourceStore();
+const knowledgeBaseStore = useKnowledgeBaseStore();
+const uploadOpen = ref(false);
+const newKnowledgeOpen = ref(false);
+const newMenuOpen = ref(false);
+const activeFilter = ref<LibraryFilter>("all");
+const viewMode = ref<ViewMode>(
+  localStorage.getItem("examinsight.ui.library-view") === "list" ? "list" : "grid",
+);
+const searchQuery = ref("");
+const selectedIds = ref<string[]>([]);
+const knowledgeMenuId = ref<string | null>(null);
+const fileMenuId = ref<string | null>(null);
+const filterMenuOpen = ref(false);
+const sourceFilter = ref<ResourceSourceType | null>(null);
+const fileTypeFilter = ref<AdvancedFileType | null>(null);
+const moveModalOpen = ref(false);
+const moveResourceIds = ref<string[]>([]);
+const moveTargetKnowledgeBaseId = ref<number | null>(null);
+const deleteTargets = ref<LibraryAsset[]>([]);
+const actionError = ref("");
 
 const filters: Array<{ label: string; value: LibraryFilter }> = [
-  { label: '全部', value: 'all' },
-  { label: '知识库', value: 'knowledge' },
-  { label: '思维导图', value: 'mindmap' },
-  { label: '图片', value: 'image' },
-  { label: '文件', value: 'file' },
-]
+  { label: "全部", value: "all" },
+  { label: "知识库", value: "knowledge" },
+  { label: "思维导图", value: "mindmap" },
+  { label: "图片", value: "image" },
+  { label: "文件", value: "file" },
+];
 const sourceFilterOptions: Array<{ value: ResourceSourceType; label: string; icon: string }> = [
-  { value: 'uploaded', label: '已上传', icon: 'upload-cloud' },
-  { value: 'generated', label: '已生成', icon: 'sparkle' },
-]
+  { value: "uploaded", label: "已上传", icon: "upload-cloud" },
+  { value: "generated", label: "已生成", icon: "sparkle" },
+];
 const fileTypeFilterOptions: Array<{ value: AdvancedFileType; label: string; icon: string }> = [
-  { value: 'image', label: '图片', icon: 'image' },
-  { value: 'document', label: '文档', icon: 'file' },
-  { value: 'spreadsheet', label: '电子表格', icon: 'grid' },
-  { value: 'presentation', label: '演示文稿', icon: 'presentation' },
-  { value: 'pdf', label: 'PDF', icon: 'file' },
-]
+  { value: "image", label: "图片", icon: "image" },
+  { value: "document", label: "文档", icon: "file" },
+  { value: "spreadsheet", label: "电子表格", icon: "grid" },
+  { value: "presentation", label: "演示文稿", icon: "presentation" },
+  { value: "pdf", label: "PDF", icon: "file" },
+];
 
 const knowledgeAssets = computed<LibraryAsset[]>(() =>
-  knowledgeBaseStore.list.map((source) => ({ kind: 'knowledge', id: `knowledge-${source.id}`, source })),
-)
+  knowledgeBaseStore.list.map((source) => ({
+    kind: "knowledge",
+    id: `knowledge-${source.id}`,
+    source,
+  })),
+);
 
 const fileAssets = computed<LibraryAsset[]>(() =>
-  libraryResourceStore.resources.map((source) => ({ kind: 'file', id: `file-${source.resourceId}`, source })),
-)
+  libraryResourceStore.resources.map((source) => ({
+    kind: "file",
+    id: `file-${source.resourceId}`,
+    source,
+  })),
+);
 
 const visibleAssets = computed(() => {
-  let assets: LibraryAsset[] = []
-  if (activeFilter.value === 'knowledge') assets = knowledgeAssets.value
-  if (activeFilter.value === 'mindmap') {
-    assets = fileAssets.value.filter((asset) => asset.kind === 'file' && asset.source.fileType === 'mindmap')
-  } else if (activeFilter.value === 'image') {
-    assets = fileAssets.value.filter((asset) => asset.kind === 'file' && asset.source.fileType === 'image')
-  } else if (activeFilter.value === 'file') {
-    assets = fileAssets.value.filter((asset) => asset.kind === 'file' && !['image', 'mindmap'].includes(asset.source.fileType))
-  } else if (activeFilter.value !== 'knowledge') {
-    assets = [...knowledgeAssets.value, ...fileAssets.value]
+  let assets: LibraryAsset[] = [];
+  if (activeFilter.value === "knowledge") assets = knowledgeAssets.value;
+  if (activeFilter.value === "mindmap") {
+    assets = fileAssets.value.filter(
+      (asset) => asset.kind === "file" && asset.source.fileType === "mindmap",
+    );
+  } else if (activeFilter.value === "image") {
+    assets = fileAssets.value.filter(
+      (asset) => asset.kind === "file" && asset.source.fileType === "image",
+    );
+  } else if (activeFilter.value === "file") {
+    assets = fileAssets.value.filter(
+      (asset) => asset.kind === "file" && !["image", "mindmap"].includes(asset.source.fileType),
+    );
+  } else if (activeFilter.value !== "knowledge") {
+    assets = [...knowledgeAssets.value, ...fileAssets.value];
   }
   if (sourceFilter.value || fileTypeFilter.value) {
-    assets = assets.filter((asset) => (
-      asset.kind === 'file'
-      && (!sourceFilter.value || asset.source.sourceType === sourceFilter.value)
-      && (!fileTypeFilter.value || asset.source.fileType === fileTypeFilter.value)
-    ))
+    assets = assets.filter(
+      (asset) =>
+        asset.kind === "file" &&
+        (!sourceFilter.value || asset.source.sourceType === sourceFilter.value) &&
+        (!fileTypeFilter.value || asset.source.fileType === fileTypeFilter.value),
+    );
   }
-  const query = searchQuery.value.trim().toLocaleLowerCase()
-  if (!query) return assets
+  const query = searchQuery.value.trim().toLocaleLowerCase();
+  if (!query) return assets;
   return assets.filter((asset) => {
-    const text = asset.kind === 'knowledge'
-      ? `${asset.source.name} ${asset.source.description || ''}`
-      : `${asset.source.name} ${asset.source.format} ${sourceLabel(asset.source)}`
-    return text.toLocaleLowerCase().includes(query)
-  })
-})
+    const text =
+      asset.kind === "knowledge"
+        ? `${asset.source.name} ${asset.source.description || ""}`
+        : `${asset.source.name} ${asset.source.format} ${sourceLabel(asset.source)}`;
+    return text.toLocaleLowerCase().includes(query);
+  });
+});
 
-const pageError = computed(() => actionError.value || knowledgeBaseStore.errorMessage || libraryResourceStore.errorMessage || '')
-const pageLoading = computed(() => knowledgeBaseStore.isLoading || libraryResourceStore.isLoading)
-const selectedAssets = computed(() => [...knowledgeAssets.value, ...fileAssets.value].filter((asset) => selectedIds.value.includes(asset.id)))
+const pageError = computed(
+  () =>
+    actionError.value || knowledgeBaseStore.errorMessage || libraryResourceStore.errorMessage || "",
+);
+const pageLoading = computed(() => knowledgeBaseStore.isLoading || libraryResourceStore.isLoading);
+const selectedAssets = computed(() =>
+  [...knowledgeAssets.value, ...fileAssets.value].filter((asset) =>
+    selectedIds.value.includes(asset.id),
+  ),
+);
 
 const firstFileAfterKnowledgeId = computed(() => {
-  if (!visibleAssets.value.some((asset) => asset.kind === 'knowledge')) return null
-  return visibleAssets.value.find((asset) => asset.kind === 'file')?.id ?? null
-})
+  if (!visibleAssets.value.some((asset) => asset.kind === "knowledge")) return null;
+  return visibleAssets.value.find((asset) => asset.kind === "file")?.id ?? null;
+});
 
-const selectedCount = computed(() => selectedIds.value.length)
-const hasSelection = computed(() => selectedCount.value > 0)
-const activeAdvancedFilterCount = computed(() => Number(Boolean(sourceFilter.value)) + Number(Boolean(fileTypeFilter.value)))
+const selectedCount = computed(() => selectedIds.value.length);
+const hasSelection = computed(() => selectedCount.value > 0);
+const activeAdvancedFilterCount = computed(
+  () => Number(Boolean(sourceFilter.value)) + Number(Boolean(fileTypeFilter.value)),
+);
 
 function openNewMenu() {
-  newMenuOpen.value = !newMenuOpen.value
+  newMenuOpen.value = !newMenuOpen.value;
 }
 
 function openUpload() {
-  uploadOpen.value = true
-  newMenuOpen.value = false
+  uploadOpen.value = true;
+  newMenuOpen.value = false;
 }
 
 function openNewKnowledge() {
-  newKnowledgeOpen.value = true
-  newMenuOpen.value = false
+  newKnowledgeOpen.value = true;
+  newMenuOpen.value = false;
 }
 
 function handleKnowledgeCreated() {
-  activeFilter.value = 'knowledge'
-  newKnowledgeOpen.value = false
+  activeFilter.value = "knowledge";
+  newKnowledgeOpen.value = false;
 }
 
 function toggleSelection(id: string) {
   selectedIds.value = selectedIds.value.includes(id)
     ? selectedIds.value.filter((item) => item !== id)
-    : [...selectedIds.value, id]
+    : [...selectedIds.value, id];
 }
 
 function clearSelection() {
-  selectedIds.value = []
+  selectedIds.value = [];
 }
 
 function isSelected(id: string) {
-  return selectedIds.value.includes(id)
+  return selectedIds.value.includes(id);
 }
 
 function toggleKnowledgeMenu(id: string) {
-  knowledgeMenuId.value = knowledgeMenuId.value === id ? null : id
+  knowledgeMenuId.value = knowledgeMenuId.value === id ? null : id;
 }
 
 function closeKnowledgeMenu() {
-  knowledgeMenuId.value = null
+  knowledgeMenuId.value = null;
 }
 
 function toggleFileMenu(id: string) {
-  fileMenuId.value = fileMenuId.value === id ? null : id
+  fileMenuId.value = fileMenuId.value === id ? null : id;
 }
 
 function closeFileMenu() {
-  fileMenuId.value = null
+  fileMenuId.value = null;
 }
 
 function openMoveModal(resourceIds?: string[]) {
-  const ids = resourceIds ?? selectedAssets.value.filter((asset) => asset.kind === 'file').map((asset) => asset.source.resourceId)
-  if (!ids.length) return
-  moveResourceIds.value = ids
-  moveTargetKnowledgeBaseId.value = null
-  moveModalOpen.value = true
-  closeFileMenu()
+  const ids =
+    resourceIds ??
+    selectedAssets.value
+      .filter((asset) => asset.kind === "file")
+      .map((asset) => asset.source.resourceId);
+  if (!ids.length) return;
+  moveResourceIds.value = ids;
+  moveTargetKnowledgeBaseId.value = null;
+  moveModalOpen.value = true;
+  closeFileMenu();
 }
 
 function openKnowledgeFromMove() {
-  moveModalOpen.value = false
-  newKnowledgeOpen.value = true
+  moveModalOpen.value = false;
+  newKnowledgeOpen.value = true;
 }
 
 function fileSize(file: LibraryResource) {
-  if (!file.sizeBytes) return '—'
-  if (file.sizeBytes < 1024 * 1024) return `${Math.max(1, Math.round(file.sizeBytes / 1024))} KB`
-  return `${(file.sizeBytes / 1024 / 1024).toFixed(1)} MB`
+  if (!file.sizeBytes) return "—";
+  if (file.sizeBytes < 1024 * 1024) return `${Math.max(1, Math.round(file.sizeBytes / 1024))} KB`;
+  return `${(file.sizeBytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function fileVisualType(file: LibraryResource) {
-  return resourceVisualTypeFromFile(file.name, file.mimeType, file.fileType)
+  return resourceVisualTypeFromFile(file.name, file.mimeType, file.fileType);
 }
 
 function sourceLabel(file: LibraryResource) {
-  if (file.sourceType === 'uploaded') {
-    if (file.origin === 'learning') return '智能学习上传'
-    if (file.origin === 'chat') return '聊天上传'
-    return '资料库上传'
+  if (file.sourceType === "uploaded") {
+    if (file.origin === "learning") return "智能学习上传";
+    if (file.origin === "chat") return "聊天上传";
+    return "资料库上传";
   }
-  return file.origin === 'learning' ? '智能学习生成' : 'AI 生成'
+  return file.origin === "learning" ? "智能学习生成" : "AI 生成";
 }
 
 function toggleSourceFilter(value: ResourceSourceType) {
-  sourceFilter.value = sourceFilter.value === value ? null : value
+  sourceFilter.value = sourceFilter.value === value ? null : value;
 }
 
 function toggleFileTypeFilter(value: AdvancedFileType) {
-  fileTypeFilter.value = fileTypeFilter.value === value ? null : value
+  fileTypeFilter.value = fileTypeFilter.value === value ? null : value;
 }
 
 function presentationId(file: LibraryResource) {
-  return file.externalKey?.startsWith('presentation:') ? file.externalKey.slice('presentation:'.length) : ''
+  return file.externalKey?.startsWith("presentation:")
+    ? file.externalKey.slice("presentation:".length)
+    : "";
 }
 
 function spreadsheetId(file: LibraryResource) {
-  return file.externalKey?.startsWith('spreadsheet:') ? file.externalKey.slice('spreadsheet:'.length) : ''
+  return file.externalKey?.startsWith("spreadsheet:")
+    ? file.externalKey.slice("spreadsheet:".length)
+    : "";
 }
 
 function openAsset(asset: LibraryAsset) {
-  if (asset.kind === 'knowledge') {
-    void router.push(`/library/${asset.source.id}`)
-    return
+  if (asset.kind === "knowledge") {
+    void router.push(`/library/${asset.source.id}`);
+    return;
   }
-  void router.push(resourcePreviewRoute(asset.source.resourceId, '/library', 'library'))
+  void router.push(resourcePreviewRoute(asset.source.resourceId, "/library", "library"));
 }
 
 function startLearning(knowledgeBaseId: number) {
-  closeKnowledgeMenu()
-  router.push({ path: '/learning/new', query: { knowledgeBaseId } })
+  closeKnowledgeMenu();
+  router.push({ path: "/learning/new", query: { knowledgeBaseId } });
 }
 
 async function loadData() {
-  actionError.value = ''
+  actionError.value = "";
   try {
-    await Promise.all([knowledgeBaseStore.fetchList(), libraryResourceStore.fetchList()])
+    await Promise.all([knowledgeBaseStore.fetchList(true), libraryResourceStore.fetchList(undefined, true)]);
   } catch {
     // Store error messages are rendered by the page.
   }
 }
 
 async function renameKnowledge(item: KnowledgeBase) {
-  closeKnowledgeMenu()
-  const name = window.prompt('输入新的知识库名称', item.name)?.trim()
-  if (!name || name === item.name) return
+  closeKnowledgeMenu();
+  const name = window.prompt("输入新的知识库名称", item.name)?.trim();
+  if (!name || name === item.name) return;
   try {
-    await knowledgeBaseStore.update({ ...item, name })
+    await knowledgeBaseStore.update({ ...item, name });
   } catch (error) {
-    actionError.value = error instanceof Error ? error.message : '重命名失败'
+    actionError.value = error instanceof Error ? error.message : "重命名失败";
   }
 }
 
 async function renameFile(file: LibraryResource) {
-  closeFileMenu()
-  const name = window.prompt('输入新的文件名称', file.name)?.trim()
-  if (!name || name === file.name) return
+  closeFileMenu();
+  const name = window.prompt("输入新的文件名称", file.name)?.trim();
+  if (!name || name === file.name) return;
   try {
-    await libraryResourceStore.rename(file.resourceId, name)
+    await libraryResourceStore.rename(file.resourceId, name);
   } catch (error) {
-    actionError.value = error instanceof Error ? error.message : '重命名失败'
+    actionError.value = error instanceof Error ? error.message : "重命名失败";
   }
 }
 
 function renameAsset(asset: LibraryAsset) {
-  if (asset.kind === 'knowledge') void renameKnowledge(asset.source)
-  else void renameFile(asset.source)
+  if (asset.kind === "knowledge") void renameKnowledge(asset.source);
+  else void renameFile(asset.source);
 }
 
 function startLearningFromAsset(asset: LibraryAsset) {
-  if (asset.kind === 'knowledge') startLearning(asset.source.id)
+  if (asset.kind === "knowledge") startLearning(asset.source.id);
 }
 
 function openMoveForAsset(asset: LibraryAsset) {
-  if (asset.kind === 'file') openMoveModal([asset.source.resourceId])
+  if (asset.kind === "file") openMoveModal([asset.source.resourceId]);
 }
 
 async function downloadFiles(assets: LibraryAsset[]) {
-  actionError.value = ''
+  actionError.value = "";
   try {
     for (const asset of assets) {
-      if (asset.kind !== 'file') continue
-      const id = presentationId(asset.source)
-      const sheetId = spreadsheetId(asset.source)
+      if (asset.kind !== "file") continue;
+      const id = presentationId(asset.source);
+      const sheetId = spreadsheetId(asset.source);
       if (!id) {
         if (sheetId) {
-          const blob = await spreadsheetRepository.download(sheetId)
-          const url = URL.createObjectURL(blob)
-          const anchor = document.createElement('a')
-          anchor.href = url
-          anchor.download = asset.source.name
-          anchor.click()
-          URL.revokeObjectURL(url)
-          continue
+          const blob = await spreadsheetRepository.download(sheetId);
+          downloadBlob(blob, asset.source.name);
+          continue;
         }
-        await libraryResourceStore.download(asset.source.resourceId, asset.source.name)
-        continue
+        await libraryResourceStore.download(asset.source.resourceId, asset.source.name);
+        continue;
       }
-      const blob = await presentationRepository.download(id)
-      const url = URL.createObjectURL(blob)
-      const anchor = document.createElement('a')
-      anchor.href = url
-      anchor.download = asset.source.name
-      anchor.click()
-      URL.revokeObjectURL(url)
+      const blob = await presentationRepository.download(id);
+      downloadBlob(blob, asset.source.name);
     }
   } catch (error) {
-    actionError.value = error instanceof Error ? error.message : '下载失败'
+    actionError.value = error instanceof Error ? error.message : "下载失败";
   }
 }
 
 function requestDelete(assets: LibraryAsset[]) {
-  if (!assets.length) return
-  deleteTargets.value = assets
-  closeKnowledgeMenu()
-  closeFileMenu()
+  if (!assets.length) return;
+  deleteTargets.value = assets;
+  closeKnowledgeMenu();
+  closeFileMenu();
 }
 
 async function confirmDelete() {
-  const targets = [...deleteTargets.value]
-  deleteTargets.value = []
-  actionError.value = ''
+  const targets = [...deleteTargets.value];
+  deleteTargets.value = [];
+  actionError.value = "";
   try {
     for (const asset of targets) {
-      if (asset.kind === 'knowledge') await knowledgeBaseStore.remove(asset.source.id)
-      else await libraryResourceStore.remove(asset.source.resourceId)
+      if (asset.kind === "knowledge") await knowledgeBaseStore.remove(asset.source.id);
+      else await libraryResourceStore.remove(asset.source.resourceId);
     }
-    selectedIds.value = selectedIds.value.filter((id) => !targets.some((asset) => asset.id === id))
+    selectedIds.value = selectedIds.value.filter((id) => !targets.some((asset) => asset.id === id));
   } catch (error) {
-    actionError.value = error instanceof Error ? error.message : '删除失败'
+    actionError.value = error instanceof Error ? error.message : "删除失败";
   }
 }
 
 async function moveSelectedResources() {
-  if (!moveResourceIds.value.length) return
-  actionError.value = ''
+  if (!moveResourceIds.value.length) return;
+  actionError.value = "";
   try {
     for (const resourceId of moveResourceIds.value) {
-      const resource = libraryResourceStore.resources.find((item) => item.resourceId === resourceId)
+      const resource = libraryResourceStore.resources.find(
+        (item) => item.resourceId === resourceId,
+      );
       await libraryResourceStore.updateAssociations(resourceId, {
         projectId: resource?.projectId ?? null,
         knowledgeBaseId: moveTargetKnowledgeBaseId.value,
-      })
+      });
     }
-    moveModalOpen.value = false
-    clearSelection()
+    moveModalOpen.value = false;
+    clearSelection();
   } catch (error) {
-    actionError.value = error instanceof Error ? error.message : '移动失败'
+    actionError.value = error instanceof Error ? error.message : "移动失败";
   }
 }
 
 function knowledgeTitle(item: KnowledgeBase) {
-  return item.name.replace('资料库', '').trim()
+  return item.name.replace("资料库", "").trim();
 }
 
 function knowledgeFileCount(item: KnowledgeBase) {
-  return (item.documentCount || 0) + libraryResourceStore.resources.filter((resource) => resource.knowledgeBaseId === item.id).length
+  // 直接使用实际资源数量，避免重复计算
+  return libraryResourceStore.resources.filter((resource) => resource.knowledgeBaseId === item.id)
+    .length;
 }
 
 function knowledgeUpdatedAt(item: KnowledgeBase) {
-  return item.updateTime?.includes('今天') ? item.updateTime : item.updateTime || '刚刚'
+  return item.updateTime?.includes("今天") ? item.updateTime : item.updateTime || "刚刚";
 }
 
 function assetModifiedAt(asset: LibraryAsset) {
-  if (asset.kind === 'knowledge') return knowledgeUpdatedAt(asset.source).includes('今天') ? '今天' : knowledgeUpdatedAt(asset.source)
-  return asset.source.updatedAt.includes('今天') ? '今天' : asset.source.updatedAt
+  if (asset.kind === "knowledge")
+    return knowledgeUpdatedAt(asset.source).includes("今天")
+      ? "今天"
+      : knowledgeUpdatedAt(asset.source);
+  return asset.source.updatedAt.includes("今天") ? "今天" : asset.source.updatedAt;
 }
 
 function assetSize(asset: LibraryAsset) {
-  return asset.kind === 'knowledge' ? '—' : fileSize(asset.source)
+  return asset.kind === "knowledge" ? "—" : fileSize(asset.source);
 }
 
-watch(viewMode, (mode) => localStorage.setItem('examinsight.ui.library-view', mode))
+watch(viewMode, (mode) => localStorage.setItem("examinsight.ui.library-view", mode));
 
 onMounted(() => {
-  void loadData()
-})
+  void loadData();
+});
 </script>
 
 <template>
   <StudentShell>
-    <div class="library-page" @click="newMenuOpen = false; filterMenuOpen = false; closeKnowledgeMenu(); closeFileMenu()">
+    <div
+      class="library-page"
+      @click="
+        newMenuOpen = false;
+        filterMenuOpen = false;
+        closeKnowledgeMenu();
+        closeFileMenu();
+      "
+    >
       <header class="library-header">
         <h1>资料库</h1>
 
@@ -404,15 +448,28 @@ onMounted(() => {
 
       <div class="library-controls">
         <div v-if="selectedCount" class="bulk-actions">
-          <button class="bulk-primary" type="button" disabled title="资料引用对话将在后端资源引用接口接入后开放">
+          <button
+            class="bulk-primary"
+            type="button"
+            disabled
+            title="资料引用对话将在后端资源引用接口接入后开放"
+          >
             <AppIcon name="edit" :size="16" />
             开始聊天
           </button>
-          <button type="button" :disabled="!selectedAssets.some((asset) => asset.kind === 'file')" @click="downloadFiles(selectedAssets)">
+          <button
+            type="button"
+            :disabled="!selectedAssets.some((asset) => asset.kind === 'file')"
+            @click="downloadFiles(selectedAssets)"
+          >
             <AppIcon name="download" :size="16" />
             下载
           </button>
-          <button type="button" :disabled="!selectedAssets.some((asset) => asset.kind === 'file')" @click="openMoveModal()">
+          <button
+            type="button"
+            :disabled="!selectedAssets.some((asset) => asset.kind === 'file')"
+            @click="openMoveModal()"
+          >
             <AppIcon name="folder-move" :size="16" />
             移动
           </button>
@@ -446,7 +503,9 @@ onMounted(() => {
               @click="filterMenuOpen = !filterMenuOpen"
             >
               <AppIcon name="list-filter" :size="18" />
-              <span v-if="activeAdvancedFilterCount" class="filter-count">{{ activeAdvancedFilterCount }}</span>
+              <span v-if="activeAdvancedFilterCount" class="filter-count">{{
+                activeAdvancedFilterCount
+              }}</span>
             </button>
             <div v-if="filterMenuOpen" class="filter-menu ui-menu-panel">
               <span class="filter-section-label">来源</span>
@@ -460,7 +519,12 @@ onMounted(() => {
               >
                 <span class="ui-menu-icon"><AppIcon :name="option.icon" :size="16" /></span>
                 {{ option.label }}
-                <AppIcon v-if="sourceFilter === option.value" class="filter-check" name="check" :size="16" />
+                <AppIcon
+                  v-if="sourceFilter === option.value"
+                  class="filter-check"
+                  name="check"
+                  :size="16"
+                />
               </button>
               <span class="filter-section-label filter-section-label--divided">文件类型</span>
               <button
@@ -473,7 +537,12 @@ onMounted(() => {
               >
                 <span class="ui-menu-icon"><AppIcon :name="option.icon" :size="16" /></span>
                 {{ option.label }}
-                <AppIcon v-if="fileTypeFilter === option.value" class="filter-check" name="check" :size="16" />
+                <AppIcon
+                  v-if="fileTypeFilter === option.value"
+                  class="filter-check"
+                  name="check"
+                  :size="16"
+                />
               </button>
             </div>
           </div>
@@ -508,11 +577,14 @@ onMounted(() => {
         <strong>正在加载资料…</strong>
       </section>
       <section v-else-if="!visibleAssets.length" class="library-state">
-        <strong>{{ searchQuery.trim() ? '没有匹配的资料' : '暂无资料' }}</strong>
-        <span>{{ searchQuery.trim() ? '请调整搜索词或筛选条件' : '可上传资料或新建知识库' }}</span>
+        <strong>{{ searchQuery.trim() ? "没有匹配的资料" : "暂无资料" }}</strong>
+        <span>{{ searchQuery.trim() ? "请调整搜索词或筛选条件" : "可上传资料或新建知识库" }}</span>
       </section>
 
-      <section v-if="!pageLoading && !pageError && visibleAssets.length && viewMode === 'grid'" class="asset-grid">
+      <section
+        v-if="!pageLoading && !pageError && visibleAssets.length && viewMode === 'grid'"
+        class="asset-grid"
+      >
         <article
           v-for="asset in visibleAssets"
           :key="asset.id"
@@ -525,9 +597,17 @@ onMounted(() => {
           @click="openAsset(asset)"
         >
           <template v-if="asset.kind === 'knowledge'">
-            <ResourceTypeIcon class="knowledge-icon" type="knowledge" :size="22" :container-size="34" />
+            <ResourceTypeIcon
+              class="knowledge-icon"
+              type="knowledge"
+              :size="22"
+              :container-size="34"
+            />
             <strong>{{ knowledgeTitle(asset.source) }}</strong>
-            <small>{{ knowledgeFileCount(asset.source) }} 个文档 · {{ knowledgeUpdatedAt(asset.source) }}</small>
+            <small
+              >{{ knowledgeFileCount(asset.source) }} 个文档 ·
+              {{ knowledgeUpdatedAt(asset.source) }}</small
+            >
             <button
               class="knowledge-more ui-icon-action"
               type="button"
@@ -536,17 +616,33 @@ onMounted(() => {
             >
               <AppIcon name="more-horizontal" :size="16" />
             </button>
-            <div v-if="knowledgeMenuId === asset.id" class="floating-menu asset-floating-menu ui-menu-panel" @click.stop>
-              <button class="menu-action ui-menu-item" type="button" @click="startLearning(asset.source.id)">
+            <div
+              v-if="knowledgeMenuId === asset.id"
+              class="floating-menu asset-floating-menu ui-menu-panel"
+              @click.stop
+            >
+              <button
+                class="menu-action ui-menu-item"
+                type="button"
+                @click="startLearning(asset.source.id)"
+              >
                 <span class="ui-menu-icon"><AppIcon name="graduation" :size="16" /></span>
                 开始智能学习
               </button>
-              <button class="menu-action ui-menu-item" type="button" @click="renameKnowledge(asset.source)">
+              <button
+                class="menu-action ui-menu-item"
+                type="button"
+                @click="renameKnowledge(asset.source)"
+              >
                 <span class="ui-menu-icon"><AppIcon name="edit" :size="16" /></span>
                 重命名
               </button>
               <div class="ui-menu-divider" />
-              <button class="menu-action menu-action--danger ui-menu-item ui-menu-item--danger" type="button" @click="requestDelete([asset])">
+              <button
+                class="menu-action menu-action--danger ui-menu-item ui-menu-item--danger"
+                type="button"
+                @click="requestDelete([asset])"
+              >
                 <span class="ui-menu-icon"><AppIcon name="trash" :size="16" /></span>
                 删除知识库
               </button>
@@ -554,26 +650,59 @@ onMounted(() => {
           </template>
 
           <template v-else>
-            <button class="asset-check" type="button" :aria-label="`选择 ${asset.source.name}`" @click.stop="toggleSelection(asset.id)">
+            <button
+              class="asset-check"
+              type="button"
+              :aria-label="`选择 ${asset.source.name}`"
+              @click.stop="toggleSelection(asset.id)"
+            >
               <span v-if="isSelected(asset.id)">✓</span>
             </button>
             <div class="asset-grid-actions" @click.stop>
-              <button class="ui-icon-action" type="button" aria-label="重命名" @click="renameFile(asset.source)">
+              <button
+                class="ui-icon-action"
+                type="button"
+                aria-label="重命名"
+                @click="renameFile(asset.source)"
+              >
                 <AppIcon name="edit" :size="18" />
               </button>
-              <button class="ui-icon-action" type="button" aria-label="移动" @click="openMoveModal([asset.source.resourceId])">
+              <button
+                class="ui-icon-action"
+                type="button"
+                aria-label="移动"
+                @click="openMoveModal([asset.source.resourceId])"
+              >
                 <AppIcon name="folder-move" :size="18" />
               </button>
-              <button class="ui-icon-action" type="button" aria-label="下载" @click="downloadFiles([asset])">
+              <button
+                class="ui-icon-action"
+                type="button"
+                aria-label="下载"
+                @click="downloadFiles([asset])"
+              >
                 <AppIcon name="download" :size="18" />
               </button>
-              <button class="danger-icon ui-icon-action" type="button" aria-label="删除" @click="requestDelete([asset])">
+              <button
+                class="danger-icon ui-icon-action"
+                type="button"
+                aria-label="删除"
+                @click="requestDelete([asset])"
+              >
                 <AppIcon name="trash" :size="18" />
               </button>
             </div>
             <strong>{{ asset.source.name }}</strong>
-            <ResourceTypeIcon class="file-preview-icon" :type="fileVisualType(asset.source)" :size="34" :container-size="58" />
-            <small>{{ asset.source.format }} · {{ fileSize(asset.source) }} · {{ sourceLabel(asset.source) }}</small>
+            <ResourceTypeIcon
+              class="file-preview-icon"
+              :type="fileVisualType(asset.source)"
+              :size="34"
+              :container-size="58"
+            />
+            <small
+              >{{ asset.source.format }} · {{ fileSize(asset.source) }} ·
+              {{ sourceLabel(asset.source) }}</small
+            >
           </template>
         </article>
       </section>
@@ -601,7 +730,12 @@ onMounted(() => {
           :class="{ 'asset-row--selected': isSelected(asset.id) }"
           @click="openAsset(asset)"
         >
-          <button class="asset-row-check" type="button" :aria-label="`选择 ${asset.kind === 'knowledge' ? knowledgeTitle(asset.source) : asset.source.name}`" @click.stop="toggleSelection(asset.id)">
+          <button
+            class="asset-row-check"
+            type="button"
+            :aria-label="`选择 ${asset.kind === 'knowledge' ? knowledgeTitle(asset.source) : asset.source.name}`"
+            @click.stop="toggleSelection(asset.id)"
+          >
             <span v-if="isSelected(asset.id)">✓</span>
           </button>
           <ResourceTypeIcon
@@ -609,7 +743,9 @@ onMounted(() => {
             variant="plain"
             :size="20"
           />
-          <strong>{{ asset.kind === 'knowledge' ? knowledgeTitle(asset.source) : asset.source.name }}</strong>
+          <strong>{{
+            asset.kind === "knowledge" ? knowledgeTitle(asset.source) : asset.source.name
+          }}</strong>
           <span>{{ assetModifiedAt(asset) }}</span>
           <span>{{ assetSize(asset) }}</span>
           <div class="row-actions">
@@ -622,11 +758,21 @@ onMounted(() => {
               <AppIcon name="more-horizontal" :size="16" />
             </button>
             <template v-else>
-              <button class="ui-icon-action" type="button" @click.stop="toggleFileMenu(asset.id)"><AppIcon name="more-horizontal" :size="16" /></button>
+              <button class="ui-icon-action" type="button" @click.stop="toggleFileMenu(asset.id)">
+                <AppIcon name="more-horizontal" :size="16" />
+              </button>
             </template>
           </div>
-          <div v-if="knowledgeMenuId === asset.id" class="floating-menu asset-floating-menu menu--row ui-menu-panel" @click.stop>
-            <button class="menu-action ui-menu-item" type="button" @click="startLearningFromAsset(asset)">
+          <div
+            v-if="knowledgeMenuId === asset.id"
+            class="floating-menu asset-floating-menu menu--row ui-menu-panel"
+            @click.stop
+          >
+            <button
+              class="menu-action ui-menu-item"
+              type="button"
+              @click="startLearningFromAsset(asset)"
+            >
               <span class="ui-menu-icon"><AppIcon name="graduation" :size="16" /></span>
               开始智能学习
             </button>
@@ -635,13 +781,28 @@ onMounted(() => {
               重命名
             </button>
             <div class="ui-menu-divider" />
-            <button class="menu-action menu-action--danger ui-menu-item ui-menu-item--danger" type="button" @click="requestDelete([asset])">
+            <button
+              class="menu-action menu-action--danger ui-menu-item ui-menu-item--danger"
+              type="button"
+              @click="requestDelete([asset])"
+            >
               <span class="ui-menu-icon"><AppIcon name="trash" :size="16" /></span>
               删除知识库
             </button>
           </div>
-          <div v-if="fileMenuId === asset.id" class="floating-menu asset-floating-menu menu--row ui-menu-panel" @click.stop>
-            <button class="menu-action ui-menu-item" type="button" @click="downloadFiles([asset]); closeFileMenu()">
+          <div
+            v-if="fileMenuId === asset.id"
+            class="floating-menu asset-floating-menu menu--row ui-menu-panel"
+            @click.stop
+          >
+            <button
+              class="menu-action ui-menu-item"
+              type="button"
+              @click="
+                downloadFiles([asset]);
+                closeFileMenu();
+              "
+            >
               <span class="ui-menu-icon"><AppIcon name="download" :size="16" /></span>
               下载
             </button>
@@ -654,7 +815,11 @@ onMounted(() => {
               移动
             </button>
             <div class="ui-menu-divider" />
-            <button class="menu-action menu-action--danger ui-menu-item ui-menu-item--danger" type="button" @click="requestDelete([asset])">
+            <button
+              class="menu-action menu-action--danger ui-menu-item ui-menu-item--danger"
+              type="button"
+              @click="requestDelete([asset])"
+            >
               <span class="ui-menu-icon"><AppIcon name="trash" :size="16" /></span>
               删除
             </button>
@@ -679,7 +844,11 @@ onMounted(() => {
         </header>
         <span class="move-label">知识库</span>
         <div class="move-list">
-          <button type="button" :class="{ selected: moveTargetKnowledgeBaseId === null }" @click="moveTargetKnowledgeBaseId = null">
+          <button
+            type="button"
+            :class="{ selected: moveTargetKnowledgeBaseId === null }"
+            @click="moveTargetKnowledgeBaseId = null"
+          >
             <span class="move-icon"><AppIcon name="close" :size="18" /></span>
             <span>不归属知识库</span>
             <AppIcon name="chevron-right" :size="16" />
@@ -697,11 +866,18 @@ onMounted(() => {
           </button>
         </div>
         <footer>
-          <button class="outline-btn" type="button" @click="openKnowledgeFromMove">新建知识库</button>
+          <button class="outline-btn" type="button" @click="openKnowledgeFromMove">
+            新建知识库
+          </button>
           <span />
           <button class="outline-btn" type="button" @click="moveModalOpen = false">取消</button>
-          <button class="move-confirm" type="button" :disabled="libraryResourceStore.isMutating" @click="moveSelectedResources">
-            {{ libraryResourceStore.isMutating ? '移动中…' : '移动这里' }}
+          <button
+            class="move-confirm"
+            type="button"
+            :disabled="libraryResourceStore.isMutating"
+            @click="moveSelectedResources"
+          >
+            {{ libraryResourceStore.isMutating ? "移动中…" : "移动这里" }}
           </button>
         </footer>
       </section>
@@ -1073,6 +1249,10 @@ h1 {
 
 .asset-card--knowledge strong {
   align-self: end;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 .asset-card--knowledge small {
@@ -1083,7 +1263,9 @@ h1 {
 
 .asset-card--selected {
   border-color: var(--color-text);
-  box-shadow: inset 0 0 0 1px var(--color-text), var(--shadow-sm);
+  box-shadow:
+    inset 0 0 0 1px var(--color-text),
+    var(--shadow-sm);
 }
 
 .asset-card strong {
@@ -1141,7 +1323,9 @@ h1 {
   display: grid;
   place-items: center;
   opacity: 0;
-  transition: opacity 0.15s ease, background 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    background 0.15s ease;
 }
 
 .asset-card:hover .asset-more,
@@ -1204,7 +1388,9 @@ h1 {
   place-items: center;
   opacity: 0;
   transform: translateY(-50%);
-  transition: opacity 0.15s ease, background 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    background 0.15s ease;
 }
 
 .asset-card--knowledge:hover .knowledge-more {
@@ -1359,7 +1545,9 @@ h1 {
 
 @media (hover: none) {
   .asset-check,
-  .asset-row-check { opacity: 1; }
+  .asset-row-check {
+    opacity: 1;
+  }
 }
 
 .row-actions {

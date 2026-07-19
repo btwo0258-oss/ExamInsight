@@ -7,14 +7,29 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 @Data
 public class ChatReq {
-    @NotNull(message = "conversationId不能为空")
-    private Long conversationId;
-    
+    private Long conversationId; // 允许为null，新对话时会自动创建
+
     private Long parentId; // The ID of the message this new message is replying to
-    
-    @NotBlank(message = "问题不能为空")
+
     private String question;
     
+    // 兼容前端发送的 message 字段
+    private String message;
+
+    private String model;
+
+    private String clientAction;
+
+    private java.util.List<String> mediaAssetIds;
+
+    private Long projectId;
+
+    private Long kbId;
+
+    public String getEffectiveQuestion() {
+        return question != null ? question : message;
+    }
+
     private Boolean isRegenerate = false; // F4008 重新生成
     
     private Long editMsgId; // F4007 编辑消息的ID

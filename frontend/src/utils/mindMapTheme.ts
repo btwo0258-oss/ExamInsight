@@ -3,9 +3,13 @@ import type { MindMapRenderConfig, MindMapTreeNode } from '@/types/contracts/art
 
 export const MIND_MAP_ACCENT = '#4f9b8d'
 
+function clonePlain<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
 /** Keep the complete authoritative tree, including backend-generated node styles. */
 export function mindMapRenderData(tree: MindMapTreeNode): MindMapTreeNode {
-  return structuredClone(tree)
+  return clonePlain(tree)
 }
 
 /** Mock-only visual preset. Formal data keeps the backend-provided render configuration. */
@@ -65,7 +69,7 @@ export function mockMindMapRenderConfig(): MindMapRenderConfig {
 }
 
 export function resolveMindMapRenderConfig(config?: MindMapRenderConfig | null): MindMapRenderConfig {
-  if (config) return structuredClone(config)
+  if (config) return clonePlain(config)
   if (isMockDataSource) return mockMindMapRenderConfig()
   return { theme: 'classic', layout: 'logicalStructure' }
 }

@@ -2,6 +2,7 @@ import { getStoredToken } from '@/api/request'
 import { isMockDataSource } from '@/config/dataSource'
 import { documentRepository } from '@/repositories/document'
 import type { DocumentDto } from '@/repositories/document'
+import { downloadBlob } from '@/utils/download'
 
 export type Document = DocumentDto
 
@@ -23,10 +24,5 @@ export async function downloadDocument(id: number, fileName: string): Promise<vo
     headers: authorizedHeaders(),
   })
   if (!response.ok) throw new Error('下载失败')
-  const url = URL.createObjectURL(await response.blob())
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = fileName
-  anchor.click()
-  URL.revokeObjectURL(url)
+  downloadBlob(await response.blob(), fileName)
 }

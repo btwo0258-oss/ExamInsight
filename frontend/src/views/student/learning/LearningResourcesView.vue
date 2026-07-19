@@ -13,6 +13,7 @@ import { useLearningTutorStore } from '@/stores/learningTutor'
 import { useLibraryResourceStore } from '@/stores/libraryResource'
 import { useLearningPlanRoute } from '@/composables/useLearningPlanRoute'
 import { resourcePreviewRoute } from '@/utils/resourcePreview'
+import { downloadBlob } from '@/utils/download'
 import { resourceVisualTypeFromLearningGroup } from '@/utils/resourceVisual'
 
 type ResourceWithMeta = LearningResource & {
@@ -161,12 +162,7 @@ async function exportResource(resource: ResourceWithMeta) {
     const blob = resource.group === 'PPT' && resource.presentationId
       ? await presentationRepository.download(resource.presentationId)
       : await learningStore.downloadResource(plan.value.id, resource.id)
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = resource.fileName || `${resource.title}.${extensionMap[resource.group]}`
-    link.click()
-    URL.revokeObjectURL(url)
+    downloadBlob(blob, resource.fileName || `${resource.title}.${extensionMap[resource.group]}`)
     setToast('资源已导出')
   } catch (error) {
     actionError.value = error instanceof Error ? error.message : '资源下载失败'

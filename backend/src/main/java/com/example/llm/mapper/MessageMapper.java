@@ -13,11 +13,11 @@ public interface MessageMapper extends BaseMapper<Message> {
 
     @Select("""
             WITH RECURSIVE msg_tree AS (
-                SELECT * FROM message WHERE id = #{msgId} AND status = 1
+                SELECT * FROM message WHERE id = #{msgId} AND status = 0
                 UNION ALL
                 SELECT m.* FROM message m
                 INNER JOIN msg_tree t ON m.id = t.parent_id
-                WHERE m.status = 1
+                WHERE m.status = 0
             )
             SELECT * FROM msg_tree LIMIT #{limit}
             """)

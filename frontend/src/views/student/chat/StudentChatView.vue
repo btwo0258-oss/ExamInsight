@@ -87,6 +87,12 @@ let learningSetupPersistTimer: number | undefined
 const pendingLearningSetups = new Map<number, LearningSetupSessionState>()
 let learningSetupPersistence = Promise.resolve()
 
+function isGeneratedLearningProject(activeProjectId = projectId.value) {
+  if (!activeProjectId) return false
+  const status = learningStore.getPlan(activeProjectId)?.status
+  return status === '已生成' || status === '进行中' || status === '已完成'
+}
+
 function learningSetupStorageKey(activeProjectId = projectId.value) {
   return activeProjectId ? `examinsight.learning.chat-setup.v1.${activeProjectId}` : null
 }
@@ -164,6 +170,12 @@ function flushLearningSetupPersistence() {
 async function restoreLearningSetup(activeProjectId = projectId.value) {
   const key = learningSetupStorageKey(activeProjectId)
   if (!key || !activeProjectId) return false
+  if (isGeneratedLearningProject(activeProjectId)) {
+    sessionStorage.removeItem(key)
+    pendingLearningSetups.delete(activeProjectId)
+    completedLearningSetupProjectIds.add(activeProjectId)
+    return false
+  }
   const raw = sessionStorage.getItem(key)
   let restored = false
   let localState: Partial<LearningSetupSessionState> | null = null
@@ -385,14 +397,14 @@ type HomePromptAction = {
   icon: string
   label: string
   prompt?: string
-  action?: 'presentation' | 'spreadsheet'
+  action?: 'presentation' | 'spreadsheet' | 'image' | 'mindmap'
 }
 
 const homePromptActions: HomePromptAction[] = [
   { icon: 'edit', label: '撰写或编辑', prompt: '帮我撰写或润色这段内容：' },
-  { icon: 'image', label: '生成图片', prompt: '帮我生成一张适合学习资料使用的图片，主题是：' },
+  { icon: 'image', label: '生成图片', prompt: '帮我生成一张适合学习资料使用的图片，主题是：', action: 'image' },
   { icon: 'sparkle', label: '生成 PPT', action: 'presentation' },
-  { icon: 'mindmap', label: '生成思维导图', prompt: '帮我生成一个思维导图，主题是：' },
+  { icon: 'mindmap', label: '生成思维导图', prompt: '帮我生成一个思维导图，主题是：', action: 'mindmap' },
 ]
 
 function appendLearningMessage(conversationId: number, role: 'user' | 'assistant', content: string, extra: Record<string, unknown> = {}) {
@@ -842,7 +854,12 @@ async function resumeLearningPlanGeneration() {
 
 function confirmLearningPlan() {
   if (!activeChatId.value || learningPhase.value !== 'document') return
+  if (isGeneratedLearningProject()) {
+    void clearLearningSetup().then(() => router.replace(`/learning/${projectId.value}`))
+    return
+  }
   const conversationId = activeChatId.value
+  decisionDismissed.value = true
   appendLearningMessage(conversationId, 'user', '确认当前学习方案，开始生成学习路径和相关内容。')
   appendLearningMessage(conversationId, 'assistant', '已确认。我正在生成学习路径、练习任务和思维导图…')
   scheduleLearningPlanGeneration(conversationId)
@@ -865,6 +882,16 @@ async function runHomePromptAction(action: HomePromptAction) {
 
   if (action.action === 'spreadsheet') {
     fillHomePrompt('请根据以下要求、当前对话和我上传的文件直接生成电子表格：', 'spreadsheet.create')
+    return
+  }
+
+  if (action.action === 'image') {
+    fillHomePrompt(action.prompt || '帮我生成一张图片，主题是：', 'image.create')
+    return
+  }
+
+  if (action.action === 'mindmap') {
+    fillHomePrompt(action.prompt || '帮我生成一个思维导图，主题是：', 'mindmap.create')
     return
   }
 
@@ -930,6 +957,11 @@ async function initializeLearningChat() {
     const project = projectId.value ? learningStore.getPlan(projectId.value) : null
     if (project?.knowledgeBaseId !== null && project?.knowledgeBaseId !== undefined) {
       selectedKnowledgeBaseId.value = project.knowledgeBaseId
+    }
+    if (projectId.value && isGeneratedLearningProject(projectId.value)) {
+      await clearLearningSetup(projectId.value)
+      await router.replace(`/learning/${projectId.value}`)
+      return
     }
     await restoreLearningSetup(projectId.value)
     if (activeChatId.value) restoreLearningCards(activeChatId.value)

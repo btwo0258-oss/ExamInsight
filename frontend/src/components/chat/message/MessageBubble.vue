@@ -5,6 +5,7 @@ import { computed, watch, onMounted, onBeforeUnmount, ref } from "vue";
 import { useRoute, useRouter } from 'vue-router'
 import type { ChatMessage } from "@/stores/message";
 import { useMessageStore } from "@/stores/message";
+import { useConversationStore } from '@/stores/conversation'
 import { usePresentationStore } from '@/stores/presentation'
 import { useLibraryResourceStore } from '@/stores/libraryResource'
 import { presentationRepository } from '@/repositories/presentation'
@@ -29,6 +30,7 @@ import { isMockDataSource } from '@/config/dataSource'
 import { useLearningStore } from '@/stores/learning'
 import { presentationCardToArtifact, spreadsheetCardToArtifact, upsertArtifact } from '@/utils/artifact'
 import type { ChatArtifactDto } from '@/types/contracts/artifact'
+import { downloadBlob } from '@/utils/download'
 
 type Props = {
   message: ChatMessage;
@@ -50,6 +52,7 @@ const emit = defineEmits<{
 
 const isUser = computed(() => props.message.role === "user");
 const messageStore = useMessageStore();
+const conversationStore = useConversationStore()
 const presentationStore = usePresentationStore()
 const libraryResourceStore = useLibraryResourceStore()
 const learningStore = useLearningStore()
@@ -237,6 +240,9 @@ function patchPresentationCard(data: PresentationChatCardDto) {
 function updatePresentationCard(data: PresentationChatCardDto) {
   presentationError.value = ''
   patchPresentationCard(data)
+  if (props.conversationId && data.config.topic.trim()) {
+    conversationStore.setLocalTitle(props.conversationId, data.config.topic)
+  }
   window.clearTimeout(presentationDraftSyncTimer)
   if (!data.presentationId || data.view !== 'proposal') return
   presentationDraftSyncTimer = window.setTimeout(async () => {
@@ -376,12 +382,7 @@ async function downloadPresentation() {
   try {
     const presentation = await presentationStore.load(card.presentationId)
     const blob = await presentationStore.download()
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = presentation.fileName || `${presentation.config.title}.pptx`
-    link.click()
-    URL.revokeObjectURL(url)
+    downloadBlob(blob, presentation.fileName || `${presentation.config.title}.pptx`)
   } catch (error) {
     presentationError.value = error instanceof Error ? error.message : 'PPT 下载失败'
   } finally {
@@ -465,12 +466,7 @@ async function downloadArtifact(artifact: ChatArtifactDto) {
     const blob = spreadsheetId
       ? await spreadsheetRepository.download(spreadsheetId)
       : await presentationRepository.download(presentationId)
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = artifact.fileName
-    link.click()
-    URL.revokeObjectURL(url)
+    downloadBlob(blob, artifact.fileName)
   } finally {
     artifactBusyId.value = ''
   }

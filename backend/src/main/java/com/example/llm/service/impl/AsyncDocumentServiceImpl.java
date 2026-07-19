@@ -49,7 +49,16 @@ public class AsyncDocumentServiceImpl implements AsyncDocumentService {
     @Async
     @Override
     public void processDocument(Document doc) {
+        // 在处理前捕获原始状态，用于后续正确更新知识库统计
+        Integer previousStatus = doc.getStatus();
+        Integer previousChunkCount = doc.getChunkCount();
+
         try {
+            // 先设置状态为处理中（1），避免前端一直显示 waiting
+            doc.setStatus(1);
+            doc.setUpdateTime(java.time.LocalDateTime.now());
+            documentMapper.updateById(doc);
+
             esService.createIndexIfNotExists(INDEX_NAME);
 
             File file = new File(doc.getFilePath());
@@ -92,21 +101,27 @@ public class AsyncDocumentServiceImpl implements AsyncDocumentService {
                 documentChunkMapper.insert(chunk);
             }
 
-            doc.setStatus(1);
+            doc.setStatus(1); // 1 = ready
             doc.setUpdateTime(java.time.LocalDateTime.now());
             documentMapper.updateById(doc);
 
             KnowledgeBase kb = knowledgeBaseMapper.selectById(doc.getKbId());
             if (kb != null) {
-                kb.setDocCount(kb.getDocCount() + 1);
-                kb.setChunkCount(kb.getChunkCount() + successCount);
+                // 只有首次成功处理时才增加文档计数
+                if (previousStatus == null || previousStatus != 1) {
+                    kb.setDocCount((kb.getDocCount() != null ? kb.getDocCount() : 0) + 1);
+                }
+                // 更新知识片段数量：用新的 successCount 减去旧的 previousChunkCount
+                int oldChunks = previousChunkCount != null ? previousChunkCount : 0;
+                int chunkDiff = successCount - oldChunks;
+                kb.setChunkCount((kb.getChunkCount() != null ? kb.getChunkCount() : 0) + chunkDiff);
                 kb.setUpdateTime(java.time.LocalDateTime.now());
                 knowledgeBaseMapper.updateById(kb);
             }
 
         } catch (Exception e) {
             log.error("Document {} processing failed", doc.getId(), e);
-            doc.setStatus(2);
+            doc.setStatus(2); // 2 = failed
             doc.setErrorMsg(e.getMessage());
             doc.setUpdateTime(java.time.LocalDateTime.now());
             documentMapper.updateById(doc);

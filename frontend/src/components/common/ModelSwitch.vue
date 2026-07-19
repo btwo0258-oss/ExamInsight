@@ -1,43 +1,39 @@
 <script setup lang="ts">
-// @ts-nocheck
-import { computed, ref, onMounted, onUnmounted } from 'vue'
-import { useModelStore } from '@/stores/model'
+import { computed, ref, onMounted, onUnmounted } from "vue";
+import { useModelStore } from "@/stores/model";
 
-const props = withDefaults(defineProps<{ align?: 'left' | 'right' }>(), { align: 'left' })
+const props = withDefaults(defineProps<{ align?: "left" | "right" }>(), { align: "left" });
 
-const modelStore = useModelStore()
-const isOpen = ref(false)
+const modelStore = useModelStore();
+const isOpen = ref(false);
 
-const models = computed(() => {
-  if (modelStore.list.length >= 2) return modelStore.list
-  return [
-    { name: 'qwen-plus', displayName: 'Qwen Plus', description: '最强大的推理能力' },
-    { name: 'gpt-4o', displayName: 'GPT-4 Omni', description: '适合日常任务' }
-  ]
-})
+const models = computed(() => modelStore.list);
 
 const currentModelName = computed(() => {
-  const m = models.value.find(item => item.name === modelStore.currentModel)
-  return m ? (m.displayName || m.name) : '选择模型'
-})
+  const m = models.value.find((item) => item.name === modelStore.currentModel);
+  return m ? m.displayName || m.name : modelStore.isLoading ? "加载模型" : "选择模型";
+});
 
 function toggleDropdown() {
-  isOpen.value = !isOpen.value
+  isOpen.value = !isOpen.value;
 }
 
 function selectModel(model: { name: string; displayName?: string }) {
-  modelStore.setCurrent(model.name)
-  isOpen.value = false
+  modelStore.setCurrent(model.name);
+  isOpen.value = false;
 }
 
 const closeDropdown = (e: MouseEvent) => {
-  if (!(e.target as HTMLElement).closest('.model-switch')) {
-    isOpen.value = false
+  if (!(e.target as HTMLElement).closest(".model-switch")) {
+    isOpen.value = false;
   }
-}
+};
 
-onMounted(() => document.addEventListener('click', closeDropdown))
-onUnmounted(() => document.removeEventListener('click', closeDropdown))
+onMounted(() => {
+  document.addEventListener("click", closeDropdown);
+  modelStore.fetchList();
+});
+onUnmounted(() => document.removeEventListener("click", closeDropdown));
 </script>
 
 <template>
@@ -45,22 +41,33 @@ onUnmounted(() => document.removeEventListener('click', closeDropdown))
     <button class="model-trigger ui-hover-row" @click.stop="toggleDropdown" type="button">
       <span>{{ currentModelName }}</span>
       <svg class="chevron" viewBox="0 0 24 24" width="14" :class="{ rotate: isOpen }">
-        <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path
+          d="M6 9l6 6 6-6"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
       </svg>
     </button>
 
     <transition name="slide-up">
-      <div v-if="isOpen" class="dropdown-menu ui-menu-panel" :class="{ 'dropdown-menu--right': props.align === 'right' }">
-        <div 
-          v-for="(model, index) in models" 
-          :key="model.name" 
+      <div
+        v-if="isOpen"
+        class="dropdown-menu ui-menu-panel"
+        :class="{ 'dropdown-menu--right': props.align === 'right' }"
+      >
+        <div
+          v-for="(model, index) in models"
+          :key="model.name"
           class="menu-item ui-menu-item"
           :aria-selected="modelStore.currentModel === model.name"
           @click="selectModel(model)"
         >
           <div class="item-info">
             <div class="item-name">{{ model.displayName }}</div>
-            <div class="item-desc">{{ index === 0 ? '最强大的推理能力' : '适合日常对话' }}</div>
+            <div class="item-desc">{{ model.description || (index === 0 ? "适合日常对话" : "支持深度推理") }}</div>
           </div>
           <div v-if="modelStore.currentModel === model.name" class="check-icon">✓</div>
         </div>
@@ -110,7 +117,7 @@ onUnmounted(() => document.removeEventListener('click', closeDropdown))
   left: 0;
   width: 260px;
   /* 确保 z-index 足够大，能够遮盖对话框/输入框容器 */
-  z-index: 2000; 
+  z-index: 2000;
 }
 
 .dropdown-menu--right {
@@ -147,10 +154,14 @@ onUnmounted(() => document.removeEventListener('click', closeDropdown))
   font-weight: bold;
 }
 
-.slide-up-enter-active, .slide-up-leave-active {
-  transition: opacity 0.2s, transform 0.2s;
+.slide-up-enter-active,
+.slide-up-leave-active {
+  transition:
+    opacity 0.2s,
+    transform 0.2s;
 }
-.slide-up-enter-from, .slide-up-leave-to {
+.slide-up-enter-from,
+.slide-up-leave-to {
   opacity: 0;
   transform: translateY(10px);
 }

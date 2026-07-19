@@ -1,26 +1,27 @@
-export type EntityId = number
+export type EntityId = number;
 
 export type ApiResponse<T> = {
-  code: string
-  message: string
-  data: T
-  requestId?: string
-}
+  code: number;
+  message: string;
+  data: T;
+  requestId?: string;
+  errorCode?: string;
+};
 
 export type PageResult<T> = {
-  items: T[]
-  page: number
-  pageSize: number
-  total: number
-}
+  items: T[];
+  page: number;
+  pageSize: number;
+  total: number;
+};
 
-export type AsyncJobStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+export type AsyncJobStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled";
 
 export type AsyncJob<T> = {
-  jobId: string
-  status: AsyncJobStatus
-  progress?: number
-  result?: T
-  errorCode?: string
-  errorMessage?: string
-}
+  jobId: string;
+  status: AsyncJobStatus;
+  progress?: number;
+  result?: T;
+  errorCode?: string;
+  errorMessage?: string;
+};

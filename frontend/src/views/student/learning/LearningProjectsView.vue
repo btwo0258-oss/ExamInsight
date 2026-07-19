@@ -4,13 +4,14 @@ import { useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
 import LearningProjectResourceChips from '@/components/learning/LearningProjectResourceChips.vue'
 import StudentShell from '@/components/layout/StudentShell.vue'
-import { courseKnowledgeBases } from '@/mock'
 import { useLearningStore } from '@/stores/learning'
+import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 
 type ViewMode = 'grid' | 'list'
 
 const router = useRouter()
 const learningStore = useLearningStore()
+const knowledgeBaseStore = useKnowledgeBaseStore()
 const learningPlans = computed(() => learningStore.plans)
 const keyword = ref('')
 const status = ref('全部状态')
@@ -34,7 +35,7 @@ function knowledgeBaseName(id: number | null) {
   if (id === null) return '未关联知识库'
   const plan = learningPlans.value.find((item) => item.knowledgeBaseId === id)
   return plan?.profile.find((item) => item.label === '资料来源')?.value
-    ?? courseKnowledgeBases.find((item) => item.id === id)?.name
+    ?? knowledgeBaseStore.list.find((item) => item.id === id)?.name
     ?? '未关联知识库'
 }
 
@@ -66,7 +67,7 @@ function primaryAction(plan: { id: number; status: string }) {
 
 async function loadPlans() {
   try {
-    await learningStore.fetchPlans()
+    await Promise.all([learningStore.fetchPlans(), knowledgeBaseStore.fetchList()])
   } catch {
     // Store error is rendered by this page.
   }

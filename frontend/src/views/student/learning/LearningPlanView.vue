@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AppIcon from '@/components/common/AppIcon.vue'
 import AppInput from '@/components/common/AppInput.vue'
@@ -7,17 +7,19 @@ import AppSelectMenu from '@/components/common/AppSelectMenu.vue'
 import LearningTutorPanel from '@/components/learning/LearningTutorPanel.vue'
 import LearningRouteState from '@/components/learning/LearningRouteState.vue'
 import StudentShell from '@/components/layout/StudentShell.vue'
-import { courseKnowledgeBases } from '@/mock'
 import type { LearningResource, LearningTask } from '@/mock'
 import { useLearningStore } from '@/stores/learning'
 import { useLibraryResourceStore } from '@/stores/libraryResource'
+import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import { useLearningPlanRoute } from '@/composables/useLearningPlanRoute'
+import { downloadBlob } from '@/utils/download'
 
 const router = useRouter()
 const learningStore = useLearningStore()
 const libraryResourceStore = useLibraryResourceStore()
+const knowledgeBaseStore = useKnowledgeBaseStore()
 const { plan, hasPlan, isLoading, loadError, loadPlan } = useLearningPlanRoute()
-const library = computed(() => courseKnowledgeBases.find((item) => item.id === plan.value.knowledgeBaseId))
+const library = computed(() => knowledgeBaseStore.list.find((item) => item.id === plan.value.knowledgeBaseId))
 const adjustOpen = ref(false)
 const adjustSaving = ref(false)
 const adjustError = ref('')
@@ -179,12 +181,7 @@ function exportPlanMarkdown() {
   const currentPlan = plan.value
   const fileName = `${safeFileName(currentPlan.title)}-学习方案.md`
   const blob = new Blob([markdownContent()], { type: 'text/markdown;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = fileName
-  link.click()
-  URL.revokeObjectURL(url)
+  downloadBlob(blob, fileName)
   libraryResourceStore.addPlanExportMarkdown(
     fileName,
     currentPlan.id,
@@ -205,6 +202,10 @@ function openAdjustModal() {
   }
   adjustOpen.value = true
 }
+
+onMounted(() => {
+  void knowledgeBaseStore.fetchList().catch(() => undefined)
+})
 
 function toggleAdjustConstraint(value: string) {
   adjustForm.value.preferences = adjustForm.value.preferences.includes(value)

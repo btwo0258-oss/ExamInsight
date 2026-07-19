@@ -21,4 +21,9 @@ public class MessageVO {
     @JsonProperty("aVersion")
     private Integer aVersion;
     private String files;
+    private String kind;
+    private String learningData;
+    private String presentationData;
+    private String spreadsheetData;
+    private String artifacts;
 }

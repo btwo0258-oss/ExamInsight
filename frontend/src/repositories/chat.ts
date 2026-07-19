@@ -9,7 +9,7 @@ import { toSpreadsheetChatCard } from '@/utils/spreadsheet'
 import { spreadsheetCardToArtifact } from '@/utils/artifact'
 import { parseSseEventStream } from '@/utils/stream'
 
-export type ChatClientAction = 'presentation.create' | 'spreadsheet.create'
+export type ChatClientAction = 'presentation.create' | 'spreadsheet.create' | 'image.create' | 'mindmap.create'
 
 export type ChatStreamEvent =
   | { type: 'text-delta'; delta: string }

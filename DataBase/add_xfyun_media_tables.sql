@@ -1,0 +1,43 @@
+CREATE TABLE IF NOT EXISTS `media_asset` (
+  `id` varchar(36) NOT NULL,
+  `user_id` bigint NOT NULL,
+  `kind` varchar(20) NOT NULL,
+  `source` varchar(20) NOT NULL,
+  `purpose` varchar(40) NOT NULL,
+  `file_name` varchar(500) NOT NULL,
+  `mime_type` varchar(100) NOT NULL,
+  `file_path` varchar(1000) NOT NULL,
+  `size` bigint NOT NULL,
+  `status` varchar(20) NOT NULL,
+  `conversation_id` bigint NULL,
+  `kb_id` bigint NULL,
+  `project_id` bigint NULL,
+  `transcript` mediumtext NULL,
+  `client_request_id` varchar(64) NOT NULL,
+  `error_code` varchar(64) NULL,
+  `error_message` varchar(1000) NULL,
+  `create_time` datetime NOT NULL,
+  `update_time` datetime NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_media_request` (`user_id`, `client_request_id`),
+  KEY `idx_media_user_update` (`user_id`, `update_time`),
+  KEY `idx_media_kb` (`kb_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `media_job` (
+  `id` varchar(36) NOT NULL,
+  `user_id` bigint NOT NULL,
+  `asset_id` varchar(36) NOT NULL,
+  `mode` varchar(20) NOT NULL,
+  `status` varchar(20) NOT NULL,
+  `progress` int NOT NULL DEFAULT 0,
+  `result_json` mediumtext NULL,
+  `client_request_id` varchar(64) NOT NULL,
+  `error_code` varchar(64) NULL,
+  `error_message` varchar(1000) NULL,
+  `create_time` datetime NOT NULL,
+  `update_time` datetime NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_media_job_request` (`user_id`, `client_request_id`),
+  KEY `idx_media_job_asset` (`asset_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

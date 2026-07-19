@@ -85,6 +85,12 @@ export const useConversationStore = defineStore("conversation", () => {
     upsertLocal({ ...existing, title: nextTitle, updateTime: nowMs() });
   }
 
+  function setLocalTitle(id: number, nextTitle: string) {
+    const existing = list.value.find((item) => item.id === id);
+    if (!existing || !nextTitle.trim()) return;
+    upsertLocal({ ...existing, title: nextTitle.trim(), updateTime: nowMs() });
+  }
+
   async function moveToKnowledgeBase(id: number, knowledgeBaseId: number | null) {
     const existing = list.value.find((x) => x.id === id);
     if (!existing) return;
@@ -177,6 +183,7 @@ export const useConversationStore = defineStore("conversation", () => {
     fetchList,
     create,
     rename,
+    setLocalTitle,
     moveToKnowledgeBase,
     linkLearningProject,
     restoreLearningConversation,

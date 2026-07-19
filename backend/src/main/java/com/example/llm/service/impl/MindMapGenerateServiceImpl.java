@@ -55,10 +55,12 @@ public class MindMapGenerateServiceImpl implements MindMapGenerateService {
             MindMapCreateReq createReq = new MindMapCreateReq();
             createReq.setTitle(title);
             createReq.setContent(contentJson);
+            createReq.setKbId(req.getKbId());
             Long mindMapId = mindMapService.createMindMap(createReq, userId);
 
             Map<String, Object> resultMap = new HashMap<>();
             resultMap.put("id", mindMapId);
+            resultMap.put("resourceId", "mindmap-" + mindMapId);
             resultMap.put("title", title);
             resultMap.put("treeData", treeData);
             return resultMap;

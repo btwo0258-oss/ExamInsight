@@ -81,9 +81,20 @@ const visibleGroupResult = computed(() => {
     wrongExerciseIds: taskExercises.value.filter((item) => !item.gradingCorrect).map((item) => item.id),
   }
 })
-const quizResult = computed(() => exercise.value?.submitted
-  ? evaluateExerciseAnswer(exercise.value, exercise.value.userAnswer ?? '')
-  : undefined)
+const quizResult = computed(() => {
+  const item = exercise.value
+  if (!item?.submitted) return undefined
+  if (typeof item.gradingCorrect === 'boolean') {
+    return {
+      correct: item.gradingCorrect,
+      score: item.gradingScore ?? (item.gradingCorrect ? 100 : 0),
+      feedback: item.gradingFeedback,
+      explanation: item.explanation,
+      correctAnswer: item.answer,
+    }
+  }
+  return evaluateExerciseAnswer(item, item.userAnswer ?? '')
+})
 const wrongExercises = computed(() => taskExercises.value.filter((item) => item.submitted && !item.gradingCorrect))
 const availableReserveCount = computed(() => {
   const knowledge = new Set(taskExercises.value.map((item) => item.knowledge))

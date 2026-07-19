@@ -18,6 +18,7 @@ public class Document {
     private String fileType;
     private Long fileSize;
     private String filePath;
+    private String externalKey;
     private Integer charCount;
     private Integer chunkCount;
     private Integer status;

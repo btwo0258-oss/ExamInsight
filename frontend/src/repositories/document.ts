@@ -23,13 +23,18 @@ function mockDocuments() {
 function normalizeDocument(item: Record<string, unknown>): DocumentDto {
   const rawStatus = item.status
   const knownStatuses: DocumentStatus[] = ['uploading', 'uploaded', 'parsing', 'ready', 'failed']
-  const status: DocumentStatus = rawStatus === 1 || rawStatus === 'completed'
-    ? 'ready'
-    : rawStatus === 2
-      ? 'failed'
-      : knownStatuses.includes(rawStatus as DocumentStatus)
-        ? rawStatus as DocumentStatus
-        : 'uploading'
+  // Backend status codes: 0=waiting, 1=processing, 2=ready, 3=failed
+  const status: DocumentStatus = rawStatus === 0
+    ? 'uploading'
+    : rawStatus === 1
+      ? 'parsing'
+      : rawStatus === 2
+        ? 'ready'
+        : rawStatus === 3
+          ? 'failed'
+          : knownStatuses.includes(rawStatus as DocumentStatus)
+            ? rawStatus as DocumentStatus
+            : 'uploading'
   const errorMessage = typeof item.errorMessage === 'string'
     ? item.errorMessage
     : typeof item.errorMsg === 'string' ? item.errorMsg : undefined

@@ -6,6 +6,7 @@ import com.example.llm.dto.KbCreateReq;
 import com.example.llm.dto.KbUpdateReq;
 import com.example.llm.entity.KnowledgeBase;
 import com.example.llm.service.KnowledgeBaseService;
+import com.example.llm.vo.KnowledgeBaseVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
@@ -20,22 +21,22 @@ public class KnowledgeBaseController {
     private KnowledgeBaseService knowledgeBaseService;
 
     @PostMapping("/create")
-    public Result<KnowledgeBase> create(@Validated @RequestBody KbCreateReq req) {
+    public Result<KnowledgeBaseVO> create(@Validated @RequestBody KbCreateReq req) {
         return Result.success("创建成功", knowledgeBaseService.createKnowledgeBase(UserContext.getUserId(), req));
     }
 
     @GetMapping("/list")
-    public Result<List<KnowledgeBase>> list() {
+    public Result<List<KnowledgeBaseVO>> list() {
         return Result.success(knowledgeBaseService.getKnowledgeBaseList(UserContext.getUserId()));
     }
 
     @GetMapping("/{id}")
-    public Result<KnowledgeBase> detail(@PathVariable("id") Long id) {
+    public Result<KnowledgeBaseVO> detail(@PathVariable("id") Long id) {
         return Result.success(knowledgeBaseService.getKnowledgeBaseDetail(UserContext.getUserId(), id));
     }
 
     @PutMapping("/{id}")
-    public Result<KnowledgeBase> update(@PathVariable("id") Long id, @Validated @RequestBody KbUpdateReq req) {
+    public Result<KnowledgeBaseVO> update(@PathVariable("id") Long id, @Validated @RequestBody KbUpdateReq req) {
         return Result.success("更新成功", knowledgeBaseService.updateKnowledgeBase(UserContext.getUserId(), id, req));
     }
 
@@ -46,8 +47,8 @@ public class KnowledgeBaseController {
     }
 
     @GetMapping("/by-exam-analysis/{examAnalysisId}")
-    public Result<KnowledgeBase> getByExamAnalysisId(@PathVariable("examAnalysisId") Long examAnalysisId) {
-        KnowledgeBase kb = knowledgeBaseService.getByExamAnalysisId(UserContext.getUserId(), examAnalysisId);
+    public Result<KnowledgeBaseVO> getByExamAnalysisId(@PathVariable("examAnalysisId") Long examAnalysisId) {
+        KnowledgeBaseVO kb = knowledgeBaseService.getByExamAnalysisId(UserContext.getUserId(), examAnalysisId);
         return Result.success(kb);
     }
 }

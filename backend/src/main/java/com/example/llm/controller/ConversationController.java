@@ -4,12 +4,11 @@ import com.example.llm.common.Result;
 import com.example.llm.common.UserContext;
 import com.example.llm.dto.ConversationCreateReq;
 import com.example.llm.dto.ConversationUpdateReq;
-import com.example.llm.entity.Conversation;
 import com.example.llm.service.ConversationService;
+import com.example.llm.vo.ConversationDto;
 import com.example.llm.vo.ConversationListVO;
 import com.example.llm.vo.MessageVO;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -22,7 +21,7 @@ public class ConversationController {
     private ConversationService conversationService;
 
     @PostMapping("/create")
-    public Result<Conversation> create(@Validated @RequestBody ConversationCreateReq req) {
+    public Result<ConversationDto> create(@RequestBody ConversationCreateReq req) {
         return Result.success("创建成功", conversationService.createConversation(UserContext.getUserId(), req));
     }
 
@@ -31,18 +30,17 @@ public class ConversationController {
         return Result.success(conversationService.getConversationList(UserContext.getUserId()));
     }
 
-    @GetMapping("/{id}/messages") // 获取指定会话的所有消息
+    @GetMapping("/{id}/messages")
     public Result<List<MessageVO>> getMessages(@PathVariable("id") Long id) {
         return Result.success(conversationService.getConversationMessages(UserContext.getUserId(), id));
     }
 
-    @PutMapping("/{id}") // 更新指定会话的标题
-    public Result<Void> updateTitle(@PathVariable("id") Long id, @Validated @RequestBody ConversationUpdateReq req) {
-        conversationService.updateConversationTitle(UserContext.getUserId(), id, req);
-        return Result.success("更新成功", null);
+    @PutMapping("/{id}")
+    public Result<ConversationDto> update(@PathVariable("id") Long id, @RequestBody ConversationUpdateReq req) {
+        return Result.success("更新成功", conversationService.updateConversation(UserContext.getUserId(), id, req));
     }
 
-    @DeleteMapping("/{id}") // 删除指定会话
+    @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable("id") Long id) {
         conversationService.deleteConversation(UserContext.getUserId(), id);
         return Result.success("删除成功", null);

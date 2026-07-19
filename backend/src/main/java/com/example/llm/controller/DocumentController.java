@@ -2,9 +2,9 @@ package com.example.llm.controller;
 
 import com.example.llm.common.Result;
 import com.example.llm.common.UserContext;
-import com.example.llm.entity.Document;
 import com.example.llm.service.DocumentService;
 import com.example.llm.vo.DocStatusVO;
+import com.example.llm.vo.DocumentVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -34,19 +34,19 @@ public class DocumentController {
     }
 
     @PostMapping("/upload")
-    public Result<Document> upload(@RequestParam("kbId") Long kbId,
+    public Result<DocumentVO> upload(@RequestParam("kbId") Long kbId,
                                    @RequestParam("file") MultipartFile file) {
         return Result.success("上传成功，正在处理中", 
                 documentService.uploadDocument(UserContext.getUserId(), kbId, file));
     }
 
     @GetMapping("/list")
-    public Result<List<Document>> list(@RequestParam("kbId") Long kbId) {
+    public Result<List<DocumentVO>> list(@RequestParam("kbId") Long kbId) {
         return Result.success(documentService.getDocumentList(UserContext.getUserId(), kbId));
     }
 
     @GetMapping("/{id}")
-    public Result<Document> detail(@PathVariable("id") Long id) {
+    public Result<DocumentVO> detail(@PathVariable("id") Long id) {
         return Result.success(documentService.getDocumentDetail(UserContext.getUserId(), id));
     }
 

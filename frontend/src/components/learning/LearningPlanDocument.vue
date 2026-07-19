@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import AppIcon from '@/components/common/AppIcon.vue'
 import { renderMarkdownToHtml } from '@/utils/markdown'
+import { downloadBlob } from '@/utils/download'
 
 const props = defineProps<{ content: string; loading?: boolean }>()
 const emit = defineEmits<{ update: [content: string] }>()
@@ -21,12 +22,10 @@ function toggleEdit() {
 
 async function copyDocument() { await navigator.clipboard?.writeText(props.content) }
 function downloadDocument() {
-  const url = URL.createObjectURL(new Blob([props.content], { type: 'text/markdown;charset=utf-8' }))
-  const link = document.createElement('a')
-  link.href = url
-  link.download = '个性化学习方案确认稿.md'
-  link.click()
-  URL.revokeObjectURL(url)
+  downloadBlob(
+    new Blob([props.content], { type: 'text/markdown;charset=utf-8' }),
+    '个性化学习方案确认稿.md',
+  )
 }
 </script>
 

@@ -97,7 +97,7 @@ const previewFallback = computed(() => ({
     </div>
 
     <div v-else-if="isReady && preview.kind !== 'none'" class="artifact-card__preview">
-      <img v-if="preview.kind === 'image' && preview.imageUrl" :src="preview.imageUrl" :alt="artifact.title" />
+      <p v-if="preview.kind === 'image'" class="artifact-document">图片已生成，可预览或下载原图。</p>
       <MindMapStaticPreview v-else-if="preview.kind === 'mindmap' && preview.mindMap" :tree="preview.mindMap" :render-config="preview.mindMapConfig" compact />
       <div v-else-if="preview.kind === 'spreadsheet' && preview.table" class="artifact-table">
         <table>
@@ -139,7 +139,6 @@ const previewFallback = computed(() => ({
 .artifact-card__progress > div span { display: block; height: 100%; border-radius: inherit; background: var(--color-primary); transition: width .3s ease; }
 .artifact-card__progress p { margin: 8px 0 0; color: var(--color-text-muted); font-size: 11px; }
 .artifact-card__preview { max-height: 250px; overflow: hidden; border-top: 1px solid var(--color-border); background: var(--color-surface-subtle); }
-.artifact-card__preview > img { display: block; width: 100%; max-height: 250px; object-fit: cover; }
 .artifact-document { margin: 0; padding: 18px; color: var(--color-text-muted); font-size: 13px; line-height: 1.7; white-space: pre-wrap; }
 .artifact-table { overflow: hidden; padding: 10px; }
 .artifact-table table { width: 100%; border-collapse: collapse; background: var(--color-surface); font-size: 11px; }

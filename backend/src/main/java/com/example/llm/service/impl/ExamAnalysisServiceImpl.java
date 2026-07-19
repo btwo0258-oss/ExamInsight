@@ -60,7 +60,7 @@ public class ExamAnalysisServiceImpl extends ServiceImpl<ExamAnalysisMapper, Exa
     @Override
     public Long createExamAnalysis(String title, String examType, String fileNames, List<MultipartFile> files, Long userId) {
         StringBuilder contentBuilder = new StringBuilder();
-        File uploadDir = new File(uploadPath, "exam-analysis");
+        File uploadDir = new File(new File(uploadPath).getAbsoluteFile(), "exam-analysis");
         if (!uploadDir.exists()) {
             uploadDir.mkdirs();
         }
@@ -70,7 +70,7 @@ public class ExamAnalysisServiceImpl extends ServiceImpl<ExamAnalysisMapper, Exa
                 if (file.isEmpty()) continue;
                 try {
                     String savedFileName = UUID.randomUUID().toString().replace("-", "") + "_" + file.getOriginalFilename();
-                    File destFile = new File(uploadDir, savedFileName);
+                    File destFile = new File(uploadDir, savedFileName).getAbsoluteFile();
                     file.transferTo(destFile);
 
                     String text = documentParser.parse(destFile);

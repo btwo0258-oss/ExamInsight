@@ -6,11 +6,14 @@ import com.example.llm.dto.ExamAnalysisCreateReq;
 import com.example.llm.dto.ExamAnalysisUpdateReq;
 import com.example.llm.entity.ExamAnalysis;
 import com.example.llm.service.ExamAnalysisService;
+import com.example.llm.vo.ExamAnalysisVO;
+import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/exam-analysis")
@@ -20,17 +23,20 @@ public class ExamAnalysisController {
     private ExamAnalysisService examAnalysisService;
 
     @GetMapping("/list")
-    public Result<List<ExamAnalysis>> listExamAnalyses() {
+    public Result<List<ExamAnalysisVO>> listExamAnalyses() {
         Long userId = UserContext.getUserId();
         List<ExamAnalysis> list = examAnalysisService.listExamAnalyses(userId);
-        return Result.success(list);
+        List<ExamAnalysisVO> voList = list.stream()
+                .map(this::convertToVO)
+                .collect(Collectors.toList());
+        return Result.success(voList);
     }
 
     @GetMapping("/{id}")
-    public Result<ExamAnalysis> getExamAnalysisDetail(@PathVariable Long id) {
+    public Result<ExamAnalysisVO> getExamAnalysisDetail(@PathVariable Long id) {
         Long userId = UserContext.getUserId();
         ExamAnalysis analysis = examAnalysisService.getExamAnalysisDetail(id, userId);
-        return Result.success(analysis);
+        return Result.success(convertToVO(analysis));
     }
 
     @PostMapping("/create")
@@ -60,16 +66,22 @@ public class ExamAnalysisController {
     }
 
     @PostMapping("/{id}/analyze")
-    public Result<ExamAnalysis> analyzeExam(@PathVariable Long id) {
+    public Result<ExamAnalysisVO> analyzeExam(@PathVariable Long id) {
         Long userId = UserContext.getUserId();
         ExamAnalysis analysis = examAnalysisService.analyzeExam(id, userId);
-        return Result.success(analysis);
+        return Result.success(convertToVO(analysis));
     }
 
     @PostMapping("/{id}/suggestions")
-    public Result<ExamAnalysis> generateSuggestions(@PathVariable Long id) {
+    public Result<ExamAnalysisVO> generateSuggestions(@PathVariable Long id) {
         Long userId = UserContext.getUserId();
         ExamAnalysis analysis = examAnalysisService.generateSuggestions(id, userId);
-        return Result.success(analysis);
+        return Result.success(convertToVO(analysis));
+    }
+
+    private ExamAnalysisVO convertToVO(ExamAnalysis analysis) {
+        ExamAnalysisVO vo = new ExamAnalysisVO();
+        BeanUtils.copyProperties(analysis, vo);
+        return vo;
     }
 }

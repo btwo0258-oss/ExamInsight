@@ -13,6 +13,7 @@ import com.example.llm.mapper.UserSettingsMapper;
 import com.example.llm.service.UserService;
 import com.example.llm.vo.UserInfoVO;
 import com.example.llm.vo.UserLoginVO;
+import com.example.llm.utils.JwtUtils;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -25,6 +26,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
     @Autowired
     private UserSettingsMapper userSettingsMapper;
+
+    @Autowired
+    private JwtUtils jwtUtils;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -53,7 +57,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
         UserLoginVO vo = new UserLoginVO();
         BeanUtils.copyProperties(user, vo);
-        vo.setToken(com.example.llm.utils.JwtUtils.generateToken(user.getId()));
+        vo.setToken(jwtUtils.generateToken(user.getId()));
         return vo;
     }
 
@@ -77,7 +81,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
         UserLoginVO vo = new UserLoginVO();
         BeanUtils.copyProperties(user, vo);
-        vo.setToken(com.example.llm.utils.JwtUtils.generateToken(user.getId()));
+        vo.setToken(jwtUtils.generateToken(user.getId()));
         return vo;
     }
 

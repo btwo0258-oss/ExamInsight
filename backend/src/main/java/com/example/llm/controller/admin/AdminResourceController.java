@@ -51,13 +51,13 @@ public class AdminResourceController {
             return Result.error(400, "不支持的文件类型，仅支持 pdf/docx/doc/txt");
         }
 
-        File uploadDir = new File(uploadPath, "resources");
+        File uploadDir = new File(new File(uploadPath).getAbsoluteFile(), "resources");
         if (!uploadDir.exists()) {
             uploadDir.mkdirs();
         }
 
         String savedFileName = UUID.randomUUID().toString().replace("-", "") + "." + fileType;
-        File destFile = new File(uploadDir, savedFileName);
+        File destFile = new File(uploadDir, savedFileName).getAbsoluteFile();
         file.transferTo(destFile);
 
         Resource resource = new Resource();

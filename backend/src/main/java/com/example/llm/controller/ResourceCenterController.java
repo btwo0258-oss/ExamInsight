@@ -7,9 +7,13 @@ import com.example.llm.entity.Resource;
 import com.example.llm.entity.UserResource;
 import com.example.llm.service.ResourceService;
 import com.example.llm.service.UserResourceService;
+import com.example.llm.vo.ResourceVO;
+import com.example.llm.vo.UserResourceVO;
+import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
+import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -17,9 +21,9 @@ import org.springframework.web.bind.annotation.*;
 
 import java.io.File;
 import java.io.IOException;
-import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/resource")
@@ -35,17 +39,20 @@ public class ResourceCenterController {
     private String uploadPath;
 
     @GetMapping("/list")
-    public Result<List<Resource>> listResources(
+    public Result<List<ResourceVO>> listResources(
             @RequestParam(required = false) String category,
             @RequestParam(required = false) Integer year) {
         List<Resource> list = resourceService.listResources(category, year);
-        return Result.success(list);
+        List<ResourceVO> voList = list.stream()
+                .map(this::convertToVO)
+                .collect(Collectors.toList());
+        return Result.success(voList);
     }
 
     @GetMapping("/{id}")
-    public Result<Resource> getResourceDetail(@PathVariable Long id) {
+    public Result<ResourceVO> getResourceDetail(@PathVariable Long id) {
         Resource resource = resourceService.getResourceDetail(id);
-        return Result.success(resource);
+        return Result.success(convertToVO(resource));
     }
 
     @GetMapping("/download/{id}")
@@ -63,13 +70,13 @@ public class ResourceCenterController {
 
         resourceService.incrementDownloadCount(id);
 
-        String encodedFileName = URLEncoder.encode(resource.getFileName(), StandardCharsets.UTF_8)
-                .replaceAll("\\+", "%20");
-
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
-                .header(HttpHeaders.CONTENT_DISPOSITION,
-                        "attachment; filename=\"" + encodedFileName + "\"; filename*=UTF-8''" + encodedFileName)
+                .contentLength(file.length())
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
+                        .filename(resource.getFileName(), StandardCharsets.UTF_8)
+                        .build()
+                        .toString())
                 .body(new FileSystemResource(file));
     }
 
@@ -95,10 +102,13 @@ public class ResourceCenterController {
     }
 
     @GetMapping("/my-resources")
-    public Result<List<UserResource>> myResources() {
+    public Result<List<UserResourceVO>> myResources() {
         Long userId = UserContext.getUserId();
         List<UserResource> list = userResourceService.listByUser(userId);
-        return Result.success(list);
+        List<UserResourceVO> voList = list.stream()
+                .map(this::convertToUserResourceVO)
+                .collect(Collectors.toList());
+        return Result.success(voList);
     }
 
     @GetMapping("/is-added")
@@ -106,5 +116,17 @@ public class ResourceCenterController {
         Long userId = UserContext.getUserId();
         boolean added = userResourceService.existsByUserAndResource(userId, resourceId);
         return Result.success(added);
+    }
+
+    private ResourceVO convertToVO(Resource resource) {
+        ResourceVO vo = new ResourceVO();
+        BeanUtils.copyProperties(resource, vo);
+        return vo;
+    }
+
+    private UserResourceVO convertToUserResourceVO(UserResource userResource) {
+        UserResourceVO vo = new UserResourceVO();
+        BeanUtils.copyProperties(userResource, vo);
+        return vo;
     }
 }

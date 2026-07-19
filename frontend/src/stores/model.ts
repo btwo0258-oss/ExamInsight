@@ -16,6 +16,9 @@ export const useModelStore = defineStore('model', () => {
     isLoading.value = true
     try {
       list.value = await modelApi.listModels()
+      if (list.value.length && !list.value.some((model) => model.name === current.value)) {
+        setCurrent(list.value[0]!.name)
+      }
     } finally {
       isLoading.value = false
     }

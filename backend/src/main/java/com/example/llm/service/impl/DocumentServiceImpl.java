@@ -10,9 +10,12 @@ import com.example.llm.service.DocumentService;
 import com.example.llm.service.EsService;
 import com.example.llm.service.KnowledgeBaseService;
 import com.example.llm.vo.DocStatusVO;
+import com.example.llm.vo.DocumentVO;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -25,7 +28,8 @@ import java.util.UUID;
 import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.stream.Collectors;
 import jakarta.servlet.http.HttpServletResponse;
 
 @Service
@@ -48,9 +52,24 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
 
     private static final List<String> ALLOWED_TYPES = Arrays.asList("pdf", "docx", "md", "txt");
 
+    private DocumentVO convertToVO(Document doc) {
+        DocumentVO vo = new DocumentVO();
+        BeanUtils.copyProperties(doc, vo);
+        return vo;
+    }
+
+    private Document getDocumentEntity(Long userId, Long docId) {
+        Document doc = this.getById(docId);
+        if (doc == null) {
+            throw new IllegalArgumentException("文档不存在");
+        }
+        knowledgeBaseService.checkOwnership(userId, doc.getKbId());
+        return doc;
+    }
+
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public Document uploadDocument(Long userId, Long kbId, MultipartFile file) {
+    public DocumentVO uploadDocument(Long userId, Long kbId, MultipartFile file) {
         // 1. 校验知识库权限
         knowledgeBaseService.checkOwnership(userId, kbId);
 
@@ -71,14 +90,14 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
         // 3. 保存文件到本地
         String fileName = UUID.randomUUID().toString().replace("-", "") + "." + ext;
         String kbPath = uploadPath + File.separator + "kb_" + kbId;
-        File dir = new File(kbPath);
+        File dir = new File(kbPath).getAbsoluteFile();
         if (!dir.exists() && !dir.mkdirs()) {
             throw new RuntimeException("创建上传目录失败");
         }
 
-        String fullPath = kbPath + File.separator + fileName;
+        String fullPath = new File(dir, fileName).getAbsolutePath();
         try {
-            file.transferTo(new File(fullPath));
+            file.transferTo(new File(fullPath).getAbsoluteFile());
         } catch (IOException e) {
             throw new RuntimeException("文件保存失败", e);
         }
@@ -101,32 +120,33 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
         // 5. 异步触发解析流程 (Apache Tika + 分块)
         asyncDocumentService.processDocument(doc);
 
-        return doc;
+        return convertToVO(doc);
     }
 
     @Override
-    public List<Document> getDocumentList(Long userId, Long kbId) {
+    public List<DocumentVO> getDocumentList(Long userId, Long kbId) {
         knowledgeBaseService.checkOwnership(userId, kbId);
-        return this.list(new LambdaQueryWrapper<Document>()
+        List<Document> docs = this.list(new LambdaQueryWrapper<Document>()
                 .eq(Document::getKbId, kbId)
                 .orderByDesc(Document::getCreateTime));
+        return docs.stream().map(this::convertToVO).collect(Collectors.toList());
     }
 
     @Override
-    public Document getDocumentDetail(Long userId, Long docId) {
+    public DocumentVO getDocumentDetail(Long userId, Long docId) {
         Document doc = this.getById(docId);
         if (doc == null) {
             throw new IllegalArgumentException("文档不存在");
         }
         // 通过知识库校验权限
         knowledgeBaseService.checkOwnership(userId, doc.getKbId());
-        return doc;
+        return convertToVO(doc);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void deleteDocument(Long userId, Long docId) {
-        Document doc = getDocumentDetail(userId, docId);
+        Document doc = getDocumentEntity(userId, docId);
         
         // 1. 删除 ES 中的分块向量数据
         esService.deleteByDocId("knowledge_chunks", docId);
@@ -154,7 +174,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
 
     @Override
     public DocStatusVO getDocumentStatus(Long userId, Long docId) {
-        Document doc = getDocumentDetail(userId, docId);
+        Document doc = getDocumentEntity(userId, docId);
         DocStatusVO vo = new DocStatusVO();
         BeanUtils.copyProperties(doc, vo);
         return vo;
@@ -162,7 +182,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
 
     @Override
     public void downloadDocument(Long userId, Long docId, HttpServletResponse response) {
-        Document doc = getDocumentDetail(userId, docId);
+        Document doc = getDocumentEntity(userId, docId);
         File file = new File(doc.getFilePath());
         
         if (!file.exists()) {
@@ -182,8 +202,13 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
             }
             
             response.setContentType(contentType);
-            // inline 表示尝试在浏览器中预览，attachment 表示下载
-            response.setHeader("Content-Disposition", "inline; filename=\"" + URLEncoder.encode(doc.getFileName(), "UTF-8") + "\"");
+            response.setContentLengthLong(file.length());
+            response.setHeader(
+                    HttpHeaders.CONTENT_DISPOSITION,
+                    ContentDisposition.attachment()
+                            .filename(doc.getFileName(), StandardCharsets.UTF_8)
+                            .build()
+                            .toString());
             
             byte[] buffer = new byte[1024];
             int len;

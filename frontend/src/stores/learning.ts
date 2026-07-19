@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue'
+import { computed, ref, toRaw } from 'vue'
 import { defineStore } from 'pinia'
 import type { CodeLanguageKey, Exercise, LearningPlan, LearningResource, WrongQuestion } from '@/mock'
 import { useLibraryResourceStore } from '@/stores/libraryResource'
@@ -671,7 +671,7 @@ export const useLearningStore = defineStore('learning', () => {
     const plan = getPlan(planId)
     const task = plan && getTask(plan, taskId)
     if (!plan || !task || task.done || task.status === '进行中' || task.status === '已锁定') return
-    const rollbackPlan = isApiDataSource ? structuredClone(plan) : undefined
+    const rollbackPlan = isApiDataSource ? structuredClone(toRaw(plan)) : undefined
     task.status = '进行中'
     plan.status = '进行中'
     plan.updatedAt = '刚刚'
@@ -698,7 +698,7 @@ export const useLearningStore = defineStore('learning', () => {
     const plan = getPlan(planId)
     const task = plan && getTask(plan, taskId)
     if (!plan || !task || task.done || task.status === '已锁定') return false
-    const rollbackPlan = isApiDataSource ? structuredClone(plan) : undefined
+    const rollbackPlan = isApiDataSource ? structuredClone(toRaw(plan)) : undefined
     task.status = '进行中'
     plan.status = '进行中'
     task.completedActions = Array.from(new Set([...(task.completedActions ?? []), action]))

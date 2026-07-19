@@ -153,6 +153,61 @@ const mockMediaRepository: MediaRepository = {
   },
 }
 
+function writeAscii(view: DataView, offset: number, text: string) {
+  for (let index = 0; index < text.length; index += 1) {
+    view.setUint8(offset + index, text.charCodeAt(index))
+  }
+}
+
+function encodeMonoWav(samples: Float32Array, sampleRate: number) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2)
+  const view = new DataView(buffer)
+  writeAscii(view, 0, 'RIFF')
+  view.setUint32(4, 36 + samples.length * 2, true)
+  writeAscii(view, 8, 'WAVE')
+  writeAscii(view, 12, 'fmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true)
+  view.setUint16(22, 1, true)
+  view.setUint32(24, sampleRate, true)
+  view.setUint32(28, sampleRate * 2, true)
+  view.setUint16(32, 2, true)
+  view.setUint16(34, 16, true)
+  writeAscii(view, 36, 'data')
+  view.setUint32(40, samples.length * 2, true)
+  for (let index = 0; index < samples.length; index += 1) {
+    const value = Math.max(-1, Math.min(1, samples[index] ?? 0))
+    view.setInt16(44 + index * 2, value < 0 ? value * 0x8000 : value * 0x7fff, true)
+  }
+  return buffer
+}
+
+async function prepareRecognitionAudio(file: File) {
+  const AudioContextClass = globalThis.AudioContext
+  if (!AudioContextClass) throw new Error('当前浏览器无法转换录音格式，请上传 16kHz 单声道 WAV 或 MP3')
+  const context = new AudioContextClass()
+  try {
+    const decoded = await context.decodeAudioData(await file.arrayBuffer())
+    const sampleRate = 16_000
+    const frameCount = Math.max(1, Math.ceil(decoded.duration * sampleRate))
+    const offline = new OfflineAudioContext(1, frameCount, sampleRate)
+    const source = offline.createBufferSource()
+    source.buffer = decoded
+    source.connect(offline.destination)
+    source.start()
+    const rendered = await offline.startRendering()
+    const wav = encodeMonoWav(rendered.getChannelData(0), sampleRate)
+    const baseName = file.name.replace(/\.[^.]+$/, '') || 'audio'
+    return new File([wav], `${baseName}.wav`, { type: 'audio/wav' })
+  } catch (error) {
+    throw new Error(error instanceof Error
+      ? `录音格式转换失败：${error.message}`
+      : '录音格式转换失败，请上传 16kHz 单声道 WAV 或 MP3')
+  } finally {
+    await context.close().catch(() => undefined)
+  }
+}
+
 const apiMediaRepository: MediaRepository = {
   async uploadImage(file, input, signal) {
     const formData = new FormData()
@@ -166,8 +221,9 @@ const apiMediaRepository: MediaRepository = {
   },
 
   async transcribeAudio(file, input, signal) {
+    const recognitionFile = await prepareRecognitionAudio(file)
     const formData = new FormData()
-    formData.append('file', file)
+    formData.append('file', recognitionFile)
     formData.append('metadata', new Blob([JSON.stringify(input)], { type: 'application/json' }))
     const response = await request.post('/api/media/audio/transcriptions', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
