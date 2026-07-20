@@ -36,6 +36,15 @@ public class XfyunConfig {
     @Value("${xfyun.ppt.base-url:https://zwapi.xfyun.cn/api/ppt/v2}")
     private String pptBaseUrl;
 
+    @Value("${xfyun.embedding.document-url:https://emb-cn-huabei-1.xf-yun.com/}")
+    private String embeddingDocumentUrl;
+
+    @Value("${xfyun.embedding.query-url:https://emb-cn-huabei-1.xf-yun.com/}")
+    private String embeddingQueryUrl;
+
+    @Value("${xfyun.embedding.dimensions:2048}")
+    private int embeddingDimensions;
+
     public String getAppId() { return appId; }
     public String getApiKey() { return apiKey; }
     public String getApiSecret() { return apiSecret; }
@@ -45,6 +54,9 @@ public class XfyunConfig {
     public String getOcrUrl() { return ocrUrl; }
     public String getSpeechUrl() { return speechUrl; }
     public String getPptBaseUrl() { return pptBaseUrl; }
+    public String getEmbeddingDocumentUrl() { return embeddingDocumentUrl; }
+    public String getEmbeddingQueryUrl() { return embeddingQueryUrl; }
+    public int getEmbeddingDimensions() { return embeddingDimensions; }
 
     public String getSparkApiPassword() {
         if (sparkApiPassword != null && !sparkApiPassword.isBlank()) return sparkApiPassword.trim();

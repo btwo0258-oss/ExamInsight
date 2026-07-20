@@ -14,7 +14,6 @@ import com.example.llm.service.EsService;
 import com.example.llm.service.SystemConfigService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
@@ -49,6 +48,11 @@ public class AsyncDocumentServiceImpl implements AsyncDocumentService {
     @Async
     @Override
     public void processDocument(Document doc) {
+        processDocumentSynchronously(doc);
+    }
+
+    @Override
+    public void processDocumentSynchronously(Document doc) {
         // 在处理前捕获原始状态，用于后续正确更新知识库统计
         Integer previousStatus = doc.getStatus();
         Integer previousChunkCount = doc.getChunkCount();
@@ -89,7 +93,7 @@ public class AsyncDocumentServiceImpl implements AsyncDocumentService {
                 chunk.setEsId(esId);
                 
                 try {
-                    List<Double> embedding = embeddingService.getEmbedding(chunkText);
+                    List<Double> embedding = embeddingService.getDocumentEmbedding(chunkText);
                     esService.saveChunk(INDEX_NAME, esId, doc.getKbId(), doc.getId(), i, chunkText, embedding);
                     chunk.setEmbeddingStatus(1);
                     successCount++;

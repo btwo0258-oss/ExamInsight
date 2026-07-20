@@ -78,6 +78,7 @@ services:
       XFYUN_API_KEY: ${XFYUN_API_KEY:-}
       XFYUN_API_SECRET: ${XFYUN_API_SECRET:-}
       XFYUN_SPARK_API_PASSWORD: ${XFYUN_SPARK_API_PASSWORD:-}
+      EMBEDDING_REINDEX_ON_STARTUP: ${EMBEDDING_REINDEX_ON_STARTUP:-false}
       JAVA_TOOL_OPTIONS: -Xms256m -Xmx1024m -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai
       TZ: Asia/Shanghai
     volumes:

@@ -256,7 +256,7 @@ public class ChatServiceImpl implements ChatService {
                     int topK = systemConfigService.getIntConfig("rag.top_k", 3);
                     double minScore = systemConfigService.getDoubleConfig("rag.min_score", 0.5);
 
-                    List<Double> vector = embeddingService.getEmbedding(req.getQuestion());
+                    List<Double> vector = embeddingService.getQueryEmbedding(req.getQuestion());
                     List<Map<String, Object>> similarChunks = esService.searchSimilarChunks("knowledge_chunks", conversation.getKbId(), vector, topK, minScore);
                     
                     if (similarChunks != null && !similarChunks.isEmpty()) {

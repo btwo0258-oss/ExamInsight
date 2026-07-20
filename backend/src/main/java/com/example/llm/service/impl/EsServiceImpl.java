@@ -4,9 +4,11 @@ import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch.core.DeleteByQueryRequest;
 import co.elastic.clients.elasticsearch.core.IndexRequest;
 import co.elastic.clients.elasticsearch.indices.CreateIndexRequest;
+import co.elastic.clients.elasticsearch.indices.DeleteIndexRequest;
 import co.elastic.clients.elasticsearch.indices.ExistsRequest;
 import com.example.llm.service.EsService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayInputStream;
@@ -20,6 +22,9 @@ public class EsServiceImpl implements EsService {
     @Autowired
     private ElasticsearchClient esClient;
 
+    @Value("${xfyun.embedding.dimensions:2048}")
+    private int embeddingDimensions;
+
     @Override
     public void createIndexIfNotExists(String indexName) {
         try {
@@ -32,7 +37,7 @@ public class EsServiceImpl implements EsService {
                         "      \"docId\": { \"type\": \"keyword\" },\n" +
                         "      \"chunkIndex\": { \"type\": \"integer\" },\n" +
                         "      \"content\": { \"type\": \"text\", \"analyzer\": \"standard\" },\n" +
-                        "      \"embedding\": { \"type\": \"dense_vector\", \"dims\": 1536, \"index\": true, \"similarity\": \"cosine\" }\n" +
+                        "      \"embedding\": { \"type\": \"dense_vector\", \"dims\": " + embeddingDimensions + ", \"index\": true, \"similarity\": \"cosine\" }\n" +
                         "    }\n" +
                         "  }\n" +
                         "}";
@@ -44,6 +49,16 @@ public class EsServiceImpl implements EsService {
             }
         } catch (Exception e) {
             throw new RuntimeException("创建 ES 索引失败", e);
+        }
+    }
+
+    @Override
+    public void deleteIndex(String indexName) {
+        try {
+            boolean exists = esClient.indices().exists(ExistsRequest.of(e -> e.index(indexName))).value();
+            if (exists) esClient.indices().delete(DeleteIndexRequest.of(d -> d.index(indexName)));
+        } catch (Exception e) {
+            throw new RuntimeException("删除 ES 索引失败", e);
         }
     }
 
