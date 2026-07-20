@@ -1,7 +1,7 @@
 const { app, BrowserWindow, session, shell } = require('electron')
 const path = require('node:path')
 
-const APP_URL = 'http://47.99.134.139/'
+const APP_URL = 'https://47.99.134.139/'
 const APP_ORIGIN = new URL(APP_URL).origin
 const ALLOWED_PERMISSIONS = new Set(['media', 'clipboard-sanitized-write', 'fullscreen'])
 

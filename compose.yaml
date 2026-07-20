@@ -98,15 +98,46 @@ services:
     build:
       context: ./frontend
     restart: unless-stopped
+    command:
+      - /bin/sh
+      - -c
+      - |
+        (while sleep 4h; do nginx -s reload; done) &
+        exec nginx -g 'daemon off;'
     depends_on:
       - backend
     ports:
       - "80:80"
+      - "443:443"
+    volumes:
+      - letsencrypt_data:/etc/letsencrypt:ro
+      - certbot_webroot:/var/www/certbot:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/health"]
       interval: 30s
       timeout: 5s
       retries: 5
+    networks:
+      - internal
+
+  certbot:
+    image: certbot/certbot:v5.4.0
+    restart: unless-stopped
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        trap exit TERM
+        while :; do
+          certbot renew --quiet
+          sleep 4h & wait $${!}
+        done
+    volumes:
+      - letsencrypt_data:/etc/letsencrypt
+      - certbot_webroot:/var/www/certbot
+    depends_on:
+      frontend:
+        condition: service_healthy
     networks:
       - internal
 
@@ -119,3 +150,5 @@ volumes:
   redis_data:
   elasticsearch_data:
   uploads_data:
+  letsencrypt_data:
+  certbot_webroot:
