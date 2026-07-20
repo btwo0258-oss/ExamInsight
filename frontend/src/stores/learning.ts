@@ -24,6 +24,7 @@ import type { AsyncJob } from '@/types/contracts/common'
 import type { ChatArtifactDto } from '@/types/contracts/artifact'
 import type { ResourceFileType } from '@/types/contracts/library'
 import { isApiDataSource } from '@/config/dataSource'
+import { createRandomId } from '@/utils/randomId'
 
 export type ProjectGeneratedResourceInput = Omit<GeneratedProjectResourceRequest, 'clientRequestId'> & {
   projectId: number
@@ -270,7 +271,7 @@ export const useLearningStore = defineStore('learning', () => {
     try {
       const updated = await learningRepository.recordActivity({
         ...input,
-        clientRequestId: crypto.randomUUID(),
+        clientRequestId: createRandomId('learning-activity'),
       })
       if (applyServerPlan) replacePlanFromServer(updated)
     } catch (error) {
@@ -754,7 +755,7 @@ export const useLearningStore = defineStore('learning', () => {
           answer: exercise.draftAnswer!,
           language: exercise.selectedLanguage,
         })),
-        clientRequestId: crypto.randomUUID(),
+        clientRequestId: createRandomId('learning-submit'),
       })
       clearExerciseDrafts(planId, exercises.map((exercise) => exercise.id))
       replacePlanFromServer(await learningRepository.getPlan(planId))
@@ -900,7 +901,7 @@ export const useLearningStore = defineStore('learning', () => {
         exerciseId,
         answer: userAnswer,
         language: exercise.selectedLanguage,
-        clientRequestId: crypto.randomUUID(),
+        clientRequestId: createRandomId('learning-submit'),
       })
       clearExerciseDrafts(planId, [exerciseId])
       replacePlanFromServer(await learningRepository.getPlan(planId))
@@ -979,7 +980,7 @@ export const useLearningStore = defineStore('learning', () => {
         exerciseId: exercise.id,
         answer,
         language: exercise.selectedLanguage,
-        clientRequestId: crypto.randomUUID(),
+        clientRequestId: createRandomId('learning-submit'),
       })
       clearExerciseDrafts(planId, [exercise.id])
       replacePlanFromServer(await learningRepository.getPlan(planId))
@@ -1067,7 +1068,7 @@ export const useLearningStore = defineStore('learning', () => {
     const plan = getPlan(planId)
     const set = plan?.wrongReviewSets?.find((item) => item.id === setId)
     if (!plan || !set) return false
-    const updated = await learningRepository.startWrongReviewSet(planId, setId, crypto.randomUUID())
+    const updated = await learningRepository.startWrongReviewSet(planId, setId, createRandomId('learning-review'))
     replacePlanFromServer(updated)
     return true
   }
@@ -1087,7 +1088,7 @@ export const useLearningStore = defineStore('learning', () => {
           answer: item.draftAnswer!,
           language: item.selectedLanguage,
         })),
-        clientRequestId: crypto.randomUUID(),
+        clientRequestId: createRandomId('learning-review-submit'),
       })
       clearExerciseDrafts(planId, exercises.map((exercise) => exercise.id))
       replacePlanFromServer(await learningRepository.getPlan(planId))

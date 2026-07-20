@@ -18,6 +18,7 @@ import type { LearningProfileData, LearningSetupStateDto } from '@/types/contrac
 import { isMockDataSource } from '@/config/dataSource'
 import type { ChatClientAction } from '@/repositories/chat'
 import { snapshotLearningProfile } from '@/utils/learningSetup'
+import { createRandomId } from '@/utils/randomId'
 
 const conversationStore = useConversationStore()
 const messageStore = useMessageStore()
@@ -78,7 +79,7 @@ const learningMediaAssetIds = ref<string[]>([])
 const learningSourceResourceIds = ref<string[]>([])
 const learningUploadedFileNames = ref<string[]>([])
 const learningConfirmationResourceId = ref<string | null>(null)
-const learningSetupId = ref<string>(crypto.randomUUID())
+const learningSetupId = ref<string>(createRandomId('learning-setup'))
 const completedLearningSetupProjectIds = new Set<number>()
 let restoringLearningSetup = false
 
@@ -250,7 +251,7 @@ async function requestLearningConfirmation() {
     mediaAssetIds: learningMediaAssetIds.value,
     projectId: projectId.value,
     confirmationResourceId: learningConfirmationResourceId.value,
-    clientRequestId: crypto.randomUUID(),
+    clientRequestId: createRandomId('learning-confirmation'),
   })
   learningConfirmationResourceId.value = result.resourceId
   learningSourceResourceIds.value = [...new Set([...learningSourceResourceIds.value, result.resourceId])]
@@ -1031,7 +1032,7 @@ watch(
     learningSourceResourceIds.value = []
     learningUploadedFileNames.value = []
     learningConfirmationResourceId.value = null
-    learningSetupId.value = crypto.randomUUID()
+    learningSetupId.value = createRandomId('learning-setup')
     if (activeProjectId) void restoreLearningSetup(activeProjectId)
   },
   { flush: 'sync' },

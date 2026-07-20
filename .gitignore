@@ -40,3 +40,7 @@ desktop.ini
 *.jar
 !backend/libs/*.jar
 out/
+
+# ==================== 部署密钥 ====================
+.env
+!.env.example

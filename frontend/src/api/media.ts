@@ -1,4 +1,5 @@
 import { mediaRepository } from "@/repositories/media";
+import { createRandomId } from "@/utils/randomId";
 import type {
   AudioTranscriptionDto,
   CreateImageRecognitionRequest,
@@ -22,7 +23,7 @@ export async function uploadImage(
   input: Omit<UploadImageRequest, "clientRequestId">,
   signal?: AbortSignal,
 ): Promise<MediaAssetDto> {
-  const clientRequestId = crypto.randomUUID();
+  const clientRequestId = createRandomId("media");
   return mediaRepository.uploadImage(file, { ...input, clientRequestId }, signal);
 }
 
@@ -31,7 +32,7 @@ export async function transcribeAudio(
   input: Omit<TranscribeAudioRequest, "clientRequestId">,
   signal?: AbortSignal,
 ): Promise<AudioTranscriptionDto> {
-  const clientRequestId = crypto.randomUUID();
+  const clientRequestId = createRandomId("media");
   return mediaRepository.transcribeAudio(file, { ...input, clientRequestId }, signal);
 }
 
