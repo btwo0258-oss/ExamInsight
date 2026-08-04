@@ -66,13 +66,30 @@ services:
       DB_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-LLM}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
       DB_USERNAME: ${MYSQL_USER:-examinsight}
       DB_PASSWORD: ${MYSQL_PASSWORD:?Copy .env.example to .env and set MYSQL_PASSWORD}
+      V2_FLYWAY_ENABLED: "true"
+      V2_DB_URL: jdbc:mysql://mysql:3306/examinsight_v2?useUnicode=true&characterEncoding=utf8&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true&useSSL=false&allowPublicKeyRetrieval=true
+      V2_DB_USERNAME: ${MYSQL_USER:-examinsight}
+      V2_DB_PASSWORD: ${MYSQL_PASSWORD:?Copy .env.example to .env and set MYSQL_PASSWORD}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       ELASTICSEARCH_HOST: elasticsearch
       ELASTICSEARCH_PORT: 9200
       UPLOAD_PATH: /app/data/uploads
       CORS_ALLOWED_ORIGIN_PATTERNS: ${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN in .env}
-      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      AUTH_HASH_SECRET: ${AUTH_HASH_SECRET:?Set AUTH_HASH_SECRET in .env}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
+      HUMAN_VERIFICATION_MODE: ${HUMAN_VERIFICATION_MODE:-aliyun}
+      ALIYUN_CAPTCHA_SCENE_ID: ${ALIYUN_CAPTCHA_SCENE_ID:?Set ALIYUN_CAPTCHA_SCENE_ID in .env}
+      ALIYUN_CAPTCHA_ENDPOINT: ${ALIYUN_CAPTCHA_ENDPOINT:-captcha.cn-shanghai.aliyuncs.com}
+      ALIBABA_CLOUD_ACCESS_KEY_ID: ${ALIBABA_CLOUD_ACCESS_KEY_ID:?Set a least-privilege RAM AccessKey ID}
+      ALIBABA_CLOUD_ACCESS_KEY_SECRET: ${ALIBABA_CLOUD_ACCESS_KEY_SECRET:?Set the RAM AccessKey secret}
+      SMTP_HOST: ${SMTP_HOST:?Set SMTP_HOST in .env}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:?Set SMTP_USERNAME in .env}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:?Set SMTP_PASSWORD in .env}
+      SMTP_AUTH: ${SMTP_AUTH:-true}
+      SMTP_STARTTLS_ENABLE: ${SMTP_STARTTLS_ENABLE:-true}
+      AUTH_MAIL_FROM: ${AUTH_MAIL_FROM:?Set AUTH_MAIL_FROM in .env}
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
       XFYUN_APP_ID: ${XFYUN_APP_ID:-}
       XFYUN_API_KEY: ${XFYUN_API_KEY:-}
@@ -98,6 +115,10 @@ services:
   frontend:
     build:
       context: ./frontend
+      args:
+        VITE_ALIYUN_CAPTCHA_REGION: ${ALIYUN_CAPTCHA_REGION:-cn}
+        VITE_ALIYUN_CAPTCHA_PREFIX: ${ALIYUN_CAPTCHA_PREFIX:?Set ALIYUN_CAPTCHA_PREFIX in .env}
+        VITE_ALIYUN_CAPTCHA_SCENE_ID: ${ALIYUN_CAPTCHA_SCENE_ID:?Set ALIYUN_CAPTCHA_SCENE_ID in .env}
     restart: unless-stopped
     command:
       - /bin/sh

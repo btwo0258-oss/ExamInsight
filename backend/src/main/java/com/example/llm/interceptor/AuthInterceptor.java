@@ -1,22 +1,35 @@
 package com.example.llm.interceptor;
 
-import com.alibaba.fastjson2.JSON;
-import com.example.llm.common.Result;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.example.llm.auth.api.AuthApiException;
+import com.example.llm.auth.api.AuthDtos;
+import com.example.llm.auth.domain.AuthModels;
+import com.example.llm.auth.security.AuthCookieManager;
+import com.example.llm.auth.security.AuthCrypto;
+import com.example.llm.auth.service.AuthApplicationService;
 import com.example.llm.common.UserContext;
-import com.example.llm.utils.JwtUtils;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 @Component
 public class AuthInterceptor implements HandlerInterceptor {
+    private final AuthApplicationService authService;
+    private final AuthCookieManager cookieManager;
+    private final AuthCrypto crypto;
+    private final ObjectMapper objectMapper;
 
-    private final JwtUtils jwtUtils;
-
-    public AuthInterceptor(JwtUtils jwtUtils) {
-        this.jwtUtils = jwtUtils;
+    public AuthInterceptor(
+            AuthApplicationService authService,
+            AuthCookieManager cookieManager,
+            AuthCrypto crypto,
+            ObjectMapper objectMapper) {
+        this.authService = authService;
+        this.cookieManager = cookieManager;
+        this.crypto = crypto;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -25,35 +38,54 @@ public class AuthInterceptor implements HandlerInterceptor {
             return true;
         }
 
-        // 支持从 Authorization 请求头或 token 请求头中获取
-        String token = request.getHeader("Authorization");
-        if (!StringUtils.hasText(token)) {
-            token = request.getHeader("token");
-        }
-        
-        if (StringUtils.hasText(token)) {
-            // 去除可能的 Bearer 前缀
-            if (token.startsWith("Bearer ")) {
-                token = token.substring(7);
-            }
-            // 去除可能包含的引号 (用户从JSON响应中复制时可能带上引号)
-            token = token.replace("\"", "").trim();
-            
-            Long userId = jwtUtils.getUserIdFromToken(token);
-            if (userId != null) {
-                UserContext.setUserId(userId);
-                return true;
-            }
+        if (!request.getRequestURI().startsWith(request.getContextPath() + "/api/v2/")) {
+            writeError(response, new AuthApiException(
+                    org.springframework.http.HttpStatus.GONE,
+                    "LEGACY_API_DISABLED",
+                    "旧版接口已停用，请升级到 V2 客户端。"));
+            return false;
         }
 
-        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-        response.setContentType("application/json;charset=utf-8");
-        response.getWriter().write(JSON.toJSONString(Result.error(401, "未认证或Token已过期，请重新登录")));
-        return false;
+        try {
+            AuthModels.AuthenticatedSession session = authService.authenticate(
+                    cookieManager.readSessionToken(request));
+            if (session.rotatedSessionToken() != null) {
+                cookieManager.writeRotated(
+                        response, session.rotatedSessionToken(), session.rotatedCsrfToken());
+            }
+
+            if (requiresCsrf(request)
+                    && !crypto.matches("csrf-token", request.getHeader("X-CSRF-Token"),
+                    session.csrfSecretHash())) {
+                throw new AuthApiException(org.springframework.http.HttpStatus.FORBIDDEN,
+                        "CSRF_VALIDATION_FAILED", "请求校验已失效，请刷新页面后重试。");
+            }
+
+            UserContext.setSession(session);
+            return true;
+        } catch (AuthApiException exception) {
+            writeError(response, exception);
+            return false;
+        }
     }
 
     @Override
     public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) {
         UserContext.remove();
+    }
+
+    private boolean requiresCsrf(HttpServletRequest request) {
+        return !HttpMethod.GET.matches(request.getMethod())
+                && !HttpMethod.HEAD.matches(request.getMethod())
+                && !HttpMethod.OPTIONS.matches(request.getMethod());
+    }
+
+    private void writeError(HttpServletResponse response, AuthApiException exception) throws Exception {
+        response.setStatus(exception.status().value());
+        response.setContentType("application/json;charset=utf-8");
+        response.setHeader("Cache-Control", "no-store");
+        AuthDtos.ErrorBody body = new AuthDtos.ErrorBody(
+                exception.code(), exception.getMessage(), crypto.newExternalId(), exception.details());
+        objectMapper.writeValue(response.getWriter(), new AuthDtos.ErrorEnvelope(body));
     }
 }

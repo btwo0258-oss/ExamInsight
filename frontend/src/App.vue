@@ -37,7 +37,7 @@ async function loadAuthenticatedData() {
 }
 
 onMounted(async () => {
-  authStore.init()
+  await authStore.init()
   if (authStore.isAuthed) await loadAuthenticatedData()
 })
 

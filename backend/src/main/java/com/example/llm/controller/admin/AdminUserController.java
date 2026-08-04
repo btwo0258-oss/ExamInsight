@@ -2,14 +2,12 @@ package com.example.llm.controller.admin;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.example.llm.common.Result;
-import com.example.llm.entity.PasswordResetRequest;
 import com.example.llm.entity.User;
 import com.example.llm.entity.UserSettings;
 import com.example.llm.mapper.ConversationMapper;
 import com.example.llm.mapper.DocumentMapper;
 import com.example.llm.mapper.KnowledgeBaseMapper;
 import com.example.llm.mapper.MindMapMapper;
-import com.example.llm.mapper.PasswordResetRequestMapper;
 import com.example.llm.mapper.UserMapper;
 import com.example.llm.mapper.UserSettingsMapper;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -42,9 +40,6 @@ public class AdminUserController {
     @Autowired
     private UserSettingsMapper userSettingsMapper;
 
-    @Autowired
-    private PasswordResetRequestMapper passwordResetRequestMapper;
-
     @GetMapping
     public Result<List<Map<String, Object>>> getAllUsers() {
         QueryWrapper<User> userQueryWrapper = new QueryWrapper<>();
@@ -72,11 +67,6 @@ public class AdminUserController {
             stats.put("mindMapCount", mindMapMapper.selectCount(new QueryWrapper<com.example.llm.entity.MindMap>().eq("user_id", user.getId())));
             stats.put("fileCount", documentMapper.selectCount(new QueryWrapper<com.example.llm.entity.Document>().eq("user_id", user.getId())));
             
-            QueryWrapper<PasswordResetRequest> resetQuery = new QueryWrapper<>();
-            resetQuery.eq("user_id", user.getId()).eq("status", 0);
-            boolean hasForgot = passwordResetRequestMapper.selectCount(resetQuery) > 0;
-            
-            map.put("hasForgotRequest", hasForgot);
             map.put("stats", stats);
 
             return map;
@@ -112,11 +102,6 @@ public class AdminUserController {
         stats.put("mindMapCount", mindMapMapper.selectCount(new QueryWrapper<com.example.llm.entity.MindMap>().eq("user_id", user.getId())));
         stats.put("fileCount", documentMapper.selectCount(new QueryWrapper<com.example.llm.entity.Document>().eq("user_id", user.getId())));
         
-        QueryWrapper<PasswordResetRequest> resetQuery = new QueryWrapper<>();
-        resetQuery.eq("user_id", user.getId()).eq("status", 0);
-        boolean hasForgot = passwordResetRequestMapper.selectCount(resetQuery) > 0;
-        
-        map.put("hasForgotRequest", hasForgot);
         map.put("stats", stats);
 
         // preferences
@@ -141,41 +126,4 @@ public class AdminUserController {
         return Result.success(Map.of("success", true));
     }
 
-    @PostMapping("/{id}/reset-password")
-    public Result<Map<String, Boolean>> resetPassword(@PathVariable Long id) {
-        User user = userMapper.selectById(id);
-        if (user != null) {
-            user.setPassword(cn.hutool.crypto.digest.BCrypt.hashpw("123456", cn.hutool.crypto.digest.BCrypt.gensalt()));
-            userMapper.updateById(user);
-            
-            PasswordResetRequest updateReq = new PasswordResetRequest();
-            updateReq.setStatus(1);
-            QueryWrapper<PasswordResetRequest> query = new QueryWrapper<>();
-            query.eq("user_id", id).eq("status", 0);
-            passwordResetRequestMapper.update(updateReq, query);
-        }
-        return Result.success(Map.of("success", true));
-    }
-
-    @PostMapping("/{id}/handle-reset-request")
-    public Result<Map<String, Boolean>> handleResetRequest(@PathVariable Long id, @RequestBody Map<String, Object> payload) {
-        Long userId = id;
-        Integer action = (Integer) payload.get("action");
-        
-        if (action != null && action == 1) {
-            User user = userMapper.selectById(userId);
-            if (user != null) {
-                user.setPassword(cn.hutool.crypto.digest.BCrypt.hashpw("123456", cn.hutool.crypto.digest.BCrypt.gensalt()));
-                userMapper.updateById(user);
-            }
-        }
-        
-        PasswordResetRequest updateReq = new PasswordResetRequest();
-        updateReq.setStatus(action != null && action == 1 ? 1 : 2);
-        QueryWrapper<PasswordResetRequest> query = new QueryWrapper<>();
-        query.eq("user_id", userId).eq("status", 0);
-        passwordResetRequestMapper.update(updateReq, query);
-        
-        return Result.success(Map.of("success", true));
-    }
 }

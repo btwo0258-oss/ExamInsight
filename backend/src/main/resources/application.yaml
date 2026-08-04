@@ -4,8 +4,27 @@ server:
 app:
   cors:
     allowed-origin-patterns: ${CORS_ALLOWED_ORIGIN_PATTERNS:http://localhost:*,http://127.0.0.1:*}
-  jwt:
-    secret: ${JWT_SECRET:}
+  v2:
+    datasource:
+      url: ${V2_DB_URL:jdbc:mysql://localhost:3306/examinsight_v2?useUnicode=true&characterEncoding=utf8&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true&useSSL=false&allowPublicKeyRetrieval=true}
+      username: ${V2_DB_USERNAME:${DB_USERNAME:root}}
+      password: ${V2_DB_PASSWORD:${DB_PASSWORD:}}
+      driver-class-name: com.mysql.cj.jdbc.Driver
+  auth:
+    hash-secret: ${AUTH_HASH_SECRET:}
+    cookie:
+      name: EXAMINSIGHT_SESSION
+      csrf-name: XSRF-TOKEN
+      secure: ${AUTH_COOKIE_SECURE:false}
+      same-site: Lax
+    human-verification:
+      mode: ${HUMAN_VERIFICATION_MODE:disabled}
+      verify-url: ${HUMAN_VERIFICATION_VERIFY_URL:}
+      secret: ${HUMAN_VERIFICATION_SECRET:}
+      scene-id: ${ALIYUN_CAPTCHA_SCENE_ID:}
+      endpoint: ${ALIYUN_CAPTCHA_ENDPOINT:captcha.cn-shanghai.aliyuncs.com}
+    mail:
+      from: ${AUTH_MAIL_FROM:}
 
 spring:
   config:
@@ -17,10 +36,36 @@ spring:
     password: ${DB_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
 
+  # V2 migrations deliberately use a separate schema while the legacy application
+  # still reads from spring.datasource. Enable only after the empty V2 schema exists.
+  flyway:
+    enabled: ${V2_FLYWAY_ENABLED:false}
+    url: ${V2_DB_URL:jdbc:mysql://localhost:3306/examinsight_v2?useUnicode=true&characterEncoding=utf8&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true&useSSL=false&allowPublicKeyRetrieval=true}
+    user: ${V2_DB_USERNAME:${DB_USERNAME:root}}
+    password: ${V2_DB_PASSWORD:${DB_PASSWORD:}}
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+    clean-disabled: true
+    validate-migration-naming: true
+    validate-on-migrate: true
+    out-of-order: false
+
   data:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+
+  mail:
+    host: ${SMTP_HOST:}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: ${SMTP_AUTH:true}
+          starttls:
+            enable: ${SMTP_STARTTLS_ENABLE:true}
 
   servlet:
     multipart:

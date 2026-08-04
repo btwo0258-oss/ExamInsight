@@ -57,7 +57,14 @@ function setupStores(generateLearningProfile: ReturnType<typeof vi.fn>) {
   setActivePinia(pinia)
 
   const authStore = useAuthStore()
-  authStore.token = 'test-token'
+  authStore.session = {
+    userId: 'test-user',
+    email: 'test@example.com',
+    displayName: '测试用户',
+    authLevel: 'PASSWORD',
+    idleExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+    absoluteExpiresAt: new Date(Date.now() + 120_000).toISOString(),
+  }
   authStore.isReady = true
 
   const conversationStore = useConversationStore()

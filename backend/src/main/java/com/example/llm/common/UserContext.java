@@ -1,17 +1,34 @@
 package com.example.llm.common;
 
-public class UserContext {
-    private static final ThreadLocal<Long> USER_ID = new ThreadLocal<>();
+import com.example.llm.auth.api.AuthApiException;
+import com.example.llm.auth.domain.AuthModels;
+import org.springframework.http.HttpStatus;
 
-    public static void setUserId(Long userId) {
-        USER_ID.set(userId);
+public class UserContext {
+    private static final ThreadLocal<AuthModels.AuthenticatedSession> SESSION = new ThreadLocal<>();
+
+    private UserContext() {
+    }
+
+    public static void setSession(AuthModels.AuthenticatedSession session) {
+        SESSION.set(session);
     }
 
     public static Long getUserId() {
-        return USER_ID.get();
+        AuthModels.AuthenticatedSession session = SESSION.get();
+        return session == null ? null : session.userId();
+    }
+
+    public static AuthModels.AuthenticatedSession requireSession() {
+        AuthModels.AuthenticatedSession session = SESSION.get();
+        if (session == null) {
+            throw new AuthApiException(HttpStatus.UNAUTHORIZED,
+                    "SESSION_INVALID", "登录状态已失效，请重新登录。");
+        }
+        return session;
     }
 
     public static void remove() {
-        USER_ID.remove();
+        SESSION.remove();
     }
 }

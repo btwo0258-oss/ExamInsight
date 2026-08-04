@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import AppIcon from "@/components/common/AppIcon.vue";
-import { getStoredToken } from "@/api/request";
+import { sessionFetch } from "@/api/request";
 import mammoth from "mammoth";
 
 const props = defineProps<{
@@ -31,8 +31,8 @@ function resourceId() {
   return id.includes("-") || id.includes(":") ? id : `doc-${id}`;
 }
 
-async function fetchPreviewFile(headers: Record<string, string>) {
-  return fetch(`/api/resources/${resourceId()}/preview-file`, { headers });
+async function fetchPreviewFile() {
+  return sessionFetch(`/api/resources/${resourceId()}/preview-file`);
 }
 
 async function loadPreview() {
@@ -47,12 +47,9 @@ async function loadPreview() {
 
   try {
     // Use fetch to avoid axios interceptor issues with blob responses
-    const token = getStoredToken();
-    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-
     if (type === "pdf") {
       previewMode.value = "pdf";
-      const response = await fetchPreviewFile(headers);
+      const response = await fetchPreviewFile();
       if (!response.ok) {
         const text = await response.text();
         try {
@@ -66,7 +63,7 @@ async function loadPreview() {
       previewUrl.value = URL.createObjectURL(blob);
     } else if (["png", "jpg", "jpeg", "gif", "bmp", "webp"].includes(type)) {
       previewMode.value = "image";
-      const response = await fetchPreviewFile(headers);
+      const response = await fetchPreviewFile();
       if (!response.ok) {
         const text = await response.text();
         try {
@@ -80,7 +77,7 @@ async function loadPreview() {
       previewUrl.value = URL.createObjectURL(blob);
     } else if (["txt", "md"].includes(type)) {
       previewMode.value = "text";
-      const response = await fetchPreviewFile(headers);
+      const response = await fetchPreviewFile();
       if (!response.ok) {
         const text = await response.text();
         try {
@@ -93,7 +90,7 @@ async function loadPreview() {
       textContent.value = await response.text();
     } else if (type === "docx") {
       previewMode.value = "docx";
-      const response = await fetchPreviewFile(headers);
+      const response = await fetchPreviewFile();
       if (!response.ok) {
         const text = await response.text();
         try {

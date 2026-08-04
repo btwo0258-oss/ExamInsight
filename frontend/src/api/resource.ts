@@ -1,4 +1,4 @@
-import { request } from "./request";
+import { request, sessionFetch } from "./request";
 import { downloadBlob } from "@/utils/download";
 
 export interface ResourceItem {
@@ -40,15 +40,10 @@ export async function getResourceDetail(id: number): Promise<ResourceItem> {
 
 export async function downloadResource(id: number): Promise<void> {
   const baseURL = import.meta.env.VITE_API_BASE_URL ?? "";
-  const token = sessionStorage.getItem("llm.token") || localStorage.getItem("llm.token");
   const url = `${baseURL}/api/resource/download/${id}`;
 
   try {
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
+    const response = await sessionFetch(url);
 
     if (!response.ok) {
       if (response.status === 401) {

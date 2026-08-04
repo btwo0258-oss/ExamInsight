@@ -7,6 +7,7 @@ import MindMapStaticPreview from "@/components/artifact/MindMapStaticPreview.vue
 import StudentShell from "@/components/layout/StudentShell.vue";
 import PresentationSlidePreview from "@/components/presentation/PresentationSlidePreview.vue";
 import { downloadLibraryResource, previewLibraryResource } from "@/api/libraryResource";
+import { sessionFetch } from "@/api/request";
 import { isMockDataSource } from "@/config/dataSource";
 import { presentationRepository } from "@/repositories/presentation";
 import { spreadsheetRepository } from "@/repositories/spreadsheet";
@@ -174,10 +175,7 @@ async function loadWord(url: string, fileName: string) {
   if (!fileName.toLowerCase().endsWith(".docx")) {
     throw new Error("Mock 环境暂不转换旧版 .doc，正式环境由后端转换后预览");
   }
-  const token = localStorage.getItem("llm.token") || sessionStorage.getItem("llm.token");
-  const response = await fetch(url, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
+  const response = await sessionFetch(url);
   const mammoth = await import("mammoth");
   const result = await mammoth.convertToHtml({ arrayBuffer: await response.arrayBuffer() });
   wordHtml.value = result.value;
@@ -186,10 +184,7 @@ async function loadWord(url: string, fileName: string) {
 async function loadUploadedSpreadsheet(url: string) {
   const ExcelJS = await import("exceljs");
   const workbook = new ExcelJS.Workbook();
-  const token = localStorage.getItem("llm.token") || sessionStorage.getItem("llm.token");
-  const response = await fetch(url, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
+  const response = await sessionFetch(url);
   await workbook.xlsx.load(await response.arrayBuffer());
   sheets.value = workbook.worksheets.map((worksheet, sheetIndex) => {
     const rows = worksheet.getSheetValues().slice(1) as unknown[][];
@@ -236,10 +231,7 @@ async function loadPreview() {
         value.previewKind === "audio") &&
       value.previewUrl
     ) {
-      const token = localStorage.getItem("llm.token") || sessionStorage.getItem("llm.token");
-      const response = await fetch(value.previewUrl, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
+      const response = await sessionFetch(value.previewUrl);
       if (response.ok) {
         const blob = await response.blob();
         value.previewUrl = URL.createObjectURL(blob);

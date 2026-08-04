@@ -1,4 +1,4 @@
-import { getStoredToken, request } from '@/api/request'
+import { request, sessionFetch } from '@/api/request'
 import { generateMindMapFromAi } from '@/api/mindmap'
 import { isMockDataSource } from '@/config/dataSource'
 import { spreadsheetRepository } from '@/repositories/spreadsheet'
@@ -360,12 +360,10 @@ const mockChatRepository: ChatRepository = {
 
 const apiChatRepository: ChatRepository = {
   async stream(payload, options) {
-    const token = getStoredToken()
-    const response = await fetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/chat/stream`, {
+    const response = await sessionFetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/chat/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify({
         conversationId: payload.conversationId,

@@ -36,7 +36,7 @@ const pinnedItems = computed(() => conversationStore.pinnedConversations);
 const ungroupedItems = computed(() => conversationStore.ungroupedConversations);
 
 onMounted(async () => {
-  authStore.init();
+  await authStore.init();
   await knowledgeBaseStore.fetchAll();
   await mindMapStore.fetchList();
   await conversationStore.fetchList();
@@ -50,7 +50,7 @@ onMounted(async () => {
 });
 
 watch(
-  () => authStore.token,
+  () => authStore.session?.userId,
   async () => {
     await knowledgeBaseStore.fetchAll();
     await mindMapStore.fetchList();

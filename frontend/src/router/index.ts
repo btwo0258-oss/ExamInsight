@@ -1,5 +1,4 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { useAuthStore as useAdminAuthStore } from '@/stores/adminAuth'
 import { useAuthStore } from '@/stores/auth'
 
 const requiresAuth = { requiresAuth: true }
@@ -37,62 +36,13 @@ const router = createRouter({
     { path: '/knowledge/:id', redirect: (to) => `/library/${String(to.params.id)}` },
     { path: '/mindmap', name: 'mindmap-list', component: () => import('@/views/mindmap/MindMapListView.vue'), meta: requiresAuth },
     { path: '/mindmap/:id', name: 'mindmap-detail', component: () => import('@/views/mindmap/MindMapView.vue'), meta: requiresAuth },
-    // Admin routes
-    {
-      path: '/admin/login',
-      name: 'admin-login',
-      component: () => import('@/views/admin/login/index.vue'),
-      meta: { isAdmin: true, requiresAdminAuth: false }
-    },
-    {
-      path: '/admin',
-      component: () => import('@/layout_admin/AdminLayout.vue'),
-      meta: { isAdmin: true, requiresAdminAuth: true },
-      children: [
-        {
-          path: '',
-          redirect: '/admin/dashboard'
-        },
-        {
-          path: 'dashboard',
-          name: 'admin-dashboard',
-          component: () => import('@/views/admin/dashboard/index.vue')
-        },
-        {
-          path: 'users',
-          name: 'admin-users',
-          component: () => import('@/views/admin/users/index.vue')
-        },
-        {
-          path: 'system-config',
-          name: 'admin-system-config',
-          component: () => import('@/views/admin/system-config/index.vue')
-        },
-        {
-          path: 'resources',
-          name: 'admin-resources',
-          component: () => import('@/views/admin/resources/index.vue')
-        }
-      ]
-    }
+    { path: '/admin/:pathMatch(.*)*', redirect: '/chat' },
   ],
 })
 
-router.beforeEach((to, from, next) => {
-  if (to.meta.isAdmin) {
-    const adminAuthStore = useAdminAuthStore()
-    if (to.meta.requiresAdminAuth && !adminAuthStore.isAuthenticated) {
-      next('/admin/login')
-    } else if (to.name === 'admin-login' && adminAuthStore.isAuthenticated) {
-      next('/admin/dashboard')
-    } else {
-      next()
-    }
-    return
-  }
-
+router.beforeEach(async (to, from, next) => {
   const authStore = useAuthStore()
-  authStore.init()
+  await authStore.init()
   if (to.meta.requiresAuth && !authStore.isAuthed) {
     authStore.openAuthModal(to.fullPath)
     next({ name: 'chat', replace: true })

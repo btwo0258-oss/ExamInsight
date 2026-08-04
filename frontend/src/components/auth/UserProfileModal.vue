@@ -1,208 +1,43 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { useAuthStore } from '@/stores/auth'
-import AppModal from '@/components/common/AppModal.vue'
+import { computed } from 'vue'
+
 import AppButton from '@/components/common/AppButton.vue'
-import AppIcon from '@/components/common/AppIcon.vue'
+import AppModal from '@/components/common/AppModal.vue'
+import { useAuthStore } from '@/stores/auth'
 
-const props = defineProps<{
-  open: boolean
-}>()
-
-const emit = defineEmits<{
-  close: []
-}>()
-
+defineProps<{ open: boolean }>()
+const emit = defineEmits<{ close: [] }>()
 const authStore = useAuthStore()
-const nickname = ref(authStore.user?.nickname || '')
-const errorMessage = ref('')
-const isSubmitting = ref(false)
 
 const userInitials = computed(() => {
-  const name = nickname.value || authStore.user?.username || 'U'
+  const name = authStore.user?.nickname || authStore.user?.username || 'U'
   return name.slice(0, 2).toUpperCase()
 })
-
-async function handleSave() {
-  if (!nickname.value.trim()) return
-  
-  errorMessage.value = ''
-  isSubmitting.value = true
-  try {
-    await authStore.updateProfile({ nickname: nickname.value.trim() })
-    emit('close')
-  } catch (err) {
-    errorMessage.value = err instanceof Error ? err.message : '更新资料失败'
-    console.error('Failed to update profile:', err)
-  } finally {
-    isSubmitting.value = false
-  }
-}
 </script>
 
 <template>
   <AppModal :open="open" @close="emit('close')">
-    <div class="profile-modal">
-      <h2 class="title">编辑个人资料</h2>
-      
-      <div class="avatar-section">
-        <div class="avatar-circle">
-          <span class="initials">{{ userInitials }}</span>
-          <!-- <div class="camera-icon">
-            <AppIcon name="camera" :size="14" />
-          </div> -->
-        </div>
-      </div>
-
-      <div class="form">
-        <div class="form-item">
-          <label>显示名称</label>
-          <input 
-            v-model="nickname" 
-            type="text" 
-            placeholder="请输入您的昵称"
-            :disabled="isSubmitting"
-          />
-        </div>
-        
-        <div class="form-item">
-          <label>用户名</label>
-          <input 
-            :value="authStore.user?.username" 
-            type="text" 
-            disabled
-            class="disabled-input"
-          />
-        </div>
-        
-        <p class="hint">个人资料有助于他人识别你的身份。你的姓名和用户名也将用于 ExamInsight 应用。</p>
-        
-        <div v-if="errorMessage" class="error-msg">
-          {{ errorMessage }}
-        </div>
-      </div>
-
-      <div class="actions">
-        <AppButton variant="secondary" @click="emit('close')" :disabled="isSubmitting">
-          取消
-        </AppButton>
-        <AppButton variant="primary" @click="handleSave" :loading="isSubmitting">
-          保存
-        </AppButton>
-      </div>
-    </div>
+    <section class="profile-modal">
+      <h2>账户资料</h2>
+      <div class="avatar">{{ userInitials }}</div>
+      <dl>
+        <div><dt>显示名称</dt><dd>{{ authStore.user?.nickname || '未设置' }}</dd></div>
+        <div><dt>登录邮箱</dt><dd>{{ authStore.user?.email }}</dd></div>
+      </dl>
+      <p>公开 Beta 暂不提供资料修改入口；后续接入 V2 用户资料接口后再开放编辑。</p>
+      <div class="actions"><AppButton variant="primary" @click="emit('close')">完成</AppButton></div>
+    </section>
   </AppModal>
 </template>
 
 <style scoped>
-.profile-modal {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-}
-
-.title {
-  font-size: 20px;
-  font-weight: 600;
-  margin: 0;
-  color: var(--color-text);
-}
-
-.avatar-section {
-  display: flex;
-  justify-content: center;
-  padding: 12px 0;
-}
-
-.avatar-circle {
-  width: 120px;
-  height: 120px;
-  border-radius: 60px;
-  background: #10a37f; /* DeepSeek/ChatGPT green style */
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-  color: white;
-}
-
-.initials {
-  font-size: 40px;
-  font-weight: 500;
-  letter-spacing: 1px;
-}
-
-.camera-icon {
-  position: absolute;
-  bottom: 4px;
-  right: 4px;
-  width: 28px;
-  height: 28px;
-  background: #343541;
-  border: 2px solid var(--color-surface);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: white;
-  cursor: default;
-}
-
-.form {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.form-item {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  background: var(--color-background-soft);
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-}
-
-.form-item label {
-  font-size: 12px;
-  color: var(--color-text-muted);
-}
-
-.form-item input {
-  background: transparent;
-  border: none;
-  font-size: 16px;
-  color: var(--color-text);
-  padding: 0;
-  outline: none;
-}
-
-.form-item input:disabled {
-  cursor: not-allowed;
-}
-
-.disabled-input {
-  opacity: 0.7;
-}
-
-.hint {
-  font-size: 13px;
-  color: var(--color-text-muted);
-  line-height: 1.5;
-  margin: 0;
-}
-
-.error-msg {
-  font-size: 13px;
-  color: #ef4444;
-  margin-top: 4px;
-}
-
-.actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-  margin-top: 8px;
-}
+.profile-modal { display: grid; gap: 20px; color: var(--color-text); }
+h2 { margin: 0; font-size: 20px; }
+.avatar { width: 88px; height: 88px; margin: 0 auto; border-radius: 50%; display: grid; place-items: center; background: var(--color-text); color: var(--color-bg); font-size: 28px; font-weight: 700; }
+dl { display: grid; gap: 10px; margin: 0; }
+dl div { padding: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface-subtle); }
+dt { color: var(--color-text-muted); font-size: 12px; }
+dd { margin: 5px 0 0; overflow-wrap: anywhere; }
+p { margin: 0; color: var(--color-text-muted); font-size: 13px; line-height: 1.5; }
+.actions { display: flex; justify-content: flex-end; }
 </style>
