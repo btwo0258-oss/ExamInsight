@@ -1,6 +1,7 @@
 package com.example.llm.auth;
 
 import com.example.llm.auth.api.AuthApiException;
+import com.example.llm.auth.api.AccountDtos;
 import com.example.llm.auth.api.AuthDtos;
 import com.example.llm.auth.config.AuthProperties;
 import com.example.llm.auth.domain.AuthModels;
@@ -13,6 +14,7 @@ import com.example.llm.auth.security.ClientRequestMetadata;
 import com.example.llm.auth.security.EmailNormalizer;
 import com.example.llm.auth.security.PasswordPolicy;
 import com.example.llm.auth.service.AuthApplicationService;
+import com.example.llm.auth.service.AccountApplicationService;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,7 +43,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Testcontainers(disabledWithoutDocker = true)
 class AuthApplicationServiceIntegrationTest {
     private static final String EMAIL = "student@example.com";
-    private static final String PASSWORD = "Correct horse battery staple 2026";
+    private static final String PASSWORD = "StrongPass2026";
 
     @Container
     static final MySQLContainer MYSQL = new MySQLContainer("mysql:8.0.45")
@@ -59,6 +61,7 @@ class AuthApplicationServiceIntegrationTest {
     private AuthProperties properties;
     private AuthCrypto crypto;
     private AuthApplicationService service;
+    private AccountApplicationService accountService;
     private AtomicReference<String> deliveredCode;
     private MutableClock clock;
 
@@ -100,22 +103,25 @@ class AuthApplicationServiceIntegrationTest {
         HumanVerificationGateway humanVerification = (token, remoteAddress) -> {
         };
         deliveredCode = new AtomicReference<>();
-        EmailGateway emailGateway = (recipient, code, expiresAt) -> {
+        EmailGateway emailGateway = (recipient, code, expiresAt, purpose) -> {
             deliveredCode.set(code);
             return "test-provider-message";
         };
         clock = new MutableClock(Instant.now().truncatedTo(ChronoUnit.MILLIS));
+        PasswordPolicy passwordPolicy = new PasswordPolicy();
         service = new AuthApplicationService(
                 repository,
                 transactions,
                 properties,
                 crypto,
-                new PasswordPolicy(),
+                passwordPolicy,
                 new EmailNormalizer(),
                 rateLimiter,
                 humanVerification,
                 emailGateway,
                 clock);
+        accountService = new AccountApplicationService(
+                repository, transactions, passwordPolicy, crypto, clock);
     }
 
     @Test
@@ -130,8 +136,8 @@ class AuthApplicationServiceIntegrationTest {
                 challenge.challengeId(), new AuthDtos.VerifyEmailRequest(deliveredCode.get()));
         AuthModels.IssuedSession issued = service.register(
                 new AuthDtos.RegisterRequest(
-                        EMAIL, PASSWORD, "王同学", true,
-                        verification.registrationProof(), "device-registration-0001"),
+                        EMAIL, PASSWORD, verification.registrationProof(), "device-registration-0001",
+                        "2026-08-08-beta.1", "2026-08-08-beta.1", true),
                 metadata("device-registration-0001"));
 
         String storedTokenHash = jdbc.queryForObject(
@@ -146,11 +152,12 @@ class AuthApplicationServiceIntegrationTest {
         assertThat(jdbc.queryForObject(
                 "SELECT status FROM email_verification WHERE external_id = ?",
                 String.class, challenge.challengeId())).isEqualTo("CONSUMED");
+        assertThat(issued.response().displayName()).isEqualTo("student");
 
         assertThatThrownBy(() -> service.register(
                 new AuthDtos.RegisterRequest(
-                        EMAIL, PASSWORD, "王同学", true,
-                        verification.registrationProof(), "device-registration-0001"),
+                        EMAIL, PASSWORD, verification.registrationProof(), "device-registration-0001",
+                        "2026-08-08-beta.1", "2026-08-08-beta.1", true),
                 metadata("device-registration-0001")))
                 .isInstanceOf(AuthApiException.class)
                 .extracting(exception -> ((AuthApiException) exception).code())
@@ -254,14 +261,52 @@ class AuthApplicationServiceIntegrationTest {
                 .isEqualTo("HUMAN_VERIFICATION_REQUIRED");
     }
 
+    @Test
+    void accountSettingsUpdateNicknameAndDeleteAccount() {
+        AuthModels.IssuedSession primary = registerAccount();
+        AuthModels.AuthenticatedSession current = service.authenticate(primary.sessionToken());
+
+        AccountDtos.AccountResponse profile = accountService.updateProfile(
+                current,
+                new AccountDtos.UpdateProfileRequest("紫涵的学习空间"),
+                metadata("device-registration-0001"));
+        assertThat(profile.displayName()).isEqualTo("紫涵的学习空间");
+        assertThat(jdbc.queryForObject(
+                "SELECT display_name FROM user_profile WHERE user_id = ?",
+                String.class, current.userId())).isEqualTo("紫涵的学习空间");
+        assertThatThrownBy(() -> accountService.updateProfile(
+                current,
+                new AccountDtos.UpdateProfileRequest("二十一字昵称限制验证二十一字昵称限制验证一二三"),
+                metadata("device-registration-0001")))
+                .isInstanceOf(AuthApiException.class)
+                .extracting(exception -> ((AuthApiException) exception).code())
+                .isEqualTo("INVALID_DISPLAY_NAME");
+
+        accountService.deleteAccount(
+                current,
+                new AccountDtos.DeleteAccountRequest(PASSWORD, "DELETE_MY_ACCOUNT"),
+                metadata("device-registration-0001"));
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM app_user WHERE id = ?",
+                String.class, current.userId())).isEqualTo("TRASHED");
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM account_deletion_request WHERE user_id = ?",
+                String.class, current.userId())).isEqualTo("SCHEDULED");
+        assertThat(jdbc.queryForObject(
+                "SELECT disabled_at IS NOT NULL FROM user_credential WHERE user_id = ?",
+                Boolean.class, current.userId())).isTrue();
+        assertThatThrownBy(() -> service.authenticate(primary.sessionToken()))
+                .isInstanceOf(AuthApiException.class);
+    }
+
     private AuthModels.IssuedSession registerAccount() {
         AuthDtos.RegistrationChallengeResponse challenge = createChallenge(EMAIL, "device-registration-0001");
         AuthDtos.VerificationProofResponse proof = service.verifyRegistrationEmail(
                 challenge.challengeId(), new AuthDtos.VerifyEmailRequest(deliveredCode.get()));
         return service.register(
                 new AuthDtos.RegisterRequest(
-                        EMAIL, PASSWORD, "王同学", true,
-                        proof.registrationProof(), "device-registration-0001"),
+                        EMAIL, PASSWORD, proof.registrationProof(), "device-registration-0001",
+                        "2026-08-08-beta.1", "2026-08-08-beta.1", true),
                 metadata("device-registration-0001"));
     }
 
@@ -281,7 +326,7 @@ class AuthApplicationServiceIntegrationTest {
 
     private void clearIdentityData() {
         for (String table : new String[]{
-                "security_event", "auth_session", "user_device", "user_setting",
+                "account_deletion_request", "security_event", "auth_session", "user_device", "user_setting",
                 "user_profile", "user_credential", "email_delivery",
                 "email_verification", "password_reset_token", "app_user"}) {
             jdbc.update("DELETE FROM " + table);

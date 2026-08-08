@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const requestMock = vi.hoisted(() => ({
   get: vi.fn(),
   post: vi.fn(),
+  patch: vi.fn(),
 }))
 
 vi.mock('@/api/request', () => ({ request: requestMock }))
@@ -14,6 +15,9 @@ import {
   getDeviceId,
   login,
   logout,
+  register,
+  requestAccountDeletion,
+  updateAccountProfile,
   verifyRegistrationEmail,
 } from '@/api/v2Auth'
 
@@ -21,6 +25,7 @@ describe('V2 auth API', () => {
   beforeEach(() => {
     requestMock.get.mockReset()
     requestMock.post.mockReset()
+    requestMock.patch.mockReset()
     localStorage.clear()
     sessionStorage.clear()
   })
@@ -62,6 +67,29 @@ describe('V2 auth API', () => {
     }))
   })
 
+  it('registers with the verified email proof and no client-authored profile fields', async () => {
+    requestMock.post.mockResolvedValue({ data: { userId: 'user-1' } })
+
+    await register({
+      email: 'student@example.com',
+      password: 'StrongPass2026',
+      registrationProof: 'registration-proof',
+      termsVersion: '2026-08-08-beta.1',
+      privacyVersion: '2026-08-08-beta.1',
+      legalDocumentsAccepted: true,
+    })
+
+    expect(requestMock.post).toHaveBeenCalledWith('/api/v2/auth/register', {
+      email: 'student@example.com',
+      password: 'StrongPass2026',
+      registrationProof: 'registration-proof',
+      termsVersion: '2026-08-08-beta.1',
+      privacyVersion: '2026-08-08-beta.1',
+      legalDocumentsAccepted: true,
+      deviceId: getDeviceId(),
+    })
+  })
+
   it('maps the structured backend error without losing its recovery code', async () => {
     const response = {
       status: 409,
@@ -90,5 +118,21 @@ describe('V2 auth API', () => {
     requestMock.post.mockResolvedValue({ data: undefined })
     await logout()
     expect(requestMock.post).toHaveBeenCalledWith('/api/v2/auth/logout')
+  })
+
+  it('uses the protected account endpoints without client-side identity fields', async () => {
+    requestMock.patch.mockResolvedValue({
+      data: { userId: 'user-1', email: 'student@example.com', displayName: '紫涵' },
+    })
+    requestMock.post.mockResolvedValue({ data: undefined })
+
+    await updateAccountProfile('紫涵')
+    await requestAccountDeletion('StrongPass2026')
+
+    expect(requestMock.patch).toHaveBeenCalledWith('/api/v2/account/profile', { displayName: '紫涵' })
+    expect(requestMock.post).toHaveBeenCalledWith('/api/v2/account/deletion-requests', {
+      currentPassword: 'StrongPass2026',
+      confirmation: 'DELETE_MY_ACCOUNT',
+    })
   })
 })

@@ -26,6 +26,17 @@ public class ClientRequestMetadataFactory {
                 crypto.digest("device-fingerprint", deviceId));
     }
 
+    public ClientRequestMetadata from(HttpServletRequest request) {
+        String remoteAddress = request.getRemoteAddr();
+        String ipPrefix = normalizeIpPrefix(remoteAddress);
+        String userAgent = request.getHeader("User-Agent");
+        return new ClientRequestMetadata(
+                remoteAddress,
+                crypto.digest("ip-prefix", ipPrefix),
+                userAgent == null ? null : crypto.digest("user-agent", userAgent),
+                null);
+    }
+
     private String normalizeIpPrefix(String rawAddress) {
         try {
             InetAddress address = InetAddress.getByName(rawAddress);

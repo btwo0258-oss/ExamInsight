@@ -38,6 +38,25 @@ public class AuthRateLimiter {
         });
     }
 
+    public void consumePasswordReset(String emailHash, String deviceHash, String ipHash) {
+        guarded(() -> {
+            consume("auth:password-reset:email:h:" + emailHash, 5, Duration.ofHours(1));
+            consume("auth:password-reset:email:d:" + emailHash, 10, Duration.ofDays(1));
+            consume("auth:password-reset:device:h:" + deviceHash, 10, Duration.ofHours(1));
+            consume("auth:password-reset:device:d:" + deviceHash, 30, Duration.ofDays(1));
+            consume("auth:password-reset:ip:h:" + ipHash, 30, Duration.ofHours(1));
+            consume("auth:password-reset:ip:d:" + ipHash, 200, Duration.ofDays(1));
+            consume("auth:password-reset:global:m", 300, Duration.ofMinutes(1));
+            Boolean first = redis.opsForValue().setIfAbsent(
+                    "auth:password-reset:cooldown:" + emailHash,
+                    "1",
+                    properties.getVerification().getResendCooldown());
+            if (!Boolean.TRUE.equals(first)) {
+                throw limited("VERIFICATION_RESEND_COOLDOWN", "请等待 60 秒后再重新发送验证码。");
+            }
+        });
+    }
+
     public boolean requiresHumanVerificationForLogin(String emailHash) {
         return guardedResult(() -> readLong("auth:login:failure:email:" + emailHash) >= 3);
     }

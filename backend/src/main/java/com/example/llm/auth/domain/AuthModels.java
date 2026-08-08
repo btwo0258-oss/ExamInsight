@@ -33,6 +33,34 @@ public final class AuthModels {
             String displayName) {
     }
 
+    public record PasswordResetToken(
+            long id,
+            long userId,
+            String status,
+            String userStatus,
+            String passwordHash,
+            LocalDateTime expiresAt,
+            long sessionVersionAtIssue,
+            long currentSessionVersion) {
+    }
+
+    public record LegalDocumentVersion(
+            long id,
+            String versionKey,
+            String contentHash,
+            String contentUrl) {
+    }
+
+    public record AccountCredential(
+            long userId,
+            String userExternalId,
+            String normalizedEmail,
+            String emailDisplay,
+            String status,
+            String passwordHash,
+            String displayName) {
+    }
+
     public record Device(long id, String status) {
     }
 

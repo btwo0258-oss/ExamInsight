@@ -10,7 +10,7 @@ type AliyunCaptchaError = { code?: string; msg?: string }
 
 type AliyunCaptchaOptions = {
   SceneId: string
-  mode: 'popup'
+  mode: 'popup' | 'embed'
   element: string
   button: string
   language: 'cn'
@@ -48,6 +48,18 @@ type PendingExecution = {
 type PreparedCaptcha = {
   execute(): Promise<string>
   destroy(): void
+}
+
+export type EmbeddedHumanVerification = {
+  destroy(): void
+}
+
+type EmbeddedHumanVerificationOptions = {
+  element: HTMLElement
+  button: HTMLButtonElement
+  width: number
+  onSuccess(token: string): void
+  onFailure(): void
 }
 
 let scriptPromise: Promise<void> | null = null
@@ -241,4 +253,77 @@ export async function runHumanVerification(): Promise<string> {
     captcha.destroy()
     preparedPromise = null
   }
+}
+
+export async function mountEmbeddedHumanVerification({
+  element,
+  button,
+  width,
+  onSuccess,
+  onFailure,
+}: EmbeddedHumanVerificationOptions): Promise<EmbeddedHumanVerification> {
+  const config = ensureConfigured()
+  window.AliyunCaptchaConfig = { region: config.region, prefix: config.prefix }
+  await loadAliyunCaptchaScript()
+
+  const id = ++sequence
+  element.id = `examinsight-captcha-element-${id}`
+  button.id = `examinsight-captcha-trigger-${id}`
+
+  let instance: AliyunCaptchaInstance | null = null
+  let destroyed = false
+
+  const destroy = () => {
+    if (destroyed) return
+    destroyed = true
+    try { instance?.destroyCaptcha() } catch {}
+    element.replaceChildren()
+    element.removeAttribute('id')
+    button.removeAttribute('id')
+  }
+
+  const ready = new Promise<void>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new HumanVerificationError('INITIALIZE_FAILED', '人机验证初始化超时，请稍后重试。'))
+    }, 10_000)
+
+    window.initAliyunCaptcha?.({
+      SceneId: config.sceneId,
+      mode: 'embed',
+      element: `#${element.id}`,
+      button: `#${button.id}`,
+      language: 'cn',
+      timeout: 5_000,
+      slideStyle: {
+        width: Math.max(280, Math.floor(width)),
+        height: 48,
+      },
+      success(token) {
+        if (!destroyed && token) onSuccess(token)
+      },
+      fail() {
+        if (!destroyed) onFailure()
+      },
+      getInstance(nextInstance) {
+        window.clearTimeout(timer)
+        instance = nextInstance
+        resolve()
+      },
+      onError(error) {
+        window.clearTimeout(timer)
+        reject(new HumanVerificationError(
+          'INITIALIZE_FAILED',
+          error.msg || '人机验证初始化失败，请稍后重试。',
+        ))
+      },
+      onClose() {},
+    })
+  })
+
+  await ready.catch(error => {
+    destroy()
+    throw error
+  })
+
+  return { destroy }
 }

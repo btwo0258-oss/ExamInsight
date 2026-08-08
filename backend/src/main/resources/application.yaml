@@ -25,6 +25,7 @@ app:
       endpoint: ${ALIYUN_CAPTCHA_ENDPOINT:captcha.cn-shanghai.aliyuncs.com}
     mail:
       from: ${AUTH_MAIL_FROM:}
+      from-name: ${AUTH_MAIL_FROM_NAME:ExamInsight}
 
 spring:
   config:

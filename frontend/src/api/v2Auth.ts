@@ -13,6 +13,12 @@ export type AuthSession = {
   absoluteExpiresAt: string
 }
 
+export type AccountProfile = {
+  userId: string
+  email: string
+  displayName: string
+}
+
 export type RegistrationChallenge = {
   challengeId: string
   expiresAt: string
@@ -21,6 +27,11 @@ export type RegistrationChallenge = {
 
 export type RegistrationProof = {
   registrationProof: string
+  expiresAt: string
+}
+
+export type PasswordResetProof = {
+  passwordResetToken: string
   expiresAt: string
 }
 
@@ -113,12 +124,46 @@ export function verifyRegistrationEmail(challengeId: string, code: string): Prom
   )).data, '邮箱验证码校验失败。')
 }
 
+export function createPasswordResetChallenge(payload: {
+  email: string
+  humanVerificationToken: string
+}): Promise<RegistrationChallenge> {
+  return authCall(async () => (await request.post<RegistrationChallenge>(
+    '/api/v2/auth/password-reset-challenges',
+    { ...payload, deviceId: getDeviceId() },
+  )).data, '密码重置验证码发送失败，请稍后重试。')
+}
+
+export function verifyPasswordResetEmail(
+  challengeId: string,
+  code: string,
+): Promise<PasswordResetProof> {
+  return authCall(async () => (await request.post<PasswordResetProof>(
+    `/api/v2/auth/password-reset-challenges/${encodeURIComponent(challengeId)}/verify-email`,
+    { code, deviceId: getDeviceId() },
+  )).data, '邮箱验证码校验失败。')
+}
+
+export function resetPassword(payload: {
+  email: string
+  newPassword: string
+  passwordResetToken: string
+}): Promise<void> {
+  return authCall(async () => {
+    await request.post('/api/v2/auth/password-reset', {
+      ...payload,
+      deviceId: getDeviceId(),
+    })
+  }, '密码重置失败，请稍后重试。')
+}
+
 export function register(payload: {
   email: string
   password: string
-  displayName: string
-  ageGateAcknowledged: boolean
   registrationProof: string
+  termsVersion: string
+  privacyVersion: string
+  legalDocumentsAccepted: boolean
 }): Promise<AuthSession> {
   return authCall(async () => (await request.post<AuthSession>('/api/v2/auth/register', {
     ...payload,
@@ -146,6 +191,18 @@ export function logout(): Promise<void> {
   return authCall(async () => { await request.post('/api/v2/auth/logout') }, '退出登录失败，请稍后重试。')
 }
 
-export function logoutAll(): Promise<void> {
-  return authCall(async () => { await request.post('/api/v2/auth/logout-all') }, '退出全部设备失败，请稍后重试。')
+export function updateAccountProfile(displayName: string): Promise<AccountProfile> {
+  return authCall(async () => (await request.patch<AccountProfile>(
+    '/api/v2/account/profile',
+    { displayName },
+  )).data, '资料保存失败，请稍后重试。')
+}
+
+export function requestAccountDeletion(currentPassword: string): Promise<void> {
+  return authCall(async () => {
+    await request.post('/api/v2/account/deletion-requests', {
+      currentPassword,
+      confirmation: 'DELETE_MY_ACCOUNT',
+    })
+  }, '账号注销失败，请稍后重试。')
 }

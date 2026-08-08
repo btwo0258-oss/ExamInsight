@@ -8,9 +8,10 @@ import {
   type AuthSession,
   login as loginRequest,
   logout as logoutRequest,
-  logoutAll as logoutAllRequest,
   register as registerRequest,
   getSession,
+  requestAccountDeletion,
+  updateAccountProfile,
 } from '@/api/v2Auth'
 import { useConversationStore } from '@/stores/conversation'
 import { useMessageStore } from '@/stores/message'
@@ -128,9 +129,10 @@ export const useAuthStore = defineStore('auth', () => {
     payload: {
       email: string
       password: string
-      displayName: string
-      ageGateAcknowledged: boolean
       registrationProof: string
+      termsVersion: string
+      privacyVersion: string
+      legalDocumentsAccepted: boolean
     },
     router?: Router,
   ) {
@@ -166,19 +168,34 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function logoutAll(router?: Router): Promise<boolean> {
+  async function updateProfile(displayName: string) {
     errorMessage.value = null
     isSubmitting.value = true
     try {
-      await logoutAllRequest()
+      const account = await updateAccountProfile(displayName)
+      if (session.value) session.value = { ...session.value, displayName: account.displayName }
+      return account
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : '资料保存失败'
+      throw error
+    } finally {
+      isSubmitting.value = false
+    }
+  }
+
+  async function deleteAccount(currentPassword: string, router?: Router): Promise<boolean> {
+    errorMessage.value = null
+    isSubmitting.value = true
+    try {
+      await requestAccountDeletion(currentPassword)
       expireLocalSession()
       pendingRoute.value = null
       authModalOpen.value = false
       if (router) await router.push('/chat')
       return true
     } catch (error) {
-      errorMessage.value = error instanceof Error ? error.message : '退出全部设备失败'
-      return false
+      errorMessage.value = error instanceof Error ? error.message : '账号注销失败'
+      throw error
     } finally {
       isSubmitting.value = false
     }
@@ -197,7 +214,8 @@ export const useAuthStore = defineStore('auth', () => {
     login,
     register,
     logout,
-    logoutAll,
+    updateProfile,
+    deleteAccount,
     openAuthModal,
     closeAuthModal,
   }

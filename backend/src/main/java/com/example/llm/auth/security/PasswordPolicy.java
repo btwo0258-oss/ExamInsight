@@ -13,9 +13,8 @@ import java.util.Set;
 public class PasswordPolicy {
     public static final String HASH_POLICY_KEY = "argon2id-v1-m65536-t3-p1";
     private static final Set<String> COMMON_PASSWORDS = Set.of(
-            "123456789012345", "passwordpassword", "qwertyqwertyqwerty",
-            "111111111111111", "adminadminadmin", "letmeinletmeinletmein",
-            "iloveyouiloveyou", "examinsightexaminsight");
+            "password1", "qwerty123", "12345678a", "admin123",
+            "abc12345", "iloveyou1", "examinsight1");
 
     private final Argon2PasswordEncoder encoder = new Argon2PasswordEncoder(16, 32, 1, 65_536, 3);
     private final String dummyHash = encoder.encode("not-a-real-user-password-value");
@@ -23,13 +22,17 @@ public class PasswordPolicy {
     public String normalizeAndValidate(String rawPassword, String normalizedEmail) {
         String password = Normalizer.normalize(rawPassword, Normalizer.Form.NFC);
         int length = password.codePointCount(0, password.length());
-        if (length < 15 || length > 128) {
+        if (length < 8 || length > 16) {
             throw new AuthApiException(HttpStatus.UNPROCESSABLE_ENTITY, "PASSWORD_POLICY_VIOLATION",
-                    "密码长度必须为 15 到 128 个字符。");
+                    "密码长度必须为 8 到 16 个字符。");
         }
-        if (password.codePoints().anyMatch(Character::isISOControl)) {
+        if (!password.matches("[!-~]+")) {
             throw new AuthApiException(HttpStatus.UNPROCESSABLE_ENTITY, "PASSWORD_POLICY_VIOLATION",
-                    "密码不能包含控制字符。");
+                    "密码只能使用不含空格的英文字母、数字和可见符号。");
+        }
+        if (!password.matches(".*[A-Za-z].*") || !password.matches(".*\\d.*")) {
+            throw new AuthApiException(HttpStatus.UNPROCESSABLE_ENTITY, "PASSWORD_POLICY_VIOLATION",
+                    "密码必须同时包含英文字母和数字。");
         }
 
         String lower = password.toLowerCase(Locale.ROOT);

@@ -35,6 +35,7 @@ public class AuthProperties {
     @Data
     public static class Mail {
         private String from = "";
+        private String fromName = "ExamInsight";
     }
 
     @Data

@@ -7,6 +7,8 @@ const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     { path: '/', redirect: '/chat' },
+    { path: '/terms', name: 'terms', component: () => import('@/views/legal/LegalDocumentView.vue'), props: { documentType: 'terms' } },
+    { path: '/privacy', name: 'privacy', component: () => import('@/views/legal/LegalDocumentView.vue'), props: { documentType: 'privacy' } },
     { path: '/chat', name: 'chat', component: () => import('@/views/student/chat/StudentChatView.vue') },
     { path: '/chat/:id', name: 'chat-detail', component: () => import('@/views/student/chat/StudentChatView.vue'), props: true, meta: requiresAuth },
     { path: '/presentations/new', name: 'presentation-new', component: () => import('@/views/student/presentation/PresentationWorkspaceView.vue'), meta: requiresAuth },

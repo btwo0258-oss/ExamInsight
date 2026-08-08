@@ -10,7 +10,6 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.PreparedStatement;
 import java.sql.Statement;
-import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -50,20 +49,23 @@ public class AuthRepository {
         return count != null && count > 0;
     }
 
-    public void supersedeActiveRegistrationChallenges(String normalizedEmail) {
+    public void supersedeActiveChallenges(String normalizedEmail, String purpose) {
         jdbc.update("""
                 UPDATE email_verification
                    SET status = 'SUPERSEDED', row_version = row_version + 1
                  WHERE normalized_email = ?
-                   AND purpose = 'REGISTRATION'
+                   AND purpose = ?
                    AND status IN ('PENDING', 'VERIFIED')
-                """, normalizedEmail);
+                """, normalizedEmail, purpose);
     }
 
-    public long insertRegistrationChallenge(
+    public long insertVerificationChallenge(
             String externalId,
+            Long userId,
             String normalizedEmail,
+            String purpose,
             String codeHash,
+            LocalDateTime createdAt,
             LocalDateTime expiresAt,
             int maximumAttempts,
             String ipHash,
@@ -73,23 +75,27 @@ public class AuthRepository {
                     external_id, user_id, normalized_email, purpose, code_hash,
                     verification_proof_hash, status, expires_at, verified_at,
                     proof_expires_at, attempt_count, max_attempts, consumed_at,
-                    request_ip_hash, device_hash
-                ) VALUES (?, NULL, ?, 'REGISTRATION', ?, NULL, 'PENDING', ?, NULL, NULL, 0, ?, NULL, ?, ?)
-                """, externalId, normalizedEmail, codeHash, expiresAt, maximumAttempts, ipHash, deviceHash);
+                    request_ip_hash, device_hash, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, NULL, 'PENDING', ?, NULL, NULL, 0, ?, NULL, ?, ?, ?, ?)
+                """, externalId, userId, normalizedEmail, purpose, codeHash, expiresAt,
+                maximumAttempts, ipHash, deviceHash,
+                createdAt, createdAt);
     }
 
     public long insertQueuedDelivery(
             String externalId,
             long verificationId,
+            Long userId,
+            String templateKey,
             String recipientHash) {
         return insertAndReturnId("""
                 INSERT INTO email_delivery (
                     external_id, verification_id, user_id, template_key,
                     recipient_hash, provider_key, provider_message_id,
                     status, attempt_count, sent_at, delivered_at, failed_at, failure_code
-                ) VALUES (?, ?, NULL, 'REGISTRATION_CODE', ?, 'SMTP', NULL,
+                ) VALUES (?, ?, ?, ?, ?, 'SMTP', NULL,
                           'QUEUED', 0, NULL, NULL, NULL, NULL)
-                """, externalId, verificationId, recipientHash);
+                """, externalId, verificationId, userId, templateKey, recipientHash);
     }
 
     public void markDeliverySent(long deliveryId, String providerMessageId, LocalDateTime sentAt) {
@@ -117,15 +123,17 @@ public class AuthRepository {
                 """, challengeId);
     }
 
-    public Optional<AuthModels.VerificationChallenge> findChallengeForUpdate(String externalId) {
+    public Optional<AuthModels.VerificationChallenge> findChallengeForUpdate(
+            String externalId,
+            String purpose) {
         return jdbc.query("""
                 SELECT id, external_id, user_id, normalized_email, code_hash,
                        verification_proof_hash, status, expires_at, verified_at,
                        proof_expires_at, attempt_count, max_attempts
                   FROM email_verification
-                 WHERE external_id = ? AND purpose = 'REGISTRATION'
+                 WHERE external_id = ? AND purpose = ?
                  FOR UPDATE
-                """, CHALLENGE_MAPPER, externalId).stream().findFirst();
+                """, CHALLENGE_MAPPER, externalId, purpose).stream().findFirst();
     }
 
     public void markChallengeExpired(long id) {
@@ -155,17 +163,17 @@ public class AuthRepository {
     }
 
     public Optional<AuthModels.VerificationChallenge> findVerifiedChallengeForUpdate(
-            String normalizedEmail, String proofHash) {
+            String normalizedEmail, String purpose, String proofHash) {
         return jdbc.query("""
                 SELECT id, external_id, user_id, normalized_email, code_hash,
                        verification_proof_hash, status, expires_at, verified_at,
                        proof_expires_at, attempt_count, max_attempts
                   FROM email_verification
                  WHERE normalized_email = ?
-                   AND purpose = 'REGISTRATION'
+                   AND purpose = ?
                    AND verification_proof_hash = ?
                  FOR UPDATE
-                """, CHALLENGE_MAPPER, normalizedEmail, proofHash).stream().findFirst();
+                """, CHALLENGE_MAPPER, normalizedEmail, purpose, proofHash).stream().findFirst();
     }
 
     public long insertUser(
@@ -176,10 +184,10 @@ public class AuthRepository {
         return insertAndReturnId("""
                 INSERT INTO app_user (
                     external_id, normalized_email, email_display, status,
-                    age_gate_acknowledged_at, email_verified_at, last_login_at,
+                    email_verified_at, last_login_at,
                     session_version, trash_started_at, previous_status, deleted_at
-                ) VALUES (?, ?, ?, 'ACTIVE', ?, ?, ?, 1, NULL, NULL, NULL)
-                """, externalId, normalizedEmail, emailDisplay, now, now, now);
+                ) VALUES (?, ?, ?, 'ACTIVE', ?, ?, 1, NULL, NULL, NULL)
+                """, externalId, normalizedEmail, emailDisplay, now, now);
     }
 
     public void insertCredential(
@@ -210,6 +218,54 @@ public class AuthRepository {
                     reduced_motion, email_notification_enabled, learning_reminder_enabled
                 ) VALUES (?, ?, 'SYSTEM', 'zh-CN', 'Asia/Shanghai', FALSE, TRUE, TRUE)
                 """, externalId, userId);
+    }
+
+    public Optional<AuthModels.LegalDocumentVersion> findActiveTermsVersionForUpdate(
+            String versionKey,
+            String locale,
+            LocalDateTime currentTime) {
+        return findActiveLegalDocumentVersionForUpdate(
+                "terms_document_version", versionKey, locale, currentTime);
+    }
+
+    public Optional<AuthModels.LegalDocumentVersion> findActivePrivacyVersionForUpdate(
+            String versionKey,
+            String locale,
+            LocalDateTime currentTime) {
+        return findActiveLegalDocumentVersionForUpdate(
+                "privacy_notice_version", versionKey, locale, currentTime);
+    }
+
+    public void insertTermsAcceptance(
+            String externalId,
+            long userId,
+            long termsVersionId,
+            String ipHash,
+            String userAgentHash,
+            LocalDateTime acceptedAt) {
+        jdbc.update("""
+                INSERT INTO terms_acceptance (
+                    external_id, user_id, terms_version_id, accepted_at,
+                    ip_prefix_hash, user_agent_hash, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, externalId, userId, termsVersionId, acceptedAt,
+                ipHash, userAgentHash, acceptedAt);
+    }
+
+    public void insertPrivacyAcknowledgement(
+            String externalId,
+            long userId,
+            long noticeVersionId,
+            String ipHash,
+            String userAgentHash,
+            LocalDateTime acknowledgedAt) {
+        jdbc.update("""
+                INSERT INTO privacy_notice_acknowledgement (
+                    external_id, user_id, notice_version_id, acknowledged_at,
+                    ip_prefix_hash, user_agent_hash, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, externalId, userId, noticeVersionId, acknowledgedAt,
+                ipHash, userAgentHash, acknowledgedAt);
     }
 
     public AuthModels.Device findOrCreateDevice(
@@ -272,6 +328,166 @@ public class AuthRepository {
                         rs.getString("status"),
                         rs.getString("password_hash"),
                         rs.getString("display_name")), normalizedEmail).stream().findFirst();
+    }
+
+    public Optional<AuthModels.AccountCredential> findAccountCredentialForUpdate(long userId) {
+        return jdbc.query("""
+                SELECT u.id AS user_id, u.external_id AS user_external_id,
+                       u.normalized_email, u.email_display, u.status,
+                       c.password_hash, p.display_name
+                  FROM app_user u
+                  JOIN user_credential c
+                    ON c.user_id = u.id
+                   AND c.credential_type = 'PASSWORD'
+                   AND c.disabled_at IS NULL
+                  JOIN user_profile p ON p.user_id = u.id
+                 WHERE u.id = ?
+                 FOR UPDATE
+                """, (rs, rowNum) -> new AuthModels.AccountCredential(
+                        rs.getLong("user_id"),
+                        rs.getString("user_external_id"),
+                        rs.getString("normalized_email"),
+                        rs.getString("email_display"),
+                        rs.getString("status"),
+                        rs.getString("password_hash"),
+                        rs.getString("display_name")), userId).stream().findFirst();
+    }
+
+    public void updateDisplayName(long userId, String displayName) {
+        jdbc.update("""
+                UPDATE user_profile
+                   SET display_name = ?
+                 WHERE user_id = ?
+                """, displayName, userId);
+    }
+
+    public void insertAccountDeletionRequest(
+            String externalId,
+            long userId,
+            String subjectHash,
+            String previousUserStatus,
+            LocalDateTime requestedAt,
+            LocalDateTime purgeScheduledAt) {
+        jdbc.update("""
+                INSERT INTO account_deletion_request (
+                    external_id, user_id, subject_hash, privacy_request_id,
+                    status, requested_at, cancellable_until, cancelled_at,
+                    purge_scheduled_at, completed_at, safe_failure_code,
+                    previous_user_status, created_at, updated_at
+                ) VALUES (?, ?, ?, NULL, 'SCHEDULED', ?, ?, NULL, ?, NULL, NULL, ?, ?, ?)
+                """, externalId, userId, subjectHash, requestedAt, purgeScheduledAt,
+                purgeScheduledAt, previousUserStatus, requestedAt, requestedAt);
+    }
+
+    public void trashAccount(long userId, String previousStatus, LocalDateTime now) {
+        jdbc.update("""
+                UPDATE app_user
+                   SET status = 'TRASHED', previous_status = ?,
+                       trash_started_at = ?, deleted_at = ?,
+                       row_version = row_version + 1
+                 WHERE id = ? AND status IN ('ACTIVE', 'LIMITED')
+                """, previousStatus, now, now, userId);
+        jdbc.update("""
+                UPDATE user_credential
+                   SET disabled_at = ?
+                 WHERE user_id = ? AND credential_type = 'PASSWORD' AND disabled_at IS NULL
+                """, now, userId);
+    }
+
+    public long lockSessionVersion(long userId) {
+        Long version = jdbc.queryForObject("""
+                SELECT session_version
+                  FROM app_user
+                 WHERE id = ?
+                 FOR UPDATE
+                """, Long.class, userId);
+        if (version == null) {
+            throw new IllegalStateException("用户不存在，无法签发密码重置凭证");
+        }
+        return version;
+    }
+
+    public void revokeActivePasswordResetTokens(long userId) {
+        jdbc.update("""
+                UPDATE password_reset_token
+                   SET status = 'REVOKED', row_version = row_version + 1
+                 WHERE user_id = ? AND status = 'ACTIVE'
+                """, userId);
+    }
+
+    public long insertPasswordResetToken(
+            String externalId,
+            long userId,
+            String tokenHash,
+            LocalDateTime expiresAt,
+            String ipHash,
+            long sessionVersion,
+            LocalDateTime createdAt) {
+        return insertAndReturnId("""
+                INSERT INTO password_reset_token (
+                    external_id, user_id, token_hash, status, expires_at,
+                    consumed_at, request_ip_hash, session_version_at_issue, created_at, updated_at
+                ) VALUES (?, ?, ?, 'ACTIVE', ?, NULL, ?, ?, ?, ?)
+                """, externalId, userId, tokenHash, expiresAt, ipHash, sessionVersion,
+                createdAt, createdAt);
+    }
+
+    public Optional<AuthModels.PasswordResetToken> findPasswordResetTokenForUpdate(
+            String tokenHash,
+            String normalizedEmail) {
+        return jdbc.query("""
+                SELECT t.id, t.user_id, t.status, t.expires_at,
+                       t.session_version_at_issue, u.session_version AS current_session_version,
+                       u.status AS user_status, c.password_hash
+                  FROM password_reset_token t
+                  JOIN app_user u ON u.id = t.user_id
+                  JOIN user_credential c
+                    ON c.user_id = u.id
+                   AND c.credential_type = 'PASSWORD'
+                   AND c.disabled_at IS NULL
+                 WHERE t.token_hash = ? AND u.normalized_email = ?
+                 FOR UPDATE
+                """, (rs, rowNum) -> new AuthModels.PasswordResetToken(
+                        rs.getLong("id"),
+                        rs.getLong("user_id"),
+                        rs.getString("status"),
+                        rs.getString("user_status"),
+                        rs.getString("password_hash"),
+                        rs.getObject("expires_at", LocalDateTime.class),
+                        rs.getLong("session_version_at_issue"),
+                        rs.getLong("current_session_version")), tokenHash, normalizedEmail)
+                .stream().findFirst();
+    }
+
+    public void expirePasswordResetToken(long id) {
+        jdbc.update("""
+                UPDATE password_reset_token
+                   SET status = 'EXPIRED', row_version = row_version + 1
+                 WHERE id = ? AND status = 'ACTIVE'
+                """, id);
+    }
+
+    public void consumePasswordResetToken(long id, LocalDateTime consumedAt) {
+        jdbc.update("""
+                UPDATE password_reset_token
+                   SET status = 'CONSUMED', consumed_at = ?, row_version = row_version + 1
+                 WHERE id = ? AND status = 'ACTIVE'
+                """, consumedAt, id);
+    }
+
+    public void updatePasswordCredential(
+            long userId,
+            String passwordHash,
+            String hashPolicyKey,
+            LocalDateTime changedAt) {
+        jdbc.update("""
+                UPDATE user_credential
+                   SET password_hash = ?, hash_policy_key = ?, password_changed_at = ?,
+                       compromised_checked_at = NULL
+                 WHERE user_id = ?
+                   AND credential_type = 'PASSWORD'
+                   AND disabled_at IS NULL
+                """, passwordHash, hashPolicyKey, changedAt, userId);
     }
 
     public void updateLastLogin(long userId, LocalDateTime now) {
@@ -437,6 +653,33 @@ public class AuthRepository {
                 """, externalId, userId, type, severity, emailHash, sessionId, ipHash, now);
     }
 
+    private Optional<AuthModels.LegalDocumentVersion> findActiveLegalDocumentVersionForUpdate(
+            String requestedTable,
+            String versionKey,
+            String locale,
+            LocalDateTime currentTime) {
+        String table = switch (requestedTable) {
+            case "terms_document_version" -> "terms_document_version";
+            case "privacy_notice_version" -> "privacy_notice_version";
+            default -> throw new IllegalArgumentException("不支持的法律文档表");
+        };
+        String sql = """
+                SELECT id, version_key, content_hash, content_url
+                  FROM %s
+                 WHERE version_key = ?
+                   AND locale = ?
+                   AND status = 'ACTIVE'
+                   AND effective_at <= ?
+                 FOR UPDATE
+                """.formatted(table);
+        return jdbc.query(sql, (rs, rowNum) -> new AuthModels.LegalDocumentVersion(
+                        rs.getLong("id"),
+                        rs.getString("version_key"),
+                        rs.getString("content_hash"),
+                        rs.getString("content_url")), versionKey, locale, currentTime)
+                .stream().findFirst();
+    }
+
     private long insertAndReturnId(String sql, Object... arguments) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbc.update(connection -> {
@@ -444,7 +687,7 @@ public class AuthRepository {
             for (int index = 0; index < arguments.length; index++) {
                 Object value = arguments[index];
                 if (value instanceof LocalDateTime dateTime) {
-                    statement.setTimestamp(index + 1, Timestamp.valueOf(dateTime));
+                    statement.setObject(index + 1, dateTime);
                 } else {
                     statement.setObject(index + 1, value);
                 }

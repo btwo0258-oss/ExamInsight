@@ -842,9 +842,9 @@ onBeforeUnmount(stopSidebarResize)
       </div>
     </section>
 
-    <button class="settings ui-hover-row" type="button">
+    <button class="settings ui-hover-row" type="button" @click="handleUserClick">
       <AppIcon name="settings" :size="20" />
-      <span>设置</span>
+      <span>个人资料</span>
     </button>
 
     <footer class="sidebar-footer">

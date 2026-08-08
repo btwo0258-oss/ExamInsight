@@ -18,7 +18,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.text.Normalizer;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -30,6 +29,9 @@ import java.util.Optional;
 
 @Service
 public class AuthApplicationService {
+    private static final String REGISTRATION = "REGISTRATION";
+    private static final String PASSWORD_RESET = "PASSWORD_RESET";
+
     private final AuthRepository repository;
     private final TransactionTemplate transactions;
     private final AuthProperties properties;
@@ -87,17 +89,20 @@ public class AuthApplicationService {
                     throw new AuthApiException(HttpStatus.CONFLICT, "EMAIL_UNAVAILABLE",
                             "该邮箱无法用于新账户注册。");
                 }
-                repository.supersedeActiveRegistrationChallenges(normalizedEmail);
-                long challengeId = repository.insertRegistrationChallenge(
+                repository.supersedeActiveChallenges(normalizedEmail, REGISTRATION);
+                long challengeId = repository.insertVerificationChallenge(
                         challengeExternalId,
+                        null,
                         normalizedEmail,
+                        REGISTRATION,
                         codeHash,
+                        now,
                         expiresAt,
                         properties.getVerification().getMaximumAttempts(),
                         metadata.ipPrefixHash(),
                         metadata.deviceHash());
                 long deliveryId = repository.insertQueuedDelivery(
-                        deliveryExternalId, challengeId, emailHash);
+                        deliveryExternalId, challengeId, null, "REGISTRATION_CODE", emailHash);
                 return new ChallengeCreation(challengeId, deliveryId);
             });
         } catch (DuplicateKeyException exception) {
@@ -110,8 +115,9 @@ public class AuthApplicationService {
         }
 
         try {
-            String providerMessageId = emailGateway.sendRegistrationCode(
-                    request.email().trim(), code, toInstant(expiresAt));
+            String providerMessageId = emailGateway.sendVerificationCode(
+                    request.email().trim(), code, toInstant(expiresAt),
+                    EmailGateway.VerificationPurpose.REGISTRATION);
             LocalDateTime sentAt = now();
             transactions.executeWithoutResult(status ->
                     repository.markDeliverySent(creation.deliveryId(), providerMessageId, sentAt));
@@ -128,6 +134,69 @@ public class AuthApplicationService {
                 properties.getVerification().getResendCooldown().toSeconds());
     }
 
+    public AuthDtos.PasswordResetChallengeResponse createPasswordResetChallenge(
+            AuthDtos.PasswordResetChallengeRequest request,
+            ClientRequestMetadata metadata) {
+        String normalizedEmail = emailNormalizer.normalize(request.email());
+        String emailHash = crypto.digest("normalized-email", normalizedEmail);
+
+        humanVerification.verify(request.humanVerificationToken(), metadata.remoteAddress());
+        rateLimiter.consumePasswordReset(emailHash, metadata.deviceHash(), metadata.ipPrefixHash());
+
+        Optional<AuthModels.LoginAccount> account = repository.findLoginAccount(normalizedEmail)
+                .filter(candidate -> List.of("ACTIVE", "LIMITED").contains(candidate.status()));
+        Long userId = account.map(AuthModels.LoginAccount::userId).orElse(null);
+        String challengeExternalId = crypto.newExternalId();
+        String code = crypto.newVerificationCode();
+        String codeHash = crypto.digest("verification-code:" + challengeExternalId, code);
+        LocalDateTime currentTime = now();
+        LocalDateTime expiresAt = currentTime.plus(properties.getVerification().getCodeTtl());
+
+        PasswordResetChallengeCreation creation = transactions.execute(status -> {
+            repository.supersedeActiveChallenges(normalizedEmail, PASSWORD_RESET);
+            long challengeId = repository.insertVerificationChallenge(
+                    challengeExternalId,
+                    userId,
+                    normalizedEmail,
+                    PASSWORD_RESET,
+                    codeHash,
+                    currentTime,
+                    expiresAt,
+                    properties.getVerification().getMaximumAttempts(),
+                    metadata.ipPrefixHash(),
+                    metadata.deviceHash());
+            if (userId == null) {
+                return new PasswordResetChallengeCreation(challengeId, null);
+            }
+            long deliveryId = repository.insertQueuedDelivery(
+                    crypto.newExternalId(), challengeId, userId, "PASSWORD_RESET_CODE", emailHash);
+            return new PasswordResetChallengeCreation(challengeId, deliveryId);
+        });
+        if (creation == null) {
+            throw new IllegalStateException("密码重置挑战事务没有返回结果");
+        }
+
+        if (creation.deliveryId() != null) {
+            try {
+                String providerMessageId = emailGateway.sendVerificationCode(
+                        request.email().trim(), code, toInstant(expiresAt),
+                        EmailGateway.VerificationPurpose.PASSWORD_RESET);
+                LocalDateTime sentAt = now();
+                transactions.executeWithoutResult(status ->
+                        repository.markDeliverySent(creation.deliveryId(), providerMessageId, sentAt));
+            } catch (AuthApiException exception) {
+                LocalDateTime failedAt = now();
+                transactions.executeWithoutResult(status -> repository.markDeliveryFailedAndSupersedeChallenge(
+                        creation.deliveryId(), creation.challengeId(), exception.code(), failedAt));
+            }
+        }
+
+        return new AuthDtos.PasswordResetChallengeResponse(
+                challengeExternalId,
+                toInstant(expiresAt),
+                properties.getVerification().getResendCooldown().toSeconds());
+    }
+
     public AuthDtos.VerificationProofResponse verifyRegistrationEmail(
             String challengeExternalId,
             AuthDtos.VerifyEmailRequest request) {
@@ -136,51 +205,61 @@ public class AuthApplicationService {
         LocalDateTime currentTime = now();
 
         VerificationResult result = transactions.execute(status -> {
-            Optional<AuthModels.VerificationChallenge> optional =
-                    repository.findChallengeForUpdate(challengeExternalId);
-            if (optional.isEmpty()) {
-                return VerificationResult.notFound();
-            }
-            AuthModels.VerificationChallenge challenge = optional.get();
-            if (!"PENDING".equals(challenge.status())) {
-                return new VerificationResult(challenge.status(), null);
-            }
-            if (!challenge.expiresAt().isAfter(currentTime)) {
-                repository.markChallengeExpired(challenge.id());
-                return new VerificationResult("EXPIRED", null);
-            }
-            if (!crypto.matches(
-                    "verification-code:" + challenge.externalId(),
-                    request.code(),
-                    challenge.codeHash())) {
-                int attempts = challenge.attemptCount() + 1;
-                boolean locked = attempts >= challenge.maximumAttempts();
-                repository.recordInvalidCode(challenge.id(), attempts, locked);
-                return new VerificationResult(locked ? "LOCKED" : "INVALID_CODE", null);
+            ChallengeCheck check = checkPendingChallenge(
+                    challengeExternalId, REGISTRATION, request.code(), currentTime);
+            if (!"VALID".equals(check.status())) {
+                return new VerificationResult(check.status(), null);
             }
 
             LocalDateTime proofExpiresAt = currentTime.plus(properties.getVerification().getProofTtl());
             repository.markChallengeVerified(
-                    challenge.id(), proofHash, currentTime, proofExpiresAt);
+                    check.challenge().id(), proofHash, currentTime, proofExpiresAt);
             return new VerificationResult("VERIFIED", proofExpiresAt);
         });
 
-        if (result == null || "NOT_FOUND".equals(result.status())) {
-            throw new AuthApiException(HttpStatus.NOT_FOUND, "CHALLENGE_NOT_FOUND",
-                    "验证码挑战不存在或已不可用。");
+        if (result != null && "VERIFIED".equals(result.status())) {
+            return new AuthDtos.VerificationProofResponse(proof, toInstant(result.proofExpiresAt()));
         }
-        return switch (result.status()) {
-            case "VERIFIED" -> new AuthDtos.VerificationProofResponse(
-                    proof, toInstant(result.proofExpiresAt()));
-            case "INVALID_CODE" -> throw new AuthApiException(HttpStatus.BAD_REQUEST,
-                    "INVALID_VERIFICATION_CODE", "验证码不正确。");
-            case "LOCKED" -> throw new AuthApiException(HttpStatus.TOO_MANY_REQUESTS,
-                    "VERIFICATION_LOCKED", "验证码错误次数过多，请重新获取。");
-            case "EXPIRED" -> throw new AuthApiException(HttpStatus.CONFLICT,
-                    "VERIFICATION_EXPIRED", "验证码已过期，请重新获取。");
-            default -> throw new AuthApiException(HttpStatus.CONFLICT,
-                    "CHALLENGE_NOT_PENDING", "该验证码挑战已经处理，请重新获取。");
-        };
+        throw verificationFailure(result == null ? "NOT_FOUND" : result.status());
+    }
+
+    public AuthDtos.PasswordResetProofResponse verifyPasswordResetEmail(
+            String challengeExternalId,
+            AuthDtos.PasswordResetVerifyEmailRequest request,
+            ClientRequestMetadata metadata) {
+        String resetToken = crypto.newOpaqueToken();
+        String proofHash = crypto.digest("password-reset-proof", resetToken);
+        String tokenHash = crypto.digest("password-reset-token", resetToken);
+        LocalDateTime currentTime = now();
+
+        VerificationResult result = transactions.execute(status -> {
+            ChallengeCheck check = checkPendingChallenge(
+                    challengeExternalId, PASSWORD_RESET, request.code(), currentTime);
+            if (!"VALID".equals(check.status())) {
+                return new VerificationResult(check.status(), null);
+            }
+            AuthModels.VerificationChallenge challenge = check.challenge();
+            if (challenge.userId() == null) {
+                repository.recordInvalidCode(challenge.id(), challenge.maximumAttempts(), true);
+                return new VerificationResult("INVALID_CODE", null);
+            }
+
+            LocalDateTime proofExpiresAt = currentTime.plus(properties.getVerification().getProofTtl());
+            repository.markChallengeVerified(challenge.id(), proofHash, currentTime, proofExpiresAt);
+            long sessionVersion = repository.lockSessionVersion(challenge.userId());
+            repository.revokeActivePasswordResetTokens(challenge.userId());
+            repository.insertPasswordResetToken(
+                    crypto.newExternalId(), challenge.userId(), tokenHash, proofExpiresAt,
+                    metadata.ipPrefixHash(), sessionVersion, currentTime);
+            repository.consumeChallenge(challenge.id(), challenge.userId(), currentTime);
+            return new VerificationResult("VERIFIED", proofExpiresAt);
+        });
+
+        if (result != null && "VERIFIED".equals(result.status())) {
+            return new AuthDtos.PasswordResetProofResponse(
+                    resetToken, toInstant(result.proofExpiresAt()));
+        }
+        throw verificationFailure(result == null ? "NOT_FOUND" : result.status());
     }
 
     public AuthModels.IssuedSession register(
@@ -190,14 +269,20 @@ public class AuthApplicationService {
         String normalizedPassword = passwordPolicy.normalizeAndValidate(request.password(), normalizedEmail);
         String passwordHash = passwordPolicy.encode(normalizedPassword);
         String proofHash = crypto.digest("registration-proof", request.registrationProof());
-        String displayName = normalizeDisplayName(request.displayName(), normalizedEmail);
+        String displayName = defaultDisplayName(normalizedEmail);
         SessionSecrets secrets = newSessionSecrets();
         LocalDateTime currentTime = now();
 
         try {
             AuthModels.IssuedSession issued = transactions.execute(status -> {
+                AuthModels.LegalDocumentVersion termsVersion = repository
+                        .findActiveTermsVersionForUpdate(request.termsVersion(), "zh-CN", currentTime)
+                        .orElseThrow(this::legalDocumentVersionOutdated);
+                AuthModels.LegalDocumentVersion privacyVersion = repository
+                        .findActivePrivacyVersionForUpdate(request.privacyVersion(), "zh-CN", currentTime)
+                        .orElseThrow(this::legalDocumentVersionOutdated);
                 AuthModels.VerificationChallenge challenge = repository
-                        .findVerifiedChallengeForUpdate(normalizedEmail, proofHash)
+                        .findVerifiedChallengeForUpdate(normalizedEmail, REGISTRATION, proofHash)
                         .orElseThrow(() -> new AuthApiException(HttpStatus.UNAUTHORIZED,
                                 "INVALID_REGISTRATION_PROOF", "注册证明无效或已经使用。"));
                 if (!"VERIFIED".equals(challenge.status())
@@ -219,6 +304,12 @@ public class AuthApplicationService {
                         PasswordPolicy.HASH_POLICY_KEY, currentTime);
                 repository.insertProfile(crypto.newExternalId(), userId, displayName);
                 repository.insertSettings(crypto.newExternalId(), userId);
+                repository.insertTermsAcceptance(
+                        crypto.newExternalId(), userId, termsVersion.id(),
+                        metadata.ipPrefixHash(), metadata.userAgentHash(), currentTime);
+                repository.insertPrivacyAcknowledgement(
+                        crypto.newExternalId(), userId, privacyVersion.id(),
+                        metadata.ipPrefixHash(), metadata.userAgentHash(), currentTime);
                 AuthModels.Device device = repository.findOrCreateDevice(
                         crypto.newExternalId(), userId, metadata.deviceHash(), "TRUSTED", currentTime);
                 AuthModels.IssuedSession session = createSession(
@@ -237,6 +328,76 @@ public class AuthApplicationService {
         } catch (DuplicateKeyException exception) {
             throw new AuthApiException(HttpStatus.CONFLICT, "EMAIL_UNAVAILABLE",
                     "该邮箱无法用于新账户注册。");
+        }
+    }
+
+    public void resetPassword(
+            AuthDtos.PasswordResetRequest request,
+            ClientRequestMetadata metadata) {
+        String normalizedEmail = emailNormalizer.normalize(request.email());
+        String normalizedPassword = passwordPolicy.normalizeAndValidate(
+                request.newPassword(), normalizedEmail);
+        String passwordHash = passwordPolicy.encode(normalizedPassword);
+        String resetTokenHash = crypto.digest("password-reset-token", request.passwordResetToken());
+        String emailHash = crypto.digest("normalized-email", normalizedEmail);
+        LocalDateTime currentTime = now();
+
+        PasswordResetResult result = transactions.execute(status -> {
+            Optional<AuthModels.PasswordResetToken> optional =
+                    repository.findPasswordResetTokenForUpdate(resetTokenHash, normalizedEmail);
+            if (optional.isEmpty()) {
+                return new PasswordResetResult("NOT_FOUND");
+            }
+            AuthModels.PasswordResetToken token = optional.get();
+            if (!"ACTIVE".equals(token.status())) {
+                return new PasswordResetResult("NOT_ACTIVE");
+            }
+            if (!token.expiresAt().isAfter(currentTime)) {
+                repository.expirePasswordResetToken(token.id());
+                return new PasswordResetResult("EXPIRED");
+            }
+            if (token.sessionVersionAtIssue() != token.currentSessionVersion()) {
+                return new PasswordResetResult("NOT_ACTIVE");
+            }
+            if (!List.of("ACTIVE", "LIMITED").contains(token.userStatus())) {
+                return new PasswordResetResult("ACCOUNT_UNAVAILABLE");
+            }
+            if (passwordPolicy.matches(normalizedPassword, token.passwordHash())) {
+                return new PasswordResetResult("SAME_PASSWORD");
+            }
+
+            repository.updatePasswordCredential(
+                    token.userId(), passwordHash, PasswordPolicy.HASH_POLICY_KEY, currentTime);
+            repository.consumePasswordResetToken(token.id(), currentTime);
+            repository.revokeAllSessions(token.userId(), "PASSWORD_RESET", currentTime);
+            repository.insertSecurityEvent(
+                    crypto.newExternalId(), token.userId(), null,
+                    "PASSWORD_RESET_COMPLETED", "INFO", emailHash,
+                    metadata.ipPrefixHash(), currentTime);
+            return new PasswordResetResult("COMPLETED");
+        });
+
+        String status = result == null ? "NOT_FOUND" : result.status();
+        switch (status) {
+            case "COMPLETED" -> {
+                return;
+            }
+            case "SAME_PASSWORD" -> throw new AuthApiException(
+                    HttpStatus.UNPROCESSABLE_ENTITY,
+                    "PASSWORD_UNCHANGED",
+                    "新密码不能与当前密码相同。");
+            case "ACCOUNT_UNAVAILABLE" -> throw new AuthApiException(
+                    HttpStatus.FORBIDDEN,
+                    "ACCOUNT_UNAVAILABLE",
+                    "该账户当前无法重置密码。");
+            case "EXPIRED" -> throw new AuthApiException(
+                    HttpStatus.CONFLICT,
+                    "PASSWORD_RESET_EXPIRED",
+                    "密码重置凭证已过期，请重新获取验证码。");
+            default -> throw new AuthApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "INVALID_PASSWORD_RESET_TOKEN",
+                    "密码重置凭证无效或已经使用，请重新获取验证码。");
         }
     }
 
@@ -380,16 +541,6 @@ public class AuthApplicationService {
         });
     }
 
-    public void logoutAll(AuthModels.AuthenticatedSession session) {
-        LocalDateTime currentTime = now();
-        transactions.executeWithoutResult(status -> {
-            repository.revokeAllSessions(session.userId(), "USER_LOGOUT_ALL", currentTime);
-            repository.insertSecurityEvent(
-                    crypto.newExternalId(), session.userId(), null,
-                    "ALL_SESSIONS_REVOKED", "INFO", null, null, currentTime);
-        });
-    }
-
     private AuthModels.IssuedSession createSession(
             long userId,
             String userExternalId,
@@ -438,10 +589,8 @@ public class AuthApplicationService {
                 toInstant(absoluteExpiresAt));
     }
 
-    private String normalizeDisplayName(String rawDisplayName, String normalizedEmail) {
-        String value = rawDisplayName == null || rawDisplayName.isBlank()
-                ? normalizedEmail.substring(0, normalizedEmail.indexOf('@'))
-                : Normalizer.normalize(rawDisplayName.trim(), Normalizer.Form.NFC);
+    private String defaultDisplayName(String normalizedEmail) {
+        String value = normalizedEmail.substring(0, normalizedEmail.indexOf('@'));
         if (value.isBlank()) {
             value = "ExamInsight 用户";
         }
@@ -465,18 +614,78 @@ public class AuthApplicationService {
         return first.isBefore(second) ? first : second;
     }
 
+    private ChallengeCheck checkPendingChallenge(
+            String challengeExternalId,
+            String purpose,
+            String code,
+            LocalDateTime currentTime) {
+        Optional<AuthModels.VerificationChallenge> optional =
+                repository.findChallengeForUpdate(challengeExternalId, purpose);
+        if (optional.isEmpty()) {
+            return new ChallengeCheck("NOT_FOUND", null);
+        }
+        AuthModels.VerificationChallenge challenge = optional.get();
+        if (!"PENDING".equals(challenge.status())) {
+            return new ChallengeCheck(challenge.status(), null);
+        }
+        if (!challenge.expiresAt().isAfter(currentTime)) {
+            repository.markChallengeExpired(challenge.id());
+            return new ChallengeCheck("EXPIRED", null);
+        }
+        if (!crypto.matches(
+                "verification-code:" + challenge.externalId(), code, challenge.codeHash())) {
+            int attempts = challenge.attemptCount() + 1;
+            boolean locked = attempts >= challenge.maximumAttempts();
+            repository.recordInvalidCode(challenge.id(), attempts, locked);
+            return new ChallengeCheck(locked ? "LOCKED" : "INVALID_CODE", null);
+        }
+        return new ChallengeCheck("VALID", challenge);
+    }
+
+    private AuthApiException verificationFailure(String status) {
+        return switch (status) {
+            case "INVALID_CODE" -> new AuthApiException(
+                    HttpStatus.BAD_REQUEST, "INVALID_VERIFICATION_CODE", "验证码不正确。");
+            case "LOCKED" -> new AuthApiException(
+                    HttpStatus.TOO_MANY_REQUESTS, "VERIFICATION_LOCKED",
+                    "验证码错误次数过多，请重新获取。");
+            case "EXPIRED" -> new AuthApiException(
+                    HttpStatus.CONFLICT, "VERIFICATION_EXPIRED",
+                    "验证码已过期，请重新获取。");
+            case "NOT_FOUND" -> new AuthApiException(
+                    HttpStatus.NOT_FOUND, "CHALLENGE_NOT_FOUND",
+                    "验证码挑战不存在或已不可用。");
+            default -> new AuthApiException(
+                    HttpStatus.CONFLICT, "CHALLENGE_NOT_PENDING",
+                    "该验证码挑战已经处理，请重新获取。");
+        };
+    }
+
     private AuthApiException unauthenticated() {
         return new AuthApiException(HttpStatus.UNAUTHORIZED,
                 "SESSION_INVALID", "登录状态已失效，请重新登录。");
     }
 
+    private AuthApiException legalDocumentVersionOutdated() {
+        return new AuthApiException(
+                HttpStatus.CONFLICT,
+                "LEGAL_DOCUMENT_VERSION_OUTDATED",
+                "用户协议或隐私政策已经更新，请刷新页面并重新确认。");
+    }
+
     private record ChallengeCreation(long challengeId, long deliveryId) {
     }
 
+    private record PasswordResetChallengeCreation(long challengeId, Long deliveryId) {
+    }
+
+    private record ChallengeCheck(String status, AuthModels.VerificationChallenge challenge) {
+    }
+
     private record VerificationResult(String status, LocalDateTime proofExpiresAt) {
-        private static VerificationResult notFound() {
-            return new VerificationResult("NOT_FOUND", null);
-        }
+    }
+
+    private record PasswordResetResult(String status) {
     }
 
     private record SessionSecrets(String sessionToken, String csrfToken) {

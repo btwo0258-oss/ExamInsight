@@ -50,6 +50,37 @@ public class AuthController {
         return authService.verifyRegistrationEmail(challengeId, request);
     }
 
+    @PostMapping("/password-reset-challenges")
+    public ResponseEntity<AuthDtos.PasswordResetChallengeResponse> createPasswordResetChallenge(
+            @Valid @RequestBody AuthDtos.PasswordResetChallengeRequest request,
+            HttpServletRequest servletRequest) {
+        AuthDtos.PasswordResetChallengeResponse response = authService.createPasswordResetChallenge(
+                request, metadataFactory.from(servletRequest, request.deviceId()));
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    @PostMapping("/password-reset-challenges/{challengeId}/verify-email")
+    public AuthDtos.PasswordResetProofResponse verifyPasswordResetEmail(
+            @PathVariable String challengeId,
+            @Valid @RequestBody AuthDtos.PasswordResetVerifyEmailRequest request,
+            HttpServletRequest servletRequest) {
+        return authService.verifyPasswordResetEmail(
+                challengeId,
+                request,
+                metadataFactory.from(servletRequest, request.deviceId()));
+    }
+
+    @PostMapping("/password-reset")
+    public ResponseEntity<Void> resetPassword(
+            @Valid @RequestBody AuthDtos.PasswordResetRequest request,
+            HttpServletRequest servletRequest,
+            HttpServletResponse servletResponse) {
+        authService.resetPassword(
+                request, metadataFactory.from(servletRequest, request.deviceId()));
+        cookieManager.clear(servletResponse);
+        return ResponseEntity.noContent().build();
+    }
+
     @PostMapping("/register")
     public ResponseEntity<AuthDtos.SessionResponse> register(
             @Valid @RequestBody AuthDtos.RegisterRequest request,
@@ -75,13 +106,6 @@ public class AuthController {
     @PostMapping("/logout")
     public ResponseEntity<Void> logout(HttpServletResponse response) {
         authService.logout(UserContext.requireSession());
-        cookieManager.clear(response);
-        return ResponseEntity.noContent().build();
-    }
-
-    @PostMapping("/logout-all")
-    public ResponseEntity<Void> logoutAll(HttpServletResponse response) {
-        authService.logoutAll(UserContext.requireSession());
         cookieManager.clear(response);
         return ResponseEntity.noContent().build();
     }

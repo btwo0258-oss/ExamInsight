@@ -7,10 +7,11 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpStatus;
 import org.springframework.core.env.Environment;
 import org.springframework.mail.MailException;
-import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 
 @Component
@@ -32,7 +33,11 @@ public class SmtpEmailGateway implements EmailGateway {
     }
 
     @Override
-    public String sendRegistrationCode(String recipient, String code, Instant expiresAt) {
+    public String sendVerificationCode(
+            String recipient,
+            String code,
+            Instant expiresAt,
+            VerificationPurpose purpose) {
         JavaMailSender sender = mailSenderProvider.getIfAvailable();
         String from = properties.getMail().getFrom();
         String host = environment.getProperty("spring.mail.host", "");
@@ -40,16 +45,23 @@ public class SmtpEmailGateway implements EmailGateway {
             throw unavailable();
         }
 
-        SimpleMailMessage message = new SimpleMailMessage();
-        message.setFrom(from);
-        message.setTo(recipient);
-        message.setSubject("ExamInsight 邮箱验证码");
-        message.setText("你的 ExamInsight 验证码是：" + code
-                + "\n\n验证码将在 " + properties.getVerification().getCodeTtl().toMinutes()
-                + " 分钟后失效，请勿转发给他人。"
-                + "\n如果不是你本人操作，请忽略此邮件。");
+        String fromName = properties.getMail().getFromName();
         try {
-            sender.send(message);
+            sender.send(message -> {
+                MimeMessageHelper helper = new MimeMessageHelper(
+                        message, false, StandardCharsets.UTF_8.name());
+                helper.setFrom(from, fromName);
+                helper.setTo(recipient);
+                String action = purpose == VerificationPurpose.PASSWORD_RESET ? "重置密码" : "注册账户";
+                String subject = purpose == VerificationPurpose.PASSWORD_RESET
+                        ? "ExamInsight 密码重置验证码"
+                        : "ExamInsight 邮箱验证码";
+                helper.setSubject(subject);
+                helper.setText("你正在为 ExamInsight " + action + "，验证码是：" + code
+                        + "\n\n验证码将在 " + properties.getVerification().getCodeTtl().toMinutes()
+                        + " 分钟后失效，请勿转发给他人。"
+                        + "\n如果不是你本人操作，请忽略此邮件。", false);
+            });
             return "smtp-" + crypto.newExternalId();
         } catch (MailException exception) {
             throw unavailable();
