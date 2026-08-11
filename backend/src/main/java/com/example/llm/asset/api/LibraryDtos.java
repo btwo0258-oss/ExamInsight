@@ -57,6 +57,27 @@ public final class LibraryDtos {
         }
     }
 
+    /**
+     * Server-owned preview decision. The client renders the selected strategy but must not
+     * independently guess whether a file is safe or small enough to preview.
+     */
+    public record AssetPreview(
+            String assetId,
+            String versionId,
+            String name,
+            String sourceType,
+            String mimeType,
+            long sizeBytes,
+            String extension,
+            String renderer,
+            String status,
+            String contentUrl,
+            String downloadUrl,
+            boolean downloadAvailable,
+            String reason,
+            Instant updatedAt) {
+    }
+
     public record KnowledgeBaseReference(String knowledgeBaseId, String name) {
     }
 

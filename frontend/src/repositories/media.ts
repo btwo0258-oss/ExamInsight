@@ -182,7 +182,7 @@ function encodeMonoWav(samples: Float32Array, sampleRate: number) {
   return buffer
 }
 
-async function prepareRecognitionAudio(file: File) {
+export async function prepareRecognitionAudio(file: File) {
   const AudioContextClass = globalThis.AudioContext
   if (!AudioContextClass) throw new Error('当前浏览器无法转换录音格式，请上传 16kHz 单声道 WAV 或 MP3')
   const context = new AudioContextClass()

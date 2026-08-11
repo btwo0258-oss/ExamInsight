@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import AppIcon from '@/components/common/AppIcon.vue'
+import { Check, ChevronDown, FileText, Folder, Search } from 'lucide-vue-next'
+
 import { useAssetLibraryV2Store } from '@/stores/assetLibraryV2'
 
 const props = defineProps<{
@@ -18,17 +19,17 @@ const store = useAssetLibraryV2Store()
 const open = ref(false)
 const query = ref('')
 
-const readyAssets = computed(() => store.assets.filter((asset) => (
+const readyAssets = computed(() => store.assets.filter(asset => (
   asset.status?.toUpperCase() === 'ACTIVE'
   && asset.version?.status?.toUpperCase() === 'READY'
 )))
 const filteredKnowledgeBases = computed(() => {
   const keyword = query.value.trim().toLocaleLowerCase()
-  return store.knowledgeBases.filter((item) => !keyword || item.name.toLocaleLowerCase().includes(keyword))
+  return store.knowledgeBases.filter(item => !keyword || item.name.toLocaleLowerCase().includes(keyword))
 })
 const filteredAssets = computed(() => {
   const keyword = query.value.trim().toLocaleLowerCase()
-  return readyAssets.value.filter((item) => !keyword || item.name.toLocaleLowerCase().includes(keyword))
+  return readyAssets.value.filter(item => !keyword || item.name.toLocaleLowerCase().includes(keyword))
 })
 const selectedCount = computed(() => props.assetIds.length + (props.knowledgeBaseId ? 1 : 0))
 
@@ -40,17 +41,12 @@ async function toggle() {
   }
 }
 
-function selectKnowledgeBase(value: string | null) {
-  emit('update:knowledgeBaseId', value)
-}
-
 function toggleAsset(assetId: string) {
   if (props.assetIds.includes(assetId)) {
-    emit('update:assetIds', props.assetIds.filter((id) => id !== assetId))
-    return
+    emit('update:assetIds', props.assetIds.filter(id => id !== assetId))
+  } else if (props.assetIds.length < 20) {
+    emit('update:assetIds', [...props.assetIds, assetId])
   }
-  if (props.assetIds.length >= 20) return
-  emit('update:assetIds', [...props.assetIds, assetId])
 }
 
 onMounted(() => {
@@ -69,24 +65,24 @@ onMounted(() => {
       :aria-expanded="open"
       @click="toggle"
     >
-      <AppIcon name="folder" :size="15" />
-      <span>{{ selectedCount ? `已关联 ${selectedCount} 项` : '添加学习资料' }}</span>
-      <AppIcon name="chevron-down" :size="13" />
+      <Folder :size="16" />
+      <span>{{ selectedCount ? `已关联 ${selectedCount} 项` : '添加资料' }}</span>
+      <ChevronDown :size="14" />
     </button>
 
     <div v-if="open" class="source-panel">
       <label class="source-search">
-        <AppIcon name="search" :size="15" />
+        <Search :size="16" />
         <input v-model="query" placeholder="搜索知识库或资料" />
       </label>
 
-      <div class="source-section">
-        <div class="source-heading"><span>知识库</span><small>最多 1 个</small></div>
+      <section class="source-section">
+        <header><strong>知识库</strong><small>最多 1 个</small></header>
         <button
           class="source-option"
           type="button"
           :aria-selected="knowledgeBaseId === null"
-          @click="selectKnowledgeBase(null)"
+          @click="emit('update:knowledgeBaseId', null)"
         >
           <span class="source-radio" :class="{ selected: knowledgeBaseId === null }" />
           <span>不关联知识库</span>
@@ -97,18 +93,18 @@ onMounted(() => {
           class="source-option"
           type="button"
           :aria-selected="knowledgeBaseId === item.knowledgeBaseId"
-          @click="selectKnowledgeBase(item.knowledgeBaseId)"
+          @click="emit('update:knowledgeBaseId', item.knowledgeBaseId)"
         >
           <span class="source-radio" :class="{ selected: knowledgeBaseId === item.knowledgeBaseId }" />
-          <AppIcon name="folder" :size="16" />
+          <Folder :size="16" />
           <span class="source-name">{{ item.name }}</span>
-          <small>{{ item.assetCount }} 个资料</small>
+          <small>{{ item.assetCount }} 项</small>
         </button>
-      </div>
+      </section>
 
       <div class="source-divider" />
-      <div class="source-section">
-        <div class="source-heading"><span>单独资料</span><small>{{ assetIds.length }}/20</small></div>
+      <section class="source-section">
+        <header><strong>单独资料</strong><small>{{ assetIds.length }}/20</small></header>
         <button
           v-for="item in filteredAssets"
           :key="item.assetId"
@@ -118,13 +114,13 @@ onMounted(() => {
           @click="toggleAsset(item.assetId)"
         >
           <span class="source-check" :class="{ selected: assetIds.includes(item.assetId) }">
-            <AppIcon v-if="assetIds.includes(item.assetId)" name="check" :size="12" />
+            <Check v-if="assetIds.includes(item.assetId)" :size="12" :stroke-width="3" />
           </span>
-          <AppIcon name="file" :size="16" />
+          <FileText :size="16" />
           <span class="source-name">{{ item.name }}</span>
         </button>
-        <p v-if="!filteredAssets.length" class="source-empty">暂无已解析完成的资料</p>
-      </div>
+        <p v-if="!filteredAssets.length" class="source-empty">暂无解析完成的资料</p>
+      </section>
     </div>
   </div>
 </template>
@@ -132,38 +128,37 @@ onMounted(() => {
 <style scoped>
 .chat-source-selector { position: relative; }
 .source-trigger {
-  display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 11px;
-  border: 1px solid var(--border-color, #dedede); border-radius: 999px;
-  color: var(--text-primary, #222); background: var(--surface-primary, #fff); cursor: pointer;
+  display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px;
+  border: 1px solid var(--color-border); border-radius: 999px; color: var(--color-text);
+  background: var(--color-bg); cursor: pointer;
 }
-.source-trigger:disabled { cursor: not-allowed; opacity: .5; }
-.source-trigger:not(:disabled):hover { background: var(--surface-hover, #f4f4f4); }
+.source-trigger:disabled { cursor: not-allowed; opacity: .48; }
+.source-trigger:not(:disabled):hover { background: var(--color-surface); }
 .source-panel {
-  position: absolute; bottom: 40px; left: 0; z-index: 30; width: min(420px, calc(100vw - 48px));
-  max-height: 430px; overflow: auto; padding: 10px;
-  border: 1px solid var(--border-color, #dedede); border-radius: 18px;
-  color: var(--text-primary, #222); background: var(--surface-primary, #fff);
-  box-shadow: 0 16px 42px rgb(0 0 0 / 14%);
+  position: absolute; bottom: 42px; left: 0; z-index: 40; width: min(420px, calc(100vw - 48px));
+  max-height: 440px; overflow: auto; padding: 10px; border: 1px solid var(--color-border);
+  border-radius: 18px; color: var(--color-text); background: var(--color-bg);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 15%);
 }
 .source-search {
-  display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 11px; margin-bottom: 8px;
-  border: 1px solid var(--border-color, #dedede); border-radius: 12px;
+  display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 11px; margin-bottom: 8px;
+  border: 1px solid var(--color-border); border-radius: 12px;
 }
 .source-search input { width: 100%; border: 0; outline: 0; color: inherit; background: transparent; font: inherit; }
 .source-section { display: grid; gap: 2px; }
-.source-heading { display: flex; justify-content: space-between; padding: 8px 9px 5px; font-size: 13px; font-weight: 650; }
-.source-heading small, .source-option small { color: var(--text-secondary, #777); font-weight: 400; }
+.source-section header { display: flex; justify-content: space-between; padding: 8px 9px 5px; font-size: 13px; }
+.source-section small { color: var(--color-text-muted); font-weight: 400; }
 .source-option {
-  display: flex; align-items: center; gap: 9px; min-height: 38px; padding: 7px 9px;
-  border: 0; border-radius: 10px; color: inherit; background: transparent; text-align: left; cursor: pointer;
+  display: flex; align-items: center; gap: 9px; min-height: 40px; padding: 7px 9px; border: 0;
+  border-radius: 10px; color: inherit; background: transparent; text-align: left; cursor: pointer;
 }
-.source-option:hover, .source-option[aria-selected='true'] { background: var(--surface-hover, #f2f2f2); }
+.source-option:hover, .source-option[aria-selected='true'] { background: var(--color-surface); }
 .source-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.source-radio, .source-check { flex: 0 0 auto; width: 16px; height: 16px; border: 1.5px solid #999; }
+.source-radio, .source-check { flex: 0 0 auto; width: 17px; height: 17px; border: 1.5px solid var(--color-border); }
 .source-radio { border-radius: 50%; }
-.source-radio.selected { border: 5px solid var(--text-primary, #222); }
+.source-radio.selected { border: 5px solid var(--color-text); }
 .source-check { display: grid; place-items: center; border-radius: 5px; }
-.source-check.selected { border-color: var(--text-primary, #222); color: var(--surface-primary, #fff); background: var(--text-primary, #222); }
-.source-divider { height: 1px; margin: 8px 4px; background: var(--border-color, #e5e5e5); }
-.source-empty { margin: 8px; color: var(--text-secondary, #777); font-size: 13px; }
+.source-check.selected { border-color: var(--color-text); color: var(--color-bg); background: var(--color-text); }
+.source-divider { height: 1px; margin: 8px 4px; background: var(--color-border); }
+.source-empty { margin: 8px; color: var(--color-text-muted); font-size: 13px; }
 </style>

@@ -231,7 +231,15 @@ public class AssetProcessingRepository {
                     sha256(extracted.text()), completedAt, parseResultId);
             jdbc.update("""
                     UPDATE asset_version
-                       SET status = 'READY', active_parse_result_id = ?, row_version = row_version + 1
+                       SET status = 'READY', active_parse_result_id = ?,
+                           rag_status = CASE
+                               WHEN rag_policy = 'AUTO' THEN 'PENDING'
+                               WHEN rag_policy = 'DISABLED' THEN 'DISABLED'
+                               ELSE 'NOT_INDEXED'
+                           END,
+                           rag_error_code = NULL,
+                           indexed_at = NULL,
+                           row_version = row_version + 1
                      WHERE id = ? AND status = 'PROCESSING'
                     """, parseResultId, versionId);
             jdbc.update("""
@@ -261,9 +269,14 @@ public class AssetProcessingRepository {
                 jdbc.update("""
                         UPDATE asset_version
                            SET status = 'FAILED', active_parse_result_id = NULL,
+                               rag_status = CASE
+                                   WHEN rag_policy = 'DISABLED' THEN 'DISABLED'
+                                   ELSE 'FAILED'
+                               END,
+                               rag_error_code = ?, indexed_at = NULL,
                                row_version = row_version + 1
                          WHERE id = ? AND status = 'PROCESSING'
-                        """, versionId);
+                        """, safeErrorCode, versionId);
             }
         });
     }

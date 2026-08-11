@@ -132,6 +132,12 @@ public class AiCapabilityRouter {
         }
     }
 
+    public AiCallResult<byte[]> synthesizeSpeech(String text) {
+        AiCallResult<byte[]> result = dashScope.synthesizeSpeech(text);
+        logSuccess("tts", result);
+        return result;
+    }
+
     public AiCallResult<byte[]> generateImage(String prompt, int width, int height) {
         if (!dashScope.isConfigured()) return generateImageWithXfyun(prompt, width, height, "primary-not-configured");
         try {

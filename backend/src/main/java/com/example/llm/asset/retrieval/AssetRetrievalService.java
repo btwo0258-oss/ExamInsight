@@ -24,6 +24,7 @@ import java.util.Set;
 @Service
 public class AssetRetrievalService {
     private static final int SOURCE_OVERHEAD_TOKENS = 32;
+    private static final int RRF_RANK_CONSTANT = 60;
 
     private final AssetRetrievalRepository repository;
     private final QueryEmbeddingGateway queryEmbeddings;
@@ -55,6 +56,7 @@ public class AssetRetrievalService {
         }
 
         String degradationCode = null;
+        List<RankedChunk> semantic = List.of();
         try {
             List<Float> queryVector = queryEmbeddings.embedQuery(normalized.query());
             List<VectorHit> hits = vectorSearch.search(
@@ -65,35 +67,81 @@ public class AssetRetrievalService {
                     normalized.candidateLimit(),
                     Math.min(10000, normalized.candidateLimit() * properties.getCandidateMultiplier()),
                     properties.getMinSemanticScore());
-            List<RankedChunk> semantic = hydrateInVectorRank(userId, scope, hits);
-            if (!semantic.isEmpty()) {
-                return assemble(
-                        semantic, Status.SUCCEEDED, Mode.SEMANTIC,
-                        normalized.topK(), normalized.contextTokenBudget(), null);
-            }
-            degradationCode = "SEMANTIC_NO_VALID_RESULTS";
+            semantic = hydrateInVectorRank(userId, scope, hits);
+            if (semantic.isEmpty()) degradationCode = "SEMANTIC_NO_VALID_RESULTS";
         } catch (RetrievalException exception) {
             degradationCode = exception.code();
         }
 
         List<ChunkDocument> keywordDocuments = repository.searchKeyword(
                 userId, scope, normalized.query(), normalized.candidateLimit());
-        if (keywordDocuments.isEmpty()) {
-            return empty(Status.EMPTY, degradationCode);
+        List<RankedChunk> keyword = rankKeyword(keywordDocuments);
+
+        if (!semantic.isEmpty() && !keyword.isEmpty()) {
+            return assemble(
+                    fuseRanks(semantic, keyword), Status.SUCCEEDED, Mode.HYBRID,
+                    normalized.topK(), normalized.contextTokenBudget(), null);
         }
-        double maxKeywordScore = keywordDocuments.stream()
-                .mapToDouble(ChunkDocument::keywordScore)
-                .max()
-                .orElse(1);
-        List<RankedChunk> keyword = keywordDocuments.stream()
-                .map(document -> new RankedChunk(
-                        document,
-                        clamp(maxKeywordScore <= 0 ? 0 : document.keywordScore() / maxKeywordScore),
-                        Mode.KEYWORD))
-                .toList();
+        if (!semantic.isEmpty()) {
+            return assemble(
+                    semantic, Status.SUCCEEDED, Mode.SEMANTIC,
+                    normalized.topK(), normalized.contextTokenBudget(), null);
+        }
+        if (keyword.isEmpty()) return empty(Status.EMPTY, degradationCode);
         return assemble(
                 keyword, Status.DEGRADED, Mode.KEYWORD,
                 normalized.topK(), normalized.contextTokenBudget(), degradationCode);
+    }
+
+    private List<RankedChunk> rankKeyword(List<ChunkDocument> documents) {
+        if (documents.isEmpty()) return List.of();
+        double maxScore = documents.stream().mapToDouble(ChunkDocument::keywordScore).max().orElse(1);
+        return documents.stream()
+                .map(document -> new RankedChunk(
+                        document,
+                        clamp(maxScore <= 0 ? 0 : document.keywordScore() / maxScore),
+                        Mode.KEYWORD))
+                .toList();
+    }
+
+    /**
+     * Reciprocal Rank Fusion keeps keyword and semantic scores comparable without assuming that
+     * the two search engines use the same score scale. A chunk found by both paths receives both
+     * rank contributions and is marked HYBRID for retrieval auditing.
+     */
+    private List<RankedChunk> fuseRanks(List<RankedChunk> semantic, List<RankedChunk> keyword) {
+        Map<String, FusedCandidate> candidates = new LinkedHashMap<>();
+        addRankContributions(candidates, semantic, true);
+        addRankContributions(candidates, keyword, false);
+        double maxScore = candidates.values().stream().mapToDouble(FusedCandidate::score).max().orElse(1);
+        return candidates.values().stream()
+                .sorted((left, right) -> Double.compare(right.score(), left.score()))
+                .map(candidate -> new RankedChunk(
+                        candidate.document(),
+                        clamp(maxScore <= 0 ? 0 : candidate.score() / maxScore),
+                        candidate.semantic() && candidate.keyword() ? Mode.HYBRID
+                                : candidate.semantic() ? Mode.SEMANTIC : Mode.KEYWORD))
+                .toList();
+    }
+
+    private void addRankContributions(
+            Map<String, FusedCandidate> candidates,
+            List<RankedChunk> ranked,
+            boolean semantic) {
+        for (int index = 0; index < ranked.size(); index++) {
+            RankedChunk item = ranked.get(index);
+            String chunkId = item.document().chunkExternalId();
+            FusedCandidate previous = candidates.get(chunkId);
+            double contribution = 1d / (RRF_RANK_CONSTANT + index + 1d);
+            if (previous == null) {
+                candidates.put(chunkId, new FusedCandidate(
+                        item.document(), contribution, semantic, !semantic));
+            } else {
+                candidates.put(chunkId, new FusedCandidate(
+                        previous.document(), previous.score() + contribution,
+                        previous.semantic() || semantic, previous.keyword() || !semantic));
+            }
+        }
     }
 
     private List<RankedChunk> hydrateInVectorRank(
@@ -277,5 +325,12 @@ public class AssetRetrievalService {
     }
 
     private record RankedChunk(ChunkDocument document, double score, Mode mode) {
+    }
+
+    private record FusedCandidate(
+            ChunkDocument document,
+            double score,
+            boolean semantic,
+            boolean keyword) {
     }
 }

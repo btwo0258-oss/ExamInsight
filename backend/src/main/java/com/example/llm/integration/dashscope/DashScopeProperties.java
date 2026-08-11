@@ -18,6 +18,7 @@ public class DashScopeProperties {
     private final Model ocr = new Model("qwen3.5-ocr");
     private final Model imageGeneration = new Model("qwen-image-3.0");
     private final Model speech = new Model("qwen3-asr-flash");
+    private final SpeechSynthesis speechSynthesis = new SpeechSynthesis();
 
     public boolean isConfigured() {
         return apiKey != null && !apiKey.isBlank()
@@ -54,6 +55,7 @@ public class DashScopeProperties {
     public Model getOcr() { return ocr; }
     public Model getImageGeneration() { return imageGeneration; }
     public Model getSpeech() { return speech; }
+    public SpeechSynthesis getSpeechSynthesis() { return speechSynthesis; }
 
     public static class Model {
         private String model;
@@ -62,5 +64,19 @@ public class DashScopeProperties {
         public Model(String model) { this.model = model; }
         public String getModel() { return model; }
         public void setModel(String model) { this.model = model; }
+    }
+
+    public static class SpeechSynthesis extends Model {
+        private String voice = "Cherry";
+        private String languageType = "Chinese";
+
+        public SpeechSynthesis() {
+            super("qwen3-tts-flash");
+        }
+
+        public String getVoice() { return voice; }
+        public void setVoice(String voice) { this.voice = voice; }
+        public String getLanguageType() { return languageType; }
+        public void setLanguageType(String languageType) { this.languageType = languageType; }
     }
 }

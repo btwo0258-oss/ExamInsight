@@ -51,6 +51,8 @@ public class AssetIndexRepository {
                       JOIN asset a ON a.id = av.asset_id
                      WHERE pr.status = 'READY'
                        AND av.status = 'READY'
+                       AND av.rag_policy = 'AUTO'
+                       AND av.rag_status IN ('PENDING', 'INDEXING', 'FAILED')
                        AND a.status IN ('ACTIVE', 'ARCHIVED')
                        AND NOT EXISTS (
                            SELECT 1
@@ -124,30 +126,68 @@ public class AssetIndexRepository {
     }
 
     public void completeIndex(long embeddingRecordId, LocalDateTime indexedAt) {
-        transactions.executeWithoutResult(status -> jdbc.update("""
-                UPDATE embedding_record
-                   SET status = 'INDEXED', indexed_at = ?, deleted_at = NULL,
-                       row_version = row_version + 1
-                 WHERE id = ? AND status IN ('PENDING', 'INDEXING', 'FAILED')
-                """, indexedAt, embeddingRecordId));
+        transactions.executeWithoutResult(status -> {
+            jdbc.update("""
+                    UPDATE embedding_record
+                       SET status = 'INDEXED', indexed_at = ?, deleted_at = NULL,
+                           row_version = row_version + 1
+                     WHERE id = ? AND status IN ('PENDING', 'INDEXING', 'FAILED')
+                    """, indexedAt, embeddingRecordId);
+            jdbc.update("""
+                    UPDATE asset_version av
+                    JOIN asset_parse_result pr ON pr.asset_version_id = av.id
+                    JOIN document_chunk completed_chunk ON completed_chunk.parse_result_id = pr.id
+                    JOIN embedding_record completed_embedding ON completed_embedding.chunk_id = completed_chunk.id
+                       SET av.rag_status = 'INDEXED', av.rag_error_code = NULL,
+                           av.indexed_at = ?, av.row_version = av.row_version + 1
+                     WHERE completed_embedding.id = ?
+                       AND av.rag_policy = 'AUTO'
+                       AND av.active_parse_result_id = pr.id
+                       AND NOT EXISTS (
+                           SELECT 1
+                             FROM document_chunk pending_chunk
+                            WHERE pending_chunk.parse_result_id = pr.id
+                              AND NOT EXISTS (
+                                  SELECT 1
+                                    FROM embedding_record pending_embedding
+                                   WHERE pending_embedding.chunk_id = pending_chunk.id
+                                     AND pending_embedding.status = 'INDEXED'
+                              )
+                       )
+                    """, indexedAt, embeddingRecordId);
+        });
     }
 
     public void failIndex(String chunkExternalId) {
-        transactions.executeWithoutResult(status -> jdbc.update("""
-                UPDATE embedding_record er
-                JOIN document_chunk c ON c.id = er.chunk_id
-                JOIN model_definition md ON md.id = er.model_definition_id
-                   SET er.status = 'FAILED', er.indexed_at = NULL, er.deleted_at = NULL,
-                       er.row_version = er.row_version + 1
-                 WHERE c.external_id = ?
-                   AND md.model_key = ?
-                   AND er.embedding_version = ?
-                   AND er.index_name = ?
-                   AND er.status IN ('PENDING', 'INDEXING', 'FAILED')
-                """, chunkExternalId,
-                properties.getIndexing().getModelKey(),
-                properties.getIndexing().getEmbeddingVersion(),
-                properties.getIndexing().getIndexName()));
+        transactions.executeWithoutResult(status -> {
+            jdbc.update("""
+                    UPDATE embedding_record er
+                    JOIN document_chunk c ON c.id = er.chunk_id
+                    JOIN model_definition md ON md.id = er.model_definition_id
+                       SET er.status = 'FAILED', er.indexed_at = NULL, er.deleted_at = NULL,
+                           er.row_version = er.row_version + 1
+                     WHERE c.external_id = ?
+                       AND md.model_key = ?
+                       AND er.embedding_version = ?
+                       AND er.index_name = ?
+                       AND er.status IN ('PENDING', 'INDEXING', 'FAILED')
+                    """, chunkExternalId,
+                    properties.getIndexing().getModelKey(),
+                    properties.getIndexing().getEmbeddingVersion(),
+                    properties.getIndexing().getIndexName());
+            jdbc.update("""
+                    UPDATE asset_version av
+                    JOIN asset_parse_result pr ON pr.asset_version_id = av.id
+                    JOIN document_chunk c ON c.parse_result_id = pr.id
+                       SET av.rag_status = 'FAILED',
+                           av.rag_error_code = 'VECTOR_INDEXING_FAILED',
+                           av.indexed_at = NULL,
+                           av.row_version = av.row_version + 1
+                     WHERE c.external_id = ?
+                       AND av.rag_policy = 'AUTO'
+                       AND av.active_parse_result_id = pr.id
+                    """, chunkExternalId);
+        });
     }
 
     private Optional<ModelDefinition> findActiveModel() {
@@ -210,6 +250,17 @@ public class AssetIndexRepository {
                 """, crypto.newExternalId(), chunk.userId(), chunk.externalId(), idempotencyKey,
                 embeddingExternalId, chunk.externalId(), properties.getIndexing().getEmbeddingVersion(),
                 properties.getIndexing().getIndexName(), scheduledAt);
+        jdbc.update("""
+                UPDATE asset_version av
+                JOIN asset_parse_result pr ON pr.asset_version_id = av.id
+                JOIN document_chunk c ON c.parse_result_id = pr.id
+                   SET av.rag_status = 'INDEXING', av.rag_error_code = NULL,
+                       av.indexed_at = NULL, av.row_version = av.row_version + 1
+                 WHERE c.id = ?
+                   AND av.rag_policy = 'AUTO'
+                   AND av.active_parse_result_id = pr.id
+                   AND av.rag_status IN ('PENDING', 'FAILED', 'INDEXING')
+                """, chunk.id());
     }
 
     private record ModelDefinition(long id, int dimensions) {

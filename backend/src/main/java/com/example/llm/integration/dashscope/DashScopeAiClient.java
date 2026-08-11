@@ -165,6 +165,40 @@ public class DashScopeAiClient {
         return textCompletion(model, body);
     }
 
+    public AiCallResult<byte[]> synthesizeSpeech(String text) {
+        DashScopeProperties.SpeechSynthesis configuration = properties.getSpeechSynthesis();
+        String model = configuration.getModel();
+        ensureConfigured(model);
+        String normalizedText = text == null ? "" : text.trim();
+        if (normalizedText.isBlank()) {
+            throw failure(model, "EMPTY_TTS_TEXT", ProviderCallException.Category.BAD_REQUEST,
+                    false, "朗读文本不能为空", null);
+        }
+        if (normalizedText.codePointCount(0, normalizedText.length()) > 600) {
+            throw failure(model, "TTS_TEXT_TOO_LONG", ProviderCallException.Category.UNSUPPORTED_INPUT,
+                    false, "单次朗读文本不能超过 600 个字符", null);
+        }
+
+        long startedAt = System.currentTimeMillis();
+        Map<String, Object> input = new LinkedHashMap<>();
+        input.put("text", normalizedText);
+        input.put("voice", configuration.getVoice());
+        input.put("language_type", configuration.getLanguageType());
+        JsonNode response = postJson(properties.nativeEndpoint(
+                "services/aigc/multimodal-generation/generation"), model,
+                Map.of("model", model, "input", input));
+        String audioUrl = response.path("output").path("audio").path("url").asText("");
+        if (audioUrl.isBlank()) {
+            throw failure(model, "DASHSCOPE_INVALID_TTS_RESPONSE",
+                    ProviderCallException.Category.INVALID_RESPONSE, false,
+                    "语音合成服务未返回音频", null);
+        }
+        byte[] audio = downloadGeneratedAudio(model, audioUrl);
+        Map<String, Object> usage = toMap(response.path("usage"));
+        if (response.hasNonNull("request_id")) usage.put("requestId", response.path("request_id").asText());
+        return result(audio, model, startedAt, usage);
+    }
+
     public AiCallResult<byte[]> generateImage(String prompt, int width, int height) {
         String model = properties.getImageGeneration().getModel();
         ensureConfigured(model);
@@ -277,6 +311,32 @@ public class DashScopeAiClient {
             Thread.currentThread().interrupt();
             throw failure(model, "DASHSCOPE_INTERRUPTED", ProviderCallException.Category.INTERRUPTED,
                     false, "下载生成图片时请求被中断", exception);
+        } catch (Exception exception) {
+            throw transportFailure(model, exception);
+        }
+    }
+
+    private byte[] downloadGeneratedAudio(String model, String audioUrl) {
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(audioUrl))
+                    .timeout(Duration.ofMinutes(1)).GET().build();
+            HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw classify(model, response.statusCode(), "generated audio download failed", null);
+            }
+            byte[] audio = response.body();
+            if (audio == null || audio.length == 0 || audio.length > 15L * 1024 * 1024) {
+                throw failure(model, "DASHSCOPE_INVALID_TTS_FILE",
+                        ProviderCallException.Category.INVALID_RESPONSE, false,
+                        "语音合成结果无效", null);
+            }
+            return audio;
+        } catch (ProviderCallException exception) {
+            throw exception;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw failure(model, "DASHSCOPE_INTERRUPTED", ProviderCallException.Category.INTERRUPTED,
+                    false, "下载语音合成结果时请求被中断", exception);
         } catch (Exception exception) {
             throw transportFailure(model, exception);
         }

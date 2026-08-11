@@ -13,14 +13,8 @@ import {
   requestAccountDeletion,
   updateAccountProfile,
 } from '@/api/v2Auth'
-import { useConversationStore } from '@/stores/conversation'
-import { useMessageStore } from '@/stores/message'
-import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
-import { useExamAnalysisStore } from '@/stores/examAnalysis'
-import { useMindMapStore } from '@/stores/mindmap'
-import { useLearningStore } from '@/stores/learning'
-import { useLibraryResourceStore } from '@/stores/libraryResource'
 import { useAssetLibraryV2Store } from '@/stores/assetLibraryV2'
+import { useChatV2Store } from '@/stores/chatV2'
 
 export type User = {
   id: string
@@ -49,13 +43,7 @@ export const useAuthStore = defineStore('auth', () => {
   } : null)
 
   function clearBusinessStores() {
-    useConversationStore().clearAll()
-    useMessageStore().clearMemoryState()
-    useKnowledgeBaseStore().clearAll()
-    useExamAnalysisStore().clearAll()
-    useMindMapStore().clearAll()
-    useLearningStore().clearAll()
-    useLibraryResourceStore().clearAll()
+    useChatV2Store().clear()
     useAssetLibraryV2Store().clear()
   }
 

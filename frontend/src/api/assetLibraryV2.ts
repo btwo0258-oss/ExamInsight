@@ -2,6 +2,7 @@ import axios from 'axios'
 import { request } from '@/api/request'
 import type {
   CursorPage,
+  AssetPreviewDescriptor,
   KnowledgeBase,
   KnowledgeBaseDetail,
   LibraryAsset,
@@ -65,6 +66,13 @@ export function getAsset(assetId: string) {
   return call(
     () => request.get<LibraryAssetDetail>(`/api/v2/assets/${assetId}`),
     '获取资料详情失败。',
+  )
+}
+
+export function getAssetPreview(assetId: string) {
+  return call(
+    () => request.get<AssetPreviewDescriptor>(`/api/v2/assets/${assetId}/preview`),
+    '获取资料预览信息失败。',
   )
 }
 

@@ -3,6 +3,7 @@ package com.example.llm.asset.controller;
 import com.example.llm.asset.api.LibraryDtos;
 import com.example.llm.asset.api.AssetApiException;
 import com.example.llm.asset.service.AssetContentService;
+import com.example.llm.asset.service.AssetPreviewService;
 import com.example.llm.asset.service.LibraryApplicationService;
 import com.example.llm.common.UserContext;
 import jakarta.validation.Valid;
@@ -30,12 +31,15 @@ import java.util.Map;
 public class AssetLibraryController {
     private final LibraryApplicationService library;
     private final AssetContentService contentService;
+    private final AssetPreviewService previewService;
 
     public AssetLibraryController(
             LibraryApplicationService library,
-            AssetContentService contentService) {
+            AssetContentService contentService,
+            AssetPreviewService previewService) {
         this.library = library;
         this.contentService = contentService;
+        this.previewService = previewService;
     }
 
     @GetMapping
@@ -50,6 +54,11 @@ public class AssetLibraryController {
     @GetMapping("/{assetId}")
     public LibraryDtos.AssetDetail detail(@PathVariable String assetId) {
         return library.getAsset(UserContext.requireSession().userId(), assetId);
+    }
+
+    @GetMapping("/{assetId}/preview")
+    public LibraryDtos.AssetPreview preview(@PathVariable String assetId) {
+        return previewService.describe(UserContext.requireSession().userId(), assetId);
     }
 
     @PatchMapping("/{assetId}")

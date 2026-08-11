@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import AppIcon from "@/components/common/AppIcon.vue";
+import DocxPageReader from "@/components/resource-preview/DocxPageReader.vue";
+import PdfPageReader from "@/components/resource-preview/PdfPageReader.vue";
+import PptxPageReader from "@/components/resource-preview/PptxPageReader.vue";
 import LearningMindMapPreview from "@/components/learning/LearningMindMapPreview.vue";
 import MindMapStaticPreview from "@/components/artifact/MindMapStaticPreview.vue";
 import PresentationSlidePreview from "@/components/presentation/PresentationSlidePreview.vue";
@@ -13,6 +16,8 @@ const props = defineProps<{
   presentation: PresentationDto | null;
   sheets: SpreadsheetSheetDraft[];
   activeSheetIndex: number;
+  documentBlob: Blob | null;
+  presentationData: ArrayBuffer | null;
   wordHtml: string;
   textHtml: string;
 }>();
@@ -31,8 +36,13 @@ const learningMindMapTree = computed(
 </script>
 
 <template>
+  <PptxPageReader
+    v-if="preview.previewKind === 'presentation' && presentationData"
+    :data="presentationData"
+  />
+
   <div
-    v-if="preview.previewKind === 'presentation' && presentation"
+    v-else-if="preview.previewKind === 'presentation' && presentation"
     class="presentation-pages"
   >
     <article
@@ -113,6 +123,10 @@ const learningMindMapTree = computed(
     />
   </section>
 
+  <DocxPageReader
+    v-else-if="preview.previewKind === 'word' && documentBlob"
+    :blob="documentBlob"
+  />
   <article
     v-else-if="preview.previewKind === 'word' && generatedDocumentText"
     class="paper-document generated-document"
@@ -147,11 +161,9 @@ const learningMindMapTree = computed(
     <h1>{{ resourceName }}</h1>
     <p>{{ generatedDocumentText }}</p>
   </article>
-  <iframe
+  <PdfPageReader
     v-else-if="preview.previewKind === 'pdf' && preview.previewUrl"
-    class="pdf-document"
     :src="preview.previewUrl"
-    :title="resourceName"
   />
   <section
     v-else-if="preview.previewKind === 'audio' && preview.previewUrl"
@@ -170,7 +182,7 @@ const learningMindMapTree = computed(
     <span class="state-icon"><AppIcon name="file" :size="32" /></span>
     <h1>无法在线预览</h1>
     <p>当前预览内容不可用，可下载文件后查看</p>
-    <button type="button" @click="emit('download')">
+    <button v-if="preview.canDownload" type="button" @click="emit('download')">
       <AppIcon name="download" :size="17" />下载文件
     </button>
   </section>
@@ -302,16 +314,6 @@ const learningMindMapTree = computed(
   object-fit: contain;
   border-radius: 6px;
   box-shadow: var(--shadow-sm);
-}
-.pdf-document {
-  display: block;
-  width: min(1200px, 100%);
-  height: calc(100vh - 145px);
-  min-height: 620px;
-  margin: 0 auto;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-surface);
 }
 .presentation-pages {
   width: min(1100px, 100%);
@@ -496,11 +498,9 @@ const learningMindMapTree = computed(
     min-height: 80vh;
     padding: 28px 20px;
   }
-  .pdf-document,
   .mindmap-document {
     height: calc(100vh - 110px);
     min-height: 480px;
   }
 }
 </style>
-

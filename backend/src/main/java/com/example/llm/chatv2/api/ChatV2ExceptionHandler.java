@@ -37,7 +37,8 @@ public class ChatV2ExceptionHandler {
         for (FieldError fieldError : exception.getBindingResult().getFieldErrors()) {
             fields.putIfAbsent(fieldError.getField(), fieldError.getDefaultMessage());
         }
-        return error(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "请求参数不符合要求。", Map.of("fields", fields));
+        return error(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "请求参数不符合要求。",
+                Map.of("fields", fields));
     }
 
     @ExceptionHandler({ConstraintViolationException.class, HttpMessageNotReadableException.class})
@@ -55,7 +56,10 @@ public class ChatV2ExceptionHandler {
     }
 
     private ResponseEntity<ErrorEnvelope> error(
-            HttpStatus status, String code, String message, Map<String, Object> details) {
+            HttpStatus status,
+            String code,
+            String message,
+            Map<String, Object> details) {
         return ResponseEntity.status(status).body(new ErrorEnvelope(
                 new ErrorBody(code, message, crypto.newExternalId(), details)));
     }

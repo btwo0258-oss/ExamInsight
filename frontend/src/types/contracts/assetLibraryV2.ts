@@ -50,6 +50,42 @@ export type LibraryAssetDetail = {
   purgeJob: PurgeJob | null
 }
 
+export type AssetPreviewRenderer =
+  | 'pdf'
+  | 'image'
+  | 'docx'
+  | 'pptx'
+  | 'xlsx'
+  | 'csv'
+  | 'markdown'
+  | 'text'
+  | 'audio'
+  | 'unsupported'
+
+export type AssetPreviewStatus =
+  | 'processing'
+  | 'ready'
+  | 'failed'
+  | 'unsupported'
+  | 'too_large'
+
+export type AssetPreviewDescriptor = {
+  assetId: string
+  versionId: string | null
+  name: string
+  sourceType: string
+  mimeType: string
+  sizeBytes: number
+  extension: string
+  renderer: AssetPreviewRenderer
+  status: AssetPreviewStatus
+  contentUrl: string | null
+  downloadUrl: string
+  downloadAvailable: boolean
+  reason: string | null
+  updatedAt: string
+}
+
 export type KnowledgeBase = {
   knowledgeBaseId: string
   name: string

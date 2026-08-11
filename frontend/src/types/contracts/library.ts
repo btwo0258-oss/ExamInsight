@@ -97,6 +97,7 @@ export type ResourcePreviewDto = {
   mindMapId?: number;
   previewData?: ArtifactInlinePreview;
   errorMessage?: string;
+  canDownload?: boolean;
 };
 
 export const RESOURCE_PREVIEW_LIMITS = {

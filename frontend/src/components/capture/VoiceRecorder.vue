@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { LoaderCircle, Mic, Square } from 'lucide-vue-next'
+import { transcribeChatAudio, type ChatTranscription } from '@/api/chatV2'
 import { mediaRepository } from '@/repositories/media'
 import {
   MEDIA_LIMITS,
@@ -15,14 +16,16 @@ const props = withDefaults(defineProps<{
   disabled?: boolean
   purpose?: Extract<MediaPurpose, 'chat-attachment' | 'learning-input'>
   context?: MediaContext
+  chatV2?: boolean
 }>(), {
   disabled: false,
   purpose: 'chat-attachment',
   context: () => ({}),
+  chatV2: false,
 })
 
 const emit = defineEmits<{
-  transcribed: [text: string, result: AudioTranscriptionDto]
+  transcribed: [text: string, result: AudioTranscriptionDto | ChatTranscription]
   error: [message: string]
 }>()
 
@@ -101,14 +104,16 @@ async function transcribe() {
   state.value = 'transcribing'
   abortController = new AbortController()
   try {
-    const result = await mediaRepository.transcribeAudio(file, {
-      ...props.context,
-      source: 'microphone',
-      purpose: props.purpose,
-      clientRequestId: clientRequestId(),
-      language: 'zh-CN',
-      durationMs,
-    }, abortController.signal)
+    const result = props.chatV2
+      ? await transcribeChatAudio(file, abortController.signal)
+      : await mediaRepository.transcribeAudio(file, {
+        ...props.context,
+        source: 'microphone',
+        purpose: props.purpose,
+        clientRequestId: clientRequestId(),
+        language: 'zh-CN',
+        durationMs,
+      }, abortController.signal)
     if (!disposed) emit('transcribed', result.text, result)
   } catch (error) {
     if (!disposed && !(error instanceof DOMException && error.name === 'AbortError')) {

@@ -23,6 +23,7 @@ public final class RetrievalModels {
     }
 
     public enum Mode {
+        HYBRID,
         SEMANTIC,
         KEYWORD,
         NONE

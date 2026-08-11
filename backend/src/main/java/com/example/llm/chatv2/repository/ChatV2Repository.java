@@ -202,6 +202,8 @@ public class ChatV2Repository {
 
             List<LockedAssetVersion> directSources = resolveDirectSources(userId, requestedAssetIds);
             validateKnowledgeBaseReadiness(userId, conversation.knowledgeBaseId());
+            List<LockedAssetVersion> knowledgeBaseSources = resolveKnowledgeBaseSources(
+                    userId, conversation.knowledgeBaseId());
 
             BranchRow branch = requireActiveBranchForUpdate(conversation.id(), conversation.activeBranchId());
             MessageCursor cursor = lastMessageCursor(branch.id());
@@ -269,22 +271,25 @@ public class ChatV2Repository {
                         """, userMessageId, source.assetVersionId(), source.assetName());
             }
 
+            List<LockedAssetVersion> frozenSources = mergeFrozenSources(directSources, knowledgeBaseSources);
             Map<String, Object> manifest = new LinkedHashMap<>();
             manifest.put("conversationId", conversationExternalId);
             manifest.put("knowledgeBaseId", conversation.knowledgeBaseExternalId());
-            manifest.put("directAssetVersions", directSources.stream().map(source -> Map.of(
+            manifest.put("sourceVersions", frozenSources.stream().map(source -> Map.of(
                     "assetId", source.assetExternalId(),
                     "versionId", source.versionExternalId(),
                     "name", source.assetName())).toList());
             manifest.put("messageSequence", cursor.sequence() + 1);
             String manifestJson = json(manifest);
-            jdbc.update("""
+            long contextSnapshotId = insertAndReturnId("""
                     INSERT INTO ai_context_snapshot (
                         external_id, ai_run_id, context_schema_version,
                         context_manifest_json, context_hash
-                    ) VALUES (?, ?, 1, CAST(? AS JSON), ?)
+                    ) VALUES (?, ?, 2, CAST(? AS JSON), ?)
                     """, crypto.newExternalId(), runId, manifestJson,
                     sha256(manifestJson.getBytes(StandardCharsets.UTF_8)));
+            persistFrozenSources(
+                    contextSnapshotId, conversation.knowledgeBaseId(), directSources, knowledgeBaseSources);
 
             String title = conversation.title();
             if (DEFAULT_TITLE.equals(title)) {
@@ -302,7 +307,7 @@ public class ChatV2Repository {
                     userMessageId, userMessageExternalId,
                     assistantMessageId, assistantMessageExternalId,
                     conversation.knowledgeBaseExternalId(),
-                    directSources.stream().map(LockedAssetVersion::versionExternalId).toList(),
+                    frozenSources.stream().map(LockedAssetVersion::versionExternalId).toList(),
                     runtime, false);
         });
     }
@@ -335,7 +340,7 @@ public class ChatV2Repository {
                         rs.getLong("request_message_id"), rs.getString("request_external_id"),
                         rs.getString("request_text"), rs.getLong("response_message_id"),
                         rs.getString("response_external_id"), rs.getString("knowledge_base_external_id"),
-                        loadDirectVersionExternalIds(rs.getLong("request_message_id")),
+                        loadContextVersionExternalIds(rs.getLong("id")),
                         rs.getLong("model_policy_version_id"), rs.getLong("prompt_version_id"),
                         rs.getString("system_template"), rs.getString("developer_template"),
                         loadHistory(rs.getLong("branch_id"), rs.getLong("request_message_id"))),
@@ -491,7 +496,7 @@ public class ChatV2Repository {
                     : "SUCCEEDED";
             Map<String, Object> filters = new LinkedHashMap<>();
             filters.put("knowledgeBaseId", context.knowledgeBaseExternalId());
-            filters.put("directVersionIds", context.directVersionExternalIds());
+            filters.put("sourceVersionIds", context.sourceVersionExternalIds());
             filters.put("degradationCodes", degradationCodes);
 
             long retrievalRunId = insertAndReturnId("""
@@ -607,7 +612,7 @@ public class ChatV2Repository {
                             requestMessageId, rs.getString("request_external_id"),
                             rs.getLong("response_message_id"), rs.getString("response_external_id"),
                             rs.getString("knowledge_base_external_id"),
-                            loadDirectVersionExternalIds(requestMessageId), runtime, true);
+                            loadContextVersionExternalIds(rs.getLong("id")), runtime, true);
                 }, userId, idempotencyScope(conversationExternalId), idempotencyKey);
         return rows.stream().findFirst();
     }
@@ -748,14 +753,15 @@ public class ChatV2Repository {
         return List.copyOf(history);
     }
 
-    private List<String> loadDirectVersionExternalIds(long requestMessageId) {
+    private List<String> loadContextVersionExternalIds(long runId) {
         return jdbc.query("""
                 SELECT av.external_id
-                  FROM message_attachment attachment
-                  JOIN asset_version av ON av.id = attachment.asset_version_id
-                 WHERE attachment.message_id = ? AND attachment.attachment_role = 'CONTEXT'
-                 ORDER BY attachment.id ASC
-                """, (rs, rowNum) -> rs.getString(1), requestMessageId);
+                  FROM ai_context_snapshot snapshot
+                  JOIN ai_context_source source ON source.context_snapshot_id = snapshot.id
+                  JOIN asset_version av ON av.id = source.asset_version_id
+                 WHERE snapshot.ai_run_id = ?
+                 ORDER BY source.source_order ASC
+                """, (rs, rowNum) -> rs.getString(1), runId);
     }
 
     private List<LockedAssetVersion> resolveDirectSources(long userId, List<String> requestedIds) {
@@ -777,7 +783,7 @@ public class ChatV2Repository {
         args.add(userId);
         args.addAll(unique);
         List<LockedAssetVersion> rows = jdbc.query("""
-                SELECT a.external_id AS asset_external_id, a.name,
+                SELECT a.id AS asset_id, a.external_id AS asset_external_id, a.name,
                        av.id AS version_id, av.external_id AS version_external_id
                   FROM asset a
                   JOIN asset_version av ON av.id = a.current_version_id
@@ -786,7 +792,7 @@ public class ChatV2Repository {
                    AND av.status = 'READY' AND parse_result.status = 'READY'
                    AND a.external_id IN (%s)
                 """.formatted(placeholders), (rs, rowNum) -> new LockedAssetVersion(
-                        rs.getString("asset_external_id"), rs.getString("name"),
+                        rs.getLong("asset_id"), rs.getString("asset_external_id"), rs.getString("name"),
                         rs.getLong("version_id"), rs.getString("version_external_id")),
                 args.toArray());
         if (rows.size() != unique.size()) {
@@ -795,6 +801,66 @@ public class ChatV2Repository {
         Map<String, LockedAssetVersion> byExternalId = new LinkedHashMap<>();
         rows.forEach(row -> byExternalId.put(row.assetExternalId(), row));
         return unique.stream().map(byExternalId::get).toList();
+    }
+
+    private List<LockedAssetVersion> resolveKnowledgeBaseSources(long userId, Long knowledgeBaseId) {
+        if (knowledgeBaseId == null) return List.of();
+        return jdbc.query("""
+                SELECT a.id AS asset_id, a.external_id AS asset_external_id, a.name,
+                       av.id AS version_id, av.external_id AS version_external_id
+                  FROM knowledge_base_asset membership
+                  JOIN knowledge_base kb ON kb.id = membership.knowledge_base_id
+                  JOIN asset a ON a.id = membership.asset_id
+                  JOIN asset_version av ON av.id = a.current_version_id
+                  JOIN asset_parse_result parse_result ON parse_result.id = av.active_parse_result_id
+                 WHERE membership.knowledge_base_id = ? AND kb.user_id = ? AND kb.status = 'ACTIVE'
+                   AND a.status = 'ACTIVE' AND av.status = 'READY' AND parse_result.status = 'READY'
+                 ORDER BY membership.sort_order ASC, membership.id ASC
+                """, (rs, rowNum) -> new LockedAssetVersion(
+                        rs.getLong("asset_id"), rs.getString("asset_external_id"), rs.getString("name"),
+                        rs.getLong("version_id"), rs.getString("version_external_id")),
+                knowledgeBaseId, userId);
+    }
+
+    private List<LockedAssetVersion> mergeFrozenSources(
+            List<LockedAssetVersion> directSources,
+            List<LockedAssetVersion> knowledgeBaseSources) {
+        Map<Long, LockedAssetVersion> unique = new LinkedHashMap<>();
+        directSources.forEach(source -> unique.put(source.assetVersionId(), source));
+        knowledgeBaseSources.forEach(source -> unique.putIfAbsent(source.assetVersionId(), source));
+        return List.copyOf(unique.values());
+    }
+
+    private void persistFrozenSources(
+            long contextSnapshotId,
+            Long knowledgeBaseId,
+            List<LockedAssetVersion> directSources,
+            List<LockedAssetVersion> knowledgeBaseSources) {
+        Set<Long> insertedVersions = new LinkedHashSet<>();
+        int sourceOrder = 0;
+        for (LockedAssetVersion source : directSources) {
+            insertContextSource(contextSnapshotId, "DIRECT_ASSET", null, source, sourceOrder++);
+            insertedVersions.add(source.assetVersionId());
+        }
+        for (LockedAssetVersion source : knowledgeBaseSources) {
+            if (!insertedVersions.add(source.assetVersionId())) continue;
+            insertContextSource(contextSnapshotId, "KNOWLEDGE_BASE", knowledgeBaseId, source, sourceOrder++);
+        }
+    }
+
+    private void insertContextSource(
+            long contextSnapshotId,
+            String sourceKind,
+            Long knowledgeBaseId,
+            LockedAssetVersion source,
+            int sourceOrder) {
+        jdbc.update("""
+                INSERT INTO ai_context_source (
+                    context_snapshot_id, source_kind, knowledge_base_id,
+                    asset_id, asset_version_id, source_order
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """, contextSnapshotId, sourceKind, knowledgeBaseId,
+                source.assetId(), source.assetVersionId(), sourceOrder);
     }
 
     private void validateKnowledgeBaseReadiness(long userId, Long knowledgeBaseId) {
@@ -1005,9 +1071,10 @@ public class ChatV2Repository {
     }
 
     private String retrievalMode(List<Source> sources) {
+        boolean hybrid = sources.stream().anyMatch(source -> source.mode() == RetrievalModels.Mode.HYBRID);
         boolean semantic = sources.stream().anyMatch(source -> source.mode() == RetrievalModels.Mode.SEMANTIC);
         boolean keyword = sources.stream().anyMatch(source -> source.mode() == RetrievalModels.Mode.KEYWORD);
-        if (semantic && keyword) return "HYBRID";
+        if (hybrid || (semantic && keyword)) return "HYBRID";
         if (semantic) return "SEMANTIC";
         return "KEYWORD";
     }
@@ -1091,7 +1158,7 @@ public class ChatV2Repository {
             long responseMessageId,
             String responseMessageExternalId,
             String knowledgeBaseExternalId,
-            List<String> directVersionExternalIds,
+            List<String> sourceVersionExternalIds,
             RuntimeDefinition runtime,
             boolean replayed) {
     }
@@ -1118,7 +1185,7 @@ public class ChatV2Repository {
             long responseMessageId,
             String responseMessageExternalId,
             String knowledgeBaseExternalId,
-            List<String> directVersionExternalIds,
+            List<String> sourceVersionExternalIds,
             long modelPolicyVersionId,
             long promptVersionId,
             String systemPrompt,
@@ -1155,6 +1222,7 @@ public class ChatV2Repository {
     }
 
     private record LockedAssetVersion(
+            long assetId,
             String assetExternalId,
             String assetName,
             long assetVersionId,

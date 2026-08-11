@@ -146,6 +146,10 @@ dashscope:
     model: ${DASHSCOPE_IMAGE_MODEL:qwen-image-3.0}
   speech:
     model: ${DASHSCOPE_ASR_MODEL:qwen3-asr-flash}
+  speech-synthesis:
+    model: ${DASHSCOPE_TTS_MODEL:qwen3-tts-flash}
+    voice: ${DASHSCOPE_TTS_VOICE:Cherry}
+    language-type: ${DASHSCOPE_TTS_LANGUAGE:Chinese}
 embedding:
   reindex-on-startup: ${EMBEDDING_REINDEX_ON_STARTUP:false}
 
