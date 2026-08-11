@@ -1,4 +1,5 @@
 export type SseEvent = {
+  id?: string
   event?: string
   data: string
 }
@@ -7,19 +8,25 @@ function parseEventBlock(block: string): SseEvent[] {
   const lines = block.split(/\r?\n/)
   const events: SseEvent[] = []
   let eventName: string | undefined
+  let eventId: string | undefined
   let dataLines: string[] = []
 
   function flush() {
     if (dataLines.length === 0) return
-    events.push({ event: eventName, data: dataLines.join('\n') })
+    events.push({ id: eventId, event: eventName, data: dataLines.join('\n') })
     dataLines = []
     eventName = undefined
+    eventId = undefined
   }
 
   for (const line of lines) {
     if (!line) continue
     if (line.startsWith('event:')) {
       eventName = line.slice('event:'.length).trim()
+      continue
+    }
+    if (line.startsWith('id:')) {
+      eventId = line.slice('id:'.length).trim()
       continue
     }
     if (line.startsWith('data:')) {

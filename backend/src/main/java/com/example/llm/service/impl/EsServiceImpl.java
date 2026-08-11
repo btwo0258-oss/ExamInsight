@@ -22,7 +22,7 @@ public class EsServiceImpl implements EsService {
     @Autowired
     private ElasticsearchClient esClient;
 
-    @Value("${xfyun.embedding.dimensions:2048}")
+    @Value("${xfyun.embedding.dimensions:2560}")
     private int embeddingDimensions;
 
     @Override

@@ -4,9 +4,10 @@ import { nextTick, ref, watch } from "vue";
 import MessageBubble from "./MessageBubble.vue";
 import type { ChatMessage } from "@/stores/message";
 import type { LearningProfileData } from "@/components/learning/LearningProfileCard.vue";
+import type { ConversationId } from "@/types/contracts/conversation";
 
 type Props = {
-  conversationId: number | null;
+  conversationId: ConversationId | null;
   messages: ChatMessage[];
 };
 

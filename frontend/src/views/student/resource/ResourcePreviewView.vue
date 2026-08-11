@@ -2,11 +2,10 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppIcon from "@/components/common/AppIcon.vue";
-import LearningMindMapPreview from "@/components/learning/LearningMindMapPreview.vue";
-import MindMapStaticPreview from "@/components/artifact/MindMapStaticPreview.vue";
 import StudentShell from "@/components/layout/StudentShell.vue";
-import PresentationSlidePreview from "@/components/presentation/PresentationSlidePreview.vue";
+import ResourcePreviewContent from "@/components/resource-preview/ResourcePreviewContent.vue";
 import { downloadLibraryResource, previewLibraryResource } from "@/api/libraryResource";
+import { fetchAssetContent } from "@/api/assetLibraryV2";
 import { sessionFetch } from "@/api/request";
 import { isMockDataSource } from "@/config/dataSource";
 import { presentationRepository } from "@/repositories/presentation";
@@ -16,6 +15,11 @@ import type { LearningPlan, LearningResource } from "@/mock";
 import type { ResourcePreviewDto } from "@/types/contracts/library";
 import type { PresentationDto } from "@/types/contracts/presentation";
 import type { SpreadsheetSheetDraft } from "@/types/contracts/spreadsheet";
+import { parseDocx, parseXlsx } from "@/features/resource-preview/previewParsers";
+import {
+  disposePreparedV2AssetPreview,
+  prepareV2AssetPreview,
+} from "@/features/resource-preview/v2AssetPreview";
 import { renderMarkdownToHtml } from "@/utils/markdown";
 import { subscribeResourcePreviewUpdates } from "@/utils/resourcePreviewSync";
 import { downloadBlob } from "@/utils/download";
@@ -37,11 +41,11 @@ let requestSequence = 0;
 const resourceId = computed(() =>
   typeof route.params.resourceId === "string" ? route.params.resourceId : "",
 );
+const isV2LibraryAsset = computed(() => route.query.source === "library-v2");
 const resource = computed(() => preview.value?.resource ?? null);
-const activeSheet = computed(() => sheets.value[activeSheetIndex.value] ?? null);
 const sourceLabel = computed(
   () =>
-    ({
+    isV2LibraryAsset.value ? "资料库" : ({
       library: "资料库",
       knowledge: "知识库",
       learning: "智能学习资源包",
@@ -68,7 +72,6 @@ const statusMessage = computed(() => {
   return "";
 });
 const canRender = computed(() => preview.value?.status === "ready" && !localError.value);
-const generatedDocumentText = computed(() => preview.value?.previewData?.text ?? "");
 
 function internalReturnPath() {
   const value = route.query.returnTo;
@@ -176,35 +179,12 @@ async function loadWord(url: string, fileName: string) {
     throw new Error("Mock 环境暂不转换旧版 .doc，正式环境由后端转换后预览");
   }
   const response = await sessionFetch(url);
-  const mammoth = await import("mammoth");
-  const result = await mammoth.convertToHtml({ arrayBuffer: await response.arrayBuffer() });
-  wordHtml.value = result.value;
+  wordHtml.value = await parseDocx(await response.blob());
 }
 
 async function loadUploadedSpreadsheet(url: string) {
-  const ExcelJS = await import("exceljs");
-  const workbook = new ExcelJS.Workbook();
   const response = await sessionFetch(url);
-  await workbook.xlsx.load(await response.arrayBuffer());
-  sheets.value = workbook.worksheets.map((worksheet, sheetIndex) => {
-    const rows = worksheet.getSheetValues().slice(1) as unknown[][];
-    const width = Math.max(1, ...rows.map((row) => (Array.isArray(row) ? row.length - 1 : 0)));
-    const normalized = rows.map((row) =>
-      Array.from({ length: width }, (_, index) => {
-        const value = Array.isArray(row) ? row[index + 1] : null;
-        if (value == null) return null;
-        if (typeof value === "string" || typeof value === "number" || typeof value === "boolean")
-          return value;
-        return String(value);
-      }),
-    );
-    return {
-      sheetId: String(worksheet.id || sheetIndex + 1),
-      name: worksheet.name,
-      columns: Array.from({ length: width }, (_, index) => String.fromCharCode(65 + (index % 26))),
-      rows: normalized,
-    };
-  });
+  sheets.value = await parseXlsx(await response.blob());
 }
 
 async function loadPreview() {
@@ -219,6 +199,17 @@ async function loadPreview() {
   loading.value = true;
 
   try {
+    if (isV2LibraryAsset.value) {
+      const prepared = await prepareV2AssetPreview(resourceId.value);
+      if (sequence !== requestSequence) {
+        disposePreparedV2AssetPreview(prepared);
+        return;
+      }
+      preview.value = prepared.preview;
+      wordHtml.value = prepared.wordHtml;
+      sheets.value = prepared.sheets;
+      return;
+    }
     const value = await previewLibraryResource(resourceId.value);
     if (sequence !== requestSequence) return;
     preview.value = value;
@@ -283,11 +274,13 @@ async function download() {
   try {
     const presentationId = preview.value ? presentationIdFromPreview(preview.value) : "";
     const spreadsheetId = preview.value ? spreadsheetIdFromPreview(preview.value) : "";
-    const blob = presentationId
-      ? await presentationRepository.download(presentationId)
-      : spreadsheetId
-        ? await spreadsheetRepository.download(spreadsheetId)
-        : await downloadLibraryResource(resource.value.resourceId);
+    const blob = isV2LibraryAsset.value
+      ? await fetchAssetContent(resource.value.resourceId, "attachment")
+      : presentationId
+        ? await presentationRepository.download(presentationId)
+        : spreadsheetId
+          ? await spreadsheetRepository.download(spreadsheetId)
+          : await downloadLibraryResource(resource.value.resourceId);
     downloadBlob(blob, resource.value.name);
   } catch (error) {
     localError.value = error instanceof Error ? error.message : "文件下载失败";
@@ -296,7 +289,7 @@ async function download() {
   }
 }
 
-watch(resourceId, () => void loadPreview(), { immediate: true });
+watch([resourceId, isV2LibraryAsset], () => void loadPreview(), { immediate: true });
 
 const unsubscribePreviewUpdates = subscribeResourcePreviewUpdates((update) => {
   if (update.resourceId === resourceId.value) void loadPreview();
@@ -367,151 +360,16 @@ onBeforeUnmount(() => {
           </button>
         </section>
 
-        <div
-          v-else-if="preview?.previewKind === 'presentation' && presentation"
-          class="presentation-pages"
-        >
-          <article
-            v-for="page in presentation.previewPages"
-            :key="page.id"
-            class="presentation-page"
-          >
-            <span>第 {{ page.order }} 页</span>
-            <PresentationSlidePreview
-              :page="page"
-              :aspect-ratio="presentation.config.aspectRatio"
-            />
-          </article>
-        </div>
-
-        <div
-          v-else-if="preview?.previewKind === 'presentation' && preview.previewData?.slides"
-          class="presentation-pages generated-slides"
-        >
-          <article
-            v-for="(slide, index) in preview.previewData.slides"
-            :key="`${slide.title}-${index}`"
-            class="generated-slide"
-          >
-            <span>第 {{ index + 1 }} 页</span>
-            <div>
-              <h2>{{ slide.title }}</h2>
-              <ul>
-                <li v-for="point in slide.points" :key="point">{{ point }}</li>
-              </ul>
-            </div>
-          </article>
-        </div>
-
-        <section v-else-if="preview?.previewKind === 'spreadsheet'" class="spreadsheet-document">
-          <div class="sheet-tabs" role="tablist" aria-label="工作表">
-            <button
-              v-for="(sheet, index) in sheets"
-              :key="sheet.sheetId"
-              type="button"
-              :class="{ active: activeSheetIndex === index }"
-              @click="activeSheetIndex = index"
-            >
-              {{ sheet.name }}
-            </button>
-          </div>
-          <div v-if="activeSheet" class="sheet-table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th class="row-number">#</th>
-                  <th v-for="column in activeSheet.columns" :key="column">{{ column }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(row, rowIndex) in activeSheet.rows" :key="rowIndex">
-                  <td class="row-number">{{ rowIndex + 1 }}</td>
-                  <td v-for="(_, index) in activeSheet.columns" :key="index">
-                    {{ row[index] ?? "" }}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <p v-else class="empty-preview">电子表格中没有可预览的数据</p>
-        </section>
-
-        <section v-else-if="preview?.previewKind === 'mindmap'" class="mindmap-document">
-          <MindMapStaticPreview
-            v-if="preview.previewData?.mindMap"
-            :tree="preview.previewData.mindMap"
-            :render-config="preview.previewData.mindMapConfig"
-          />
-          <LearningMindMapPreview
-            v-else
-            :title="resource?.name || '思维导图'"
-            :tree-data="
-              (preview as ResourcePreviewDto & { mindMapTreeData?: unknown }).mindMapTreeData
-            "
-          />
-        </section>
-
-        <article
-          v-else-if="preview?.previewKind === 'word' && generatedDocumentText"
-          class="paper-document generated-document"
-        >
-          <h1>{{ resource?.name }}</h1>
-          <p>{{ generatedDocumentText }}</p>
-        </article>
-        <article
-          v-else-if="preview?.previewKind === 'word'"
-          class="paper-document word-document"
-          v-html="wordHtml"
+        <ResourcePreviewContent
+          v-else-if="preview"
+          v-model:active-sheet-index="activeSheetIndex"
+          :preview="preview"
+          :presentation="presentation"
+          :sheets="sheets"
+          :word-html="wordHtml"
+          :text-html="textHtml"
+          @download="download"
         />
-        <article
-          v-else-if="preview?.previewKind === 'text' && textHtml"
-          class="paper-document markdown-document"
-          v-html="textHtml"
-        />
-        <pre
-          v-else-if="preview?.previewKind === 'text'"
-          class="paper-document text-document"
-        ><code>{{ preview.textContent }}</code></pre>
-        <img
-          v-else-if="preview?.previewKind === 'image' && preview.previewUrl"
-          class="image-document"
-          :src="preview.previewUrl"
-          :alt="resource?.name"
-        />
-        <article
-          v-else-if="preview?.previewKind === 'pdf' && generatedDocumentText"
-          class="paper-document generated-document"
-        >
-          <h1>{{ resource?.name }}</h1>
-          <p>{{ generatedDocumentText }}</p>
-        </article>
-        <iframe
-          v-else-if="preview?.previewKind === 'pdf' && preview.previewUrl"
-          class="pdf-document"
-          :src="preview.previewUrl"
-          :title="resource?.name"
-        />
-        <section
-          v-else-if="preview?.previewKind === 'audio' && preview.previewUrl"
-          class="audio-document"
-        >
-          <span class="state-icon"><AppIcon name="microphone" :size="30" /></span>
-          <h1>{{ resource?.name }}</h1>
-          <audio :src="preview.previewUrl" controls preload="metadata" />
-          <article v-if="preview.transcript">
-            <h2>识别文本</h2>
-            <p>{{ preview.transcript }}</p>
-          </article>
-        </section>
-
-        <section v-else class="preview-state">
-          <span class="state-icon"><AppIcon name="file" :size="32" /></span>
-          <h1>无法在线预览</h1>
-          <p>当前预览内容不可用，可下载文件后查看</p>
-          <button v-if="resource" type="button" @click="download">
-            <AppIcon name="download" :size="17" />下载文件
-          </button>
-        </section>
       </main>
     </section>
   </StudentShell>
@@ -643,184 +501,6 @@ onBeforeUnmount(() => {
   background: var(--color-surface);
   box-shadow: var(--shadow-sm);
 }
-.paper-document,
-.spreadsheet-document,
-.mindmap-document,
-.audio-document {
-  width: min(1040px, 100%);
-  margin: 0 auto;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-surface);
-  box-shadow: var(--shadow-sm);
-}
-.paper-document {
-  min-height: 76vh;
-  padding: clamp(32px, 6vw, 88px);
-  overflow-wrap: anywhere;
-}
-.text-document {
-  margin: 0 auto;
-  white-space: pre-wrap;
-  color: var(--color-text);
-  font:
-    14px/1.75 ui-monospace,
-    SFMono-Regular,
-    Consolas,
-    monospace;
-}
-.image-document {
-  display: block;
-  max-width: min(1200px, 100%);
-  max-height: calc(100vh - 150px);
-  margin: 0 auto;
-  object-fit: contain;
-  border-radius: 6px;
-  box-shadow: var(--shadow-sm);
-}
-.pdf-document {
-  display: block;
-  width: min(1200px, 100%);
-  height: calc(100vh - 145px);
-  min-height: 620px;
-  margin: 0 auto;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-surface);
-}
-.presentation-pages {
-  width: min(1100px, 100%);
-  margin: 0 auto;
-  display: grid;
-  gap: 34px;
-}
-.presentation-page > span {
-  display: block;
-  margin-bottom: 8px;
-  color: var(--color-text-muted);
-  font-size: 12px;
-}
-.generated-slide > div {
-  aspect-ratio: 16 / 9;
-  padding: clamp(28px, 5vw, 72px);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: linear-gradient(
-    145deg,
-    var(--color-surface),
-    color-mix(in srgb, #d4552d 7%, var(--color-surface))
-  );
-  box-shadow: var(--shadow-sm);
-}
-.generated-slide h2 {
-  margin: 0 0 26px;
-  font-size: clamp(22px, 3vw, 38px);
-}
-.generated-slide li {
-  margin: 10px 0;
-  color: var(--color-text-muted);
-}
-.generated-document h1 {
-  margin: 0 0 28px;
-  font-size: 26px;
-}
-.generated-document p {
-  white-space: pre-wrap;
-  line-height: 1.85;
-}
-.spreadsheet-document {
-  overflow: hidden;
-}
-.sheet-tabs {
-  display: flex;
-  gap: 2px;
-  padding: 10px 12px 0;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--color-border);
-}
-.sheet-tabs button {
-  flex: 0 0 auto;
-  min-height: 34px;
-  padding: 0 14px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-}
-.sheet-tabs button.active {
-  border-bottom-color: var(--color-text);
-  color: var(--color-text);
-  font-weight: 700;
-}
-.sheet-table-wrap {
-  overflow: auto;
-  max-height: calc(100vh - 185px);
-}
-.sheet-table-wrap table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-.sheet-table-wrap th,
-.sheet-table-wrap td {
-  min-width: 120px;
-  padding: 9px 10px;
-  border: 1px solid var(--color-border);
-  text-align: left;
-  white-space: nowrap;
-}
-.sheet-table-wrap th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: var(--color-hover);
-}
-.sheet-table-wrap .row-number {
-  min-width: 50px;
-  width: 50px;
-  color: var(--color-text-muted);
-  text-align: center;
-}
-.mindmap-document {
-  height: calc(100vh - 150px);
-  min-height: 560px;
-  overflow: hidden;
-}
-.audio-document {
-  min-height: 380px;
-  padding: 48px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-}
-.audio-document h1 {
-  margin: 18px 0 26px;
-  font-size: 20px;
-}
-.audio-document audio {
-  width: min(560px, 100%);
-}
-.audio-document article {
-  width: min(720px, 100%);
-  margin-top: 30px;
-  padding-top: 24px;
-  border-top: 1px solid var(--color-border);
-}
-.audio-document article h2 {
-  font-size: 15px;
-}
-.audio-document article p {
-  color: var(--color-text-muted);
-  line-height: 1.75;
-}
-.empty-preview {
-  min-height: 300px;
-  display: grid;
-  place-items: center;
-  color: var(--color-text-muted);
-}
 .spin {
   animation: spin 0.8s linear infinite;
 }
@@ -842,15 +522,6 @@ onBeforeUnmount(() => {
   }
   .preview-stage {
     padding: 16px 10px 32px;
-  }
-  .paper-document {
-    min-height: 80vh;
-    padding: 28px 20px;
-  }
-  .pdf-document,
-  .mindmap-document {
-    height: calc(100vh - 110px);
-    min-height: 480px;
   }
 }
 </style>

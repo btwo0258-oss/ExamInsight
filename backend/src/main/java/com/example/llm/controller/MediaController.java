@@ -7,9 +7,9 @@ import com.example.llm.entity.Conversation;
 import com.example.llm.entity.KnowledgeBase;
 import com.example.llm.entity.MediaAsset;
 import com.example.llm.entity.MediaJob;
-import com.example.llm.integration.xfyun.XfyunOcrClient;
-import com.example.llm.integration.xfyun.XfyunSpeechClient;
-import com.example.llm.integration.xfyun.XfyunVisionClient;
+import com.example.llm.integration.ai.AiCallResult;
+import com.example.llm.integration.ai.AiCapabilityRouter;
+import com.example.llm.integration.ai.ProviderCallException;
 import com.example.llm.mapper.ConversationMapper;
 import com.example.llm.mapper.KnowledgeBaseMapper;
 import com.example.llm.mapper.MediaAssetMapper;
@@ -45,9 +45,7 @@ public class MediaController {
     private final MediaJobMapper mediaJobMapper;
     private final ConversationMapper conversationMapper;
     private final KnowledgeBaseMapper knowledgeBaseMapper;
-    private final XfyunVisionClient visionClient;
-    private final XfyunOcrClient ocrClient;
-    private final XfyunSpeechClient speechClient;
+    private final AiCapabilityRouter aiRouter;
     private final ObjectMapper objectMapper;
     private final Tika tika = new Tika();
 
@@ -58,17 +56,13 @@ public class MediaController {
                            MediaJobMapper mediaJobMapper,
                            ConversationMapper conversationMapper,
                            KnowledgeBaseMapper knowledgeBaseMapper,
-                           XfyunVisionClient visionClient,
-                           XfyunOcrClient ocrClient,
-                           XfyunSpeechClient speechClient,
+                           AiCapabilityRouter aiRouter,
                            ObjectMapper objectMapper) {
         this.mediaAssetMapper = mediaAssetMapper;
         this.mediaJobMapper = mediaJobMapper;
         this.conversationMapper = conversationMapper;
         this.knowledgeBaseMapper = knowledgeBaseMapper;
-        this.visionClient = visionClient;
-        this.ocrClient = ocrClient;
-        this.speechClient = speechClient;
+        this.aiRouter = aiRouter;
         this.objectMapper = objectMapper;
     }
 
@@ -105,8 +99,8 @@ public class MediaController {
         if (existing != null && existing.getTranscript() != null) {
             return Result.success(toTranscription(existing, number(metadata.get("durationMs"))));
         }
-        if (file.isEmpty() || file.getSize() > 25L * 1024 * 1024) {
-            throw new IllegalArgumentException("音频不能为空且不能超过25MB");
+        if (file.isEmpty() || file.getSize() > 10L * 1024 * 1024) {
+            throw new IllegalArgumentException("音频不能为空且不能超过10MB");
         }
         String extension = extension(file.getOriginalFilename());
         if (!AUDIO_EXTENSIONS.contains(extension)) {
@@ -114,9 +108,11 @@ public class MediaController {
         }
         try {
             byte[] bytes = file.getBytes();
-            String text = speechClient.transcribe(bytes, file.getOriginalFilename());
+            String mimeType = "wav".equals(extension) ? "audio/wav" : "audio/mpeg";
+            AiCallResult<String> transcription = aiRouter.transcribe(
+                    bytes, mimeType, file.getOriginalFilename());
             MediaAsset asset = saveAsset(userId, file, bytes, metadata, "audio",
-                    "wav".equals(extension) ? "audio/wav" : "audio/mpeg", "ready", text);
+                    mimeType, "ready", transcription.value());
             return Result.success(toTranscription(asset, number(metadata.get("durationMs"))));
         } catch (java.io.IOException e) {
             throw new IllegalStateException("音频保存失败", e);
@@ -151,25 +147,27 @@ public class MediaController {
         try {
             byte[] bytes = java.nio.file.Files.readAllBytes(new File(asset.getFilePath()).toPath());
             String prompt = request.get("prompt") instanceof String ? (String) request.get("prompt") : null;
-            String text;
+            AiCallResult<String> recognition;
             String intent;
             if ("ocr".equals(mode)) {
-                String ext = extension(asset.getFileName());
-                text = ocrClient.recognize(bytes, "jpeg".equals(ext) ? "jpg" : ext);
+                recognition = aiRouter.recognize(bytes, asset.getMimeType());
                 intent = "document-ocr";
             } else {
                 String resolvedPrompt = "question".equals(mode)
                         ? (prompt == null || prompt.isBlank()
                             ? "请提取图片中的完整题干、选项和公式，保持原有顺序，不要猜测答案" : prompt)
                         : (prompt == null || prompt.isBlank() ? "请识别并说明这张图片的主要内容" : prompt);
-                text = visionClient.understand(bytes, resolvedPrompt);
+                recognition = aiRouter.understand(bytes, asset.getMimeType(), resolvedPrompt);
                 intent = "question".equals(mode) ? "question-capture" : "general-image";
             }
             Map<String, Object> result = new HashMap<>();
             result.put("assetId", assetId);
             result.put("mode", mode);
-            result.put("text", text);
+            result.put("text", recognition.value());
             result.put("intent", intent);
+            result.put("provider", recognition.provider());
+            result.put("model", recognition.model());
+            result.put("durationMs", recognition.durationMs());
             job.setResultJson(objectMapper.writeValueAsString(result));
             job.setStatus("succeeded");
             job.setProgress(100);
@@ -179,7 +177,8 @@ public class MediaController {
         } catch (Exception e) {
             job.setStatus("failed");
             job.setProgress(100);
-            job.setErrorCode("IMAGE_RECOGNITION_REJECTED");
+            job.setErrorCode(e instanceof ProviderCallException providerError
+                    ? providerError.code() : "IMAGE_RECOGNITION_REJECTED");
             job.setErrorMessage(e.getMessage());
         }
         job.setUpdateTime(LocalDateTime.now());
@@ -305,7 +304,13 @@ public class MediaController {
         value.put("progress", job.getProgress());
         if (job.getResultJson() != null) {
             try {
-                value.put("result", objectMapper.readValue(job.getResultJson(), Object.class));
+                Map<String, Object> result = objectMapper.readValue(
+                        job.getResultJson(),
+                        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() { });
+                result.remove("provider");
+                result.remove("model");
+                result.remove("durationMs");
+                value.put("result", result);
             } catch (Exception ignored) {
             }
         }

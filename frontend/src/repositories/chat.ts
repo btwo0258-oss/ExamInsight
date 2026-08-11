@@ -8,23 +8,29 @@ import type { SpreadsheetChatCardDto } from '@/types/contracts/spreadsheet'
 import { toSpreadsheetChatCard } from '@/utils/spreadsheet'
 import { spreadsheetCardToArtifact } from '@/utils/artifact'
 import { parseSseEventStream } from '@/utils/stream'
+import type { ConversationId, ConversationKnowledgeBaseId } from '@/types/contracts/conversation'
 
 export type ChatClientAction = 'presentation.create' | 'spreadsheet.create' | 'image.create' | 'mindmap.create'
 
 export type ChatStreamEvent =
   | { type: 'text-delta'; delta: string }
+  | { type: 'run-accepted'; runId: string; userMessageId: string; assistantMessageId: string }
+  | { type: 'run-completed'; runId: string; assistantMessageId: string }
+  | { type: 'run-stage'; stage: string }
   | { type: 'artifact'; data: ChatArtifactDto }
   | { type: 'presentation-card'; data: PresentationChatCardDto }
   | { type: 'spreadsheet-card'; data: SpreadsheetChatCardDto }
 
 export type ChatStreamPayload = {
-  conversationId: number
+  conversationId: ConversationId
   content: string
   model?: string
-  knowledgeBaseId?: number | null
+  knowledgeBaseId?: ConversationKnowledgeBaseId | null
+  knowledgeBaseExternalId?: string | null
+  sourceAssetExternalIds?: string[]
   fileContext?: string
   history?: { role: string; content: string }[]
-  parentId?: number | null
+  parentId?: ConversationId | null
   isRegenerate?: boolean
   editMsgId?: number | null
   turnId?: string
@@ -37,6 +43,7 @@ export type ChatStreamPayload = {
   taskId?: number | string | null
   exerciseId?: number | string | null
   clientAction?: ChatClientAction
+  runtime?: 'v2-general' | 'legacy-learning'
 }
 
 export type RetryChatArtifactRequest = {
@@ -44,6 +51,12 @@ export type RetryChatArtifactRequest = {
   conversationId: number
   sourceMessageId: string
   clientRequestId: string
+}
+
+function toLegacyNumericId(value: ConversationId | ConversationKnowledgeBaseId | null | undefined) {
+  if (value === null || value === undefined || value === '') return null
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : null
 }
 
 export interface ChatRepository {
@@ -103,9 +116,9 @@ function baseMockArtifact(payload: ChatStreamPayload, input: Pick<ChatArtifactDt
   return {
     ...input,
     jobId: `job:${input.artifactId}`,
-    conversationId: payload.conversationId,
+    conversationId: toLegacyNumericId(payload.conversationId),
     projectId: payload.projectId ?? null,
-    knowledgeBaseId: payload.knowledgeBaseId ?? null,
+    knowledgeBaseId: toLegacyNumericId(payload.knowledgeBaseId),
     status: 'queued',
     progress: 0,
   }
@@ -116,8 +129,8 @@ async function createMockArtifacts(payload: ChatStreamPayload): Promise<ChatArti
   if (spreadsheetIntent(payload.content)) {
     const spreadsheet = await spreadsheetRepository.create({
       prompt: payload.content,
-      conversationId: payload.conversationId,
-      knowledgeBaseId: payload.knowledgeBaseId ?? null,
+      conversationId: toLegacyNumericId(payload.conversationId),
+      knowledgeBaseId: toLegacyNumericId(payload.knowledgeBaseId),
       projectId: payload.projectId ?? null,
       mediaAssetIds: payload.mediaAssetIds,
       clientRequestId: `chat-spreadsheet:${stamp}`,
@@ -201,8 +214,8 @@ function createMockPresentationCard(payload: ChatStreamPayload): PresentationCha
     cardType: 'presentation',
     view: 'proposal',
     status: 'draft',
-    conversationId: payload.conversationId,
-    knowledgeBaseId: payload.knowledgeBaseId ?? null,
+    conversationId: toLegacyNumericId(payload.conversationId),
+    knowledgeBaseId: toLegacyNumericId(payload.knowledgeBaseId),
     projectId: payload.projectId ?? null,
     config: {
       topic,
@@ -274,6 +287,143 @@ function parseArtifact(data: string): ChatArtifactDto | null {
   } catch {
     return null
   }
+}
+
+type V2SendAccepted = {
+  userMessageId: string
+  assistantMessageId: string
+  runId: string
+  eventUrl: string
+}
+
+type V2RunStatus = {
+  id: string
+  status: 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED'
+  safeErrorMessage?: string | null
+}
+
+function eventJson(data: string): Record<string, unknown> {
+  try {
+    return JSON.parse(data) as Record<string, unknown>
+  } catch {
+    return {}
+  }
+}
+
+async function streamV2General(
+  payload: ChatStreamPayload,
+  options?: { signal?: AbortSignal },
+): Promise<AsyncGenerator<ChatStreamEvent>> {
+  const conversationId = String(payload.conversationId)
+  const response = await request.post<V2SendAccepted>(
+    `/api/v2/conversations/${encodeURIComponent(conversationId)}/messages`,
+    {
+      content: payload.content,
+      sourceAssetIds: (payload.sourceAssetExternalIds ?? []).slice(0, 20),
+    },
+    {
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      signal: options?.signal,
+    },
+  )
+  const accepted = response.data
+
+  return (async function* () {
+    let terminal = false
+    let lastEventId = ''
+    let reconnectCount = 0
+    yield {
+      type: 'run-accepted',
+      runId: accepted.runId,
+      userMessageId: accepted.userMessageId,
+      assistantMessageId: accepted.assistantMessageId,
+    } as const
+
+    try {
+      while (!terminal && !options?.signal?.aborted) {
+        let eventsResponse: Response
+        try {
+          eventsResponse = await sessionFetch(
+            `${import.meta.env.VITE_API_BASE_URL ?? ''}${accepted.eventUrl}`,
+            {
+              method: 'GET',
+              headers: lastEventId ? { 'Last-Event-ID': lastEventId } : undefined,
+              signal: options?.signal,
+            },
+          )
+          if (!eventsResponse.ok) throw new Error(`HTTP ${eventsResponse.status}`)
+
+          for await (const event of parseSseEventStream(eventsResponse)) {
+            if (event.id) lastEventId = event.id
+            const data = eventJson(event.data)
+            if (event.event === 'message.delta') {
+              const delta = typeof data.delta === 'string' ? data.delta : ''
+              if (delta) yield { type: 'text-delta', delta } as const
+              continue
+            }
+            if (event.event === 'run.stage_changed') {
+              const stage = typeof data.stage === 'string' ? data.stage : ''
+              if (stage) yield { type: 'run-stage', stage } as const
+              continue
+            }
+            if (event.event === 'run.completed') {
+              terminal = true
+              yield {
+                type: 'run-completed',
+                runId: accepted.runId,
+                assistantMessageId: accepted.assistantMessageId,
+              } as const
+              break
+            }
+            if (event.event === 'run.cancelled') {
+              terminal = true
+              break
+            }
+            if (event.event === 'run.failed') {
+              terminal = true
+              throw new Error(typeof data.message === 'string' ? data.message : '回答生成失败，请稍后重试。')
+            }
+          }
+        } catch (error) {
+          if (options?.signal?.aborted) return
+          if (terminal || reconnectCount >= 2) throw error
+          reconnectCount += 1
+          continue
+        }
+
+        if (terminal) break
+        const statusResponse = await request.get<V2RunStatus>(
+          `/api/v2/ai-runs/${encodeURIComponent(accepted.runId)}`,
+          { signal: options?.signal },
+        )
+        const run = statusResponse.data
+        if (run.status === 'SUCCEEDED') {
+          terminal = true
+          yield {
+            type: 'run-completed',
+            runId: accepted.runId,
+            assistantMessageId: accepted.assistantMessageId,
+          } as const
+        } else if (run.status === 'FAILED') {
+          terminal = true
+          throw new Error(run.safeErrorMessage || '回答生成失败，请稍后重试。')
+        } else if (run.status === 'CANCELLED') {
+          terminal = true
+        } else if (reconnectCount >= 2) {
+          throw new Error('连接已中断，请稍后重试。')
+        } else {
+          reconnectCount += 1
+        }
+      }
+    } finally {
+      if (options?.signal?.aborted && !terminal) {
+        await sessionFetch(
+          `${import.meta.env.VITE_API_BASE_URL ?? ''}/api/v2/ai-runs/${encodeURIComponent(accepted.runId)}/cancel`,
+          { method: 'POST' },
+        ).catch(() => undefined)
+      }
+    }
+  })()
 }
 
 const mockChatRepository: ChatRepository = {
@@ -360,6 +510,9 @@ const mockChatRepository: ChatRepository = {
 
 const apiChatRepository: ChatRepository = {
   async stream(payload, options) {
+    if (payload.runtime === 'v2-general') {
+      return streamV2General(payload, options)
+    }
     const response = await sessionFetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/chat/stream`, {
       method: 'POST',
       headers: {
@@ -370,6 +523,8 @@ const apiChatRepository: ChatRepository = {
         question: payload.content,
         model: payload.model,
         kbId: payload.knowledgeBaseId,
+        knowledgeBaseExternalId: payload.knowledgeBaseExternalId,
+        sourceAssetExternalIds: payload.sourceAssetExternalIds,
         fileContext: payload.fileContext,
         history: payload.history,
         parentId: payload.parentId,

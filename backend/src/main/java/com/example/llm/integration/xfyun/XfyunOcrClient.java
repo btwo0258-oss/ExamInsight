@@ -30,6 +30,10 @@ public class XfyunOcrClient {
         this.objectMapper = objectMapper;
     }
 
+    public boolean isConfigured() {
+        return config.hasApiCredentials();
+    }
+
     public String recognize(byte[] image, String encoding) {
         config.requireApiCredentials();
         try {

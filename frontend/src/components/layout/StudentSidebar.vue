@@ -41,6 +41,7 @@ import LibraryKnowledgeCreateModal from '@/components/library/LibraryKnowledgeCr
 import logoUrl from '@/assets/icons/ExamInsight-Logo.png'
 import type { LearningPlan } from '@/mock/student'
 import type { Conversation } from '@/api/conversation'
+import type { ConversationId } from '@/types/contracts/conversation'
 import { useAuthStore } from '@/stores/auth'
 import { useConversationStore } from '@/stores/conversation'
 import { useLearningStore } from '@/stores/learning'
@@ -114,7 +115,7 @@ const iconPaletteOpen = ref(false)
 const libraryMenuOpen = ref(false)
 const editingOpen = ref(false)
 const editingKind = ref<'project' | 'recent'>('project')
-const editingId = ref<number | null>(null)
+const editingId = ref<ConversationId | null>(null)
 const editingTitle = ref('')
 const profileOpen = ref(false)
 const deletingProject = ref<SidebarProject | null>(null)
@@ -434,7 +435,7 @@ async function submitCreateProject() {
   go(`/learning/new?projectId=${project.id}`)
 }
 
-function openRename(kind: 'project' | 'recent', id: number, title: string) {
+function openRename(kind: 'project' | 'recent', id: ConversationId, title: string) {
   editingKind.value = kind
   editingId.value = id
   editingTitle.value = title
@@ -447,8 +448,10 @@ async function submitRename() {
   if (!title || editingId.value === null) return
 
   if (editingKind.value === 'project') {
-    await learningStore.renamePlan(editingId.value, title)
-    const project = sidebarProjects.value.find((item) => item.id === editingId.value)
+    const projectId = Number(editingId.value)
+    if (!Number.isFinite(projectId)) return
+    await learningStore.renamePlan(projectId, title)
+    const project = sidebarProjects.value.find((item) => item.id === projectId)
     if (project) {
       project.title = title
       persistProjects()

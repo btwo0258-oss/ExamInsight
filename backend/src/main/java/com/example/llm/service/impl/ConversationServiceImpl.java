@@ -156,7 +156,6 @@ public class ConversationServiceImpl implements ConversationService {
             vo.setRole(m.getRole());
             vo.setContent(m.getContent());
             vo.setSourceChunks(m.getSourceChunks());
-            vo.setModel(m.getModel());
             vo.setDurationMs(m.getDurationMs());
             vo.setCreateTime(m.getCreateTime());
             vo.setTurnId(m.getTurnId());

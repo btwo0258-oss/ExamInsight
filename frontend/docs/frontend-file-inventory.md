@@ -178,13 +178,14 @@ PPT、电子表格和统一资源模型对现有主线文件的影响：
 
 以下模块不在本次三个主要功能范围内，但仍有 Router 引用，不能删除或归档：
 
-- `src/views/ResourceCenterView.vue`
 - `src/views/ExamAnalysisListView.vue`、`src/views/ExamAnalysisView.vue`
 - `src/views/mindmap/*`
 - `src/components/sidebar/*`
 - `src/views/admin/*` 与 `src/layout_admin/*`
 
 是否保留这些路由属于单独产品决策，不能仅凭当前主线没有入口就删除。
+
+2026-08-09 已按产品边界删除公共资料市场：`ResourceCenterView.vue`、`/resource` 路由、侧边栏入口和旧 `/api/resource` 客户端均已移除。个人资料库统一使用 `/library` 与 `/api/v2/assets`、`/api/v2/knowledge-bases`。
 
 ## 5. 后续删除规则
 

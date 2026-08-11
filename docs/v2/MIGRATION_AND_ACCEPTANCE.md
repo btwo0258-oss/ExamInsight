@@ -14,7 +14,7 @@
 2. [`LearningProjectController.java`](../../backend/src/main/java/com/example/llm/controller/LearningProjectController.java) 使用通用 Map 和 JSON 工作流，没有明确 DTO 与状态机。
 3. 项目 JSON 工作流与旧 Plan/Stage/Task/Exercise/Mistake CRUD 同时存在，但前端实际主要使用 JSON 工作流，形成两套不一致的事实来源。
 4. [`GenerationJobController.java`](../../backend/src/main/java/com/example/llm/controller/GenerationJobController.java) 允许客户端参与修改任务状态，不符合服务端任务模型。
-5. [`ResourceCenterController.java`](../../backend/src/main/java/com/example/llm/controller/ResourceCenterController.java) 和 [`ResourcesController.java`](../../backend/src/main/java/com/example/llm/controller/ResourcesController.java) 等形成多套资料接口，公共资料市场还包含失败后生成 Mock 数据的行为。
+5. 历史上 `ResourceCenterController.java` 和 [`ResourcesController.java`](../../backend/src/main/java/com/example/llm/controller/ResourcesController.java) 等形成多套资料接口，公共资料市场还包含失败后生成 Mock 数据的行为；公共市场链路已于 2026-08-09 删除，`ResourcesController` 仍待 V2 业务完成后迁移。
 6. [`StudentChatView.vue`](../../frontend/src/views/student/chat/StudentChatView.vue) 混入项目准备、画像、资料分析和计划生成流程，普通对话与学习工作流边界不清。
 7. [`frontend/src/repositories/learning.ts`](../../frontend/src/repositories/learning.ts) 同时维护 Mock 和生产调用，并使用本地计时器伪造异步进度。
 8. [`dataSource.ts`](../../frontend/src/config/dataSource.ts) 允许开发环境默认 Mock，容易掩盖缺失的生产接口。
@@ -328,7 +328,7 @@ flowchart TD
 - [`LearningActivityController.java`](../../backend/src/main/java/com/example/llm/controller/LearningActivityController.java)。
 - [`LearningResourceController.java`](../../backend/src/main/java/com/example/llm/controller/LearningResourceController.java)。
 - 与上述 Controller 对应的旧 Entity、Mapper、Service 和前端旧 API。
-- [`ResourceCenterController.java`](../../backend/src/main/java/com/example/llm/controller/ResourceCenterController.java) 及公共资料市场页面、Mock 数据和 `resource/user_resource` 领域代码。
+- 公共资料市场页面、`ResourceCenterController`、相关 Mock 数据和 `resource/user_resource` 领域代码已于 2026-08-09 删除。
 - 旧 Mock 学习生成器和浏览器本地业务存储。
 
 删除条件不是“已有新文件”，而是对应 V2 用户链路、自动化测试、数据迁移和生产监控全部通过。

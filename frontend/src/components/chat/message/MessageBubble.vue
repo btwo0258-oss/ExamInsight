@@ -30,12 +30,13 @@ import { isMockDataSource } from '@/config/dataSource'
 import { useLearningStore } from '@/stores/learning'
 import { presentationCardToArtifact, spreadsheetCardToArtifact, upsertArtifact } from '@/utils/artifact'
 import type { ChatArtifactDto } from '@/types/contracts/artifact'
+import type { ConversationId } from '@/types/contracts/conversation'
 import { downloadBlob } from '@/utils/download'
 
 type Props = {
   message: ChatMessage;
   isStreaming?: boolean;
-  conversationId?: number | null;
+  conversationId?: ConversationId | null;
 };
 
 const props = withDefaults(defineProps<Props>(), { isStreaming: false });

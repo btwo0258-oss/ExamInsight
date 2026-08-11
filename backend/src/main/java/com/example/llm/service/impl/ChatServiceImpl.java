@@ -1,9 +1,5 @@
 package com.example.llm.service.impl;
 
-import com.alibaba.dashscope.aigc.generation.Generation;
-import com.alibaba.dashscope.aigc.generation.GenerationParam;
-import com.alibaba.dashscope.aigc.generation.GenerationResult;
-import com.alibaba.dashscope.common.Message;
 import com.alibaba.dashscope.common.Role;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.example.llm.dto.ChatReq;
@@ -18,16 +14,17 @@ import com.example.llm.mapper.KnowledgeBaseMapper;
 import com.example.llm.mapper.MediaAssetMapper;
 import com.example.llm.mapper.MessageMapper;
 import com.example.llm.mapper.PresentationMapper;
+import com.example.llm.integration.ai.AiCallResult;
+import com.example.llm.integration.ai.AiCapabilityRouter;
+import com.example.llm.integration.ai.AiChatMessage;
+import com.example.llm.integration.ai.AiOperationGuard;
+import com.example.llm.integration.ai.ProviderCallException;
+import com.example.llm.asset.retrieval.AssetRetrievalService;
+import com.example.llm.asset.retrieval.RetrievalModels;
 import com.example.llm.service.ChatService;
-import com.example.llm.service.EmbeddingService;
-import com.example.llm.service.EsService;
 import com.example.llm.service.MindMapGenerateService;
 import com.example.llm.service.SystemConfigService;
-import com.example.llm.integration.xfyun.XfyunSparkClient;
-import com.example.llm.integration.xfyun.XfyunImageClient;
-import com.example.llm.integration.xfyun.XfyunVisionClient;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.reactivex.Flowable;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -35,6 +32,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.time.LocalDateTime;
+import java.time.Duration;
 import java.io.IOException;
 import java.io.File;
 import java.nio.file.Files;
@@ -56,27 +54,23 @@ public class ChatServiceImpl implements ChatService {
 
     @Autowired
     private MessageMapper messageMapper;
-    
+
+    // Generated artifacts still use the existing document persistence path until
+    // the V2 generated-asset writer is introduced.
     @Autowired
     private com.example.llm.mapper.DocumentMapper documentMapper;
-
-    @Autowired
-    private EmbeddingService embeddingService;
-
-    @Autowired
-    private EsService esService;
 
     @Autowired
     private SystemConfigService systemConfigService;
 
     @Autowired
-    private XfyunSparkClient xfyunSparkClient;
+    private AssetRetrievalService assetRetrievalService;
 
     @Autowired
-    private XfyunImageClient xfyunImageClient;
+    private AiCapabilityRouter aiRouter;
 
     @Autowired
-    private XfyunVisionClient xfyunVisionClient;
+    private AiOperationGuard aiOperationGuard;
 
     @Autowired
     private MediaAssetMapper mediaAssetMapper;
@@ -89,12 +83,6 @@ public class ChatServiceImpl implements ChatService {
 
     @Autowired
     private MindMapGenerateService mindMapGenerateService;
-
-    @Value("${dashscope.api-key}")
-    private String apiKey;
-
-    @Value("${dashscope.chat.model:qwen-plus-2025-07-28}")
-    private String dashScopeChatModel;
 
     @Value("${upload.path}")
     private String uploadPath;
@@ -250,55 +238,41 @@ public class ChatServiceImpl implements ChatService {
                     return;
                 }
 
+                boolean hasSelectedSources = hasSelectedSources(req);
                 String context = "";
                 String referenceDocs = "[]";
-                if (conversation.getKbId() != null && req.getQuestion() != null && !req.getQuestion().isEmpty()) {
+                if (hasSelectedSources && req.getQuestion() != null && !req.getQuestion().isEmpty()) {
                     int topK = systemConfigService.getIntConfig("rag.top_k", 3);
-                    double minScore = systemConfigService.getDoubleConfig("rag.min_score", 0.5);
-
-                    List<Double> vector = embeddingService.getQueryEmbedding(req.getQuestion());
-                    List<Map<String, Object>> similarChunks = esService.searchSimilarChunks("knowledge_chunks", conversation.getKbId(), vector, topK, minScore);
-                    
-                    if (similarChunks != null && !similarChunks.isEmpty()) {
-                        StringBuilder contextBuilder = new StringBuilder();
-                        for (Map<String, Object> chunk : similarChunks) {
-                            contextBuilder.append((String) chunk.get("content")).append("\n");
-                            // Add docName to chunk by querying DocumentMapper
-                            Object docIdObj = chunk.get("docId");
-                            if (docIdObj != null) {
-                                try {
-                                    String docIdStr = String.valueOf(docIdObj);
-                                    if (docIdStr.startsWith("[") && docIdStr.endsWith("]")) {
-                                        docIdStr = docIdStr.substring(1, docIdStr.length() - 1);
-                                    }
-                                    docIdStr = docIdStr.replaceAll("[\"']", "").trim();
-                                    if (docIdStr.contains(".")) {
-                                        docIdStr = docIdStr.substring(0, docIdStr.indexOf('.'));
-                                    }
-                                    
-                                    Long docId = Long.parseLong(docIdStr);
-                                    com.example.llm.entity.Document doc = documentMapper.selectById(docId);
-                                    if (doc != null && doc.getFileName() != null && !doc.getFileName().isEmpty()) {
-                                        chunk.put("docName", doc.getFileName());
-                                    } else {
-                                        chunk.put("docName", "未知文档");
-                                    }
-                                } catch (Exception e) {
-                                    log.warn("Failed to parse docId: {}", docIdObj, e);
-                                    chunk.put("docName", "未知文档");
-                                }
-                            } else {
-                                chunk.put("docName", "未知文档");
-                            }
-                        }
-                        context = contextBuilder.toString();
-                        referenceDocs = objectMapper.writeValueAsString(similarChunks);
+                    RetrievalModels.Bundle retrieval = assetRetrievalService.retrieve(
+                            userId,
+                            new RetrievalModels.Request(
+                                    req.getQuestion(),
+                                    RetrievalModels.Scope.explicitSources(
+                                            req.getKnowledgeBaseExternalId(),
+                                            req.getSourceAssetExternalIds()),
+                                    topK,
+                                    null));
+                    if (retrieval.status() == RetrievalModels.Status.DISABLED) {
+                        throw new IllegalStateException("资料检索服务暂时不可用，请稍后重试");
+                    }
+                    if ("NO_RETRIEVABLE_CHUNKS".equals(retrieval.degradationCode())) {
+                        throw new IllegalStateException("所选资料仍在解析或索引中，请处理完成后再提问");
+                    }
+                    if (!retrieval.sources().isEmpty()) {
+                        context = retrieval.contextJson();
+                        referenceDocs = objectMapper.writeValueAsString(retrieval.sources());
+                    } else {
+                        context = "所选资料中没有检索到能够支持本次问题的内容。"
+                                + "可以使用通用知识回答，但必须明确说明本回答未引用所选资料，且不得伪造引用。";
                     }
                 }
 
                 // 3. 构建 Prompt
-                String promptKey = conversation.getKbId() != null ? "prompt.system.rag" : "prompt.system.general";
-                String defaultPrompt = conversation.getKbId() != null ? "你是一个智能助手。请根据提供的参考资料回答问题。" : "你是一个智能助手。";
+                String promptKey = hasSelectedSources ? "prompt.system.rag" : "prompt.system.general";
+                String defaultPrompt = hasSelectedSources
+                        ? "你是一个智能助手。优先根据用户明确选择的资料回答。"
+                        + "只有确实使用了标有 S1、S2 等编号的来源时才能给出相应引用；不得编造来源。"
+                        : "你是一个智能助手。";
                 String systemPrompt = systemConfigService.getConfig(promptKey, defaultPrompt);
 
                 if (!context.isEmpty()) {
@@ -316,11 +290,8 @@ public class ChatServiceImpl implements ChatService {
                     systemPrompt = systemPrompt + "\n用户上传媒体的识别结果：\n" + mediaContext;
                 }
 
-                List<Message> messages = new ArrayList<>();
-                Message systemMsg = Message.builder().role(Role.SYSTEM.getValue())
-                        .content(systemPrompt)
-                        .build();
-                messages.add(systemMsg);
+                List<AiChatMessage> messages = new ArrayList<>();
+                messages.add(new AiChatMessage(Role.SYSTEM.getValue(), systemPrompt));
 
                 // 携带多轮对话上下文 (溯源父节点)
                 int maxRounds = systemConfigService.getIntConfig("chat.max_rounds", 5);
@@ -329,7 +300,7 @@ public class ChatServiceImpl implements ChatService {
                 if (req.getHistory() != null && !req.getHistory().isEmpty()) {
                     // 使用前端传来的历史记录
                     for (ChatReq.MessageDto m : req.getHistory()) {
-                        messages.add(Message.builder().role(m.getRole()).content(m.getContent()).build());
+                        messages.add(new AiChatMessage(m.getRole(), m.getContent()));
                     }
                 } else {
                     List<com.example.llm.entity.Message> historyMsg = new ArrayList<>();
@@ -351,43 +322,19 @@ public class ChatServiceImpl implements ChatService {
                     
                     java.util.Collections.reverse(historyMsg);
                     for (com.example.llm.entity.Message hm : historyMsg) {
-                        messages.add(Message.builder().role(hm.getRole()).content(hm.getContent()).build());
+                        messages.add(new AiChatMessage(hm.getRole(), hm.getContent()));
                     }
                 }
 
                 StringBuilder fullResponse = new StringBuilder();
-                long startTime = System.currentTimeMillis();
-                String selectedModel = resolveModel(req.getModel());
-
-                if ("spark-x2".equals(selectedModel)) {
-                    String sparkAnswer = xfyunSparkClient.stream(toSparkMessages(messages), userId, delta -> {
-                        try {
-                            emitter.send(SseEmitter.event().data(delta));
-                        } catch (IOException e) {
-                            throw new UncheckedIOException(e);
-                        }
-                    });
-                    fullResponse.append(sparkAnswer);
-                } else {
-                    Generation gen = new Generation();
-                    GenerationParam param = GenerationParam.builder()
-                            .apiKey(apiKey)
-                            .model(dashScopeChatModel)
-                            .messages(messages)
-                            .resultFormat(GenerationParam.ResultFormat.MESSAGE)
-                            .incrementalOutput(true)
-                            .build();
-                    Flowable<GenerationResult> resultFlowable = gen.streamCall(param);
-                    resultFlowable.blockingForEach(message -> {
-                        String delta = message.getOutput().getChoices().get(0).getMessage().getContent();
-                        if (delta != null) {
-                            fullResponse.append(delta);
-                            emitter.send(SseEmitter.event().data(delta));
-                        }
-                    });
-                }
-
-                long responseTime = System.currentTimeMillis() - startTime;
+                AiCallResult<String> generation = aiRouter.streamChat(messages, userId, delta -> {
+                    try {
+                        emitter.send(SseEmitter.event().data(delta));
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+                });
+                fullResponse.append(generation.value());
 
                 // 5. 保存 AI 回答
                 com.example.llm.entity.Message assistantMsg = new com.example.llm.entity.Message();
@@ -396,8 +343,8 @@ public class ChatServiceImpl implements ChatService {
                 assistantMsg.setRole(Role.ASSISTANT.getValue());
                 assistantMsg.setContent(fullResponse.toString());
                 assistantMsg.setSourceChunks(referenceDocs);
-                assistantMsg.setModel(selectedModel);
-                assistantMsg.setDurationMs((int) responseTime);
+                assistantMsg.setModel(generation.routeKey());
+                assistantMsg.setDurationMs((int) Math.min(Integer.MAX_VALUE, generation.durationMs()));
                 assistantMsg.setStatus(0);
                 assistantMsg.setCreateTime(LocalDateTime.now());
                 
@@ -421,15 +368,9 @@ public class ChatServiceImpl implements ChatService {
                 if (isFirstMessage && (conversation.getTitle() == null || conversation.getTitle().trim().isEmpty() || conversation.getTitle().equals("新对话"))) {
                     try {
                         String titlePrompt = "请根据用户的这句话，生成一个简短的对话标题（不超过10个字），只返回标题内容，不要有任何标点符号和其他废话：" + req.getQuestion();
-                        Generation titleGen = new Generation();
-                        GenerationParam titleParam = GenerationParam.builder()
-                                .apiKey(apiKey)
-                                .model(dashScopeChatModel)
-                                .messages(java.util.Collections.singletonList(Message.builder().role(Role.USER.getValue()).content(titlePrompt).build()))
-                                .resultFormat(GenerationParam.ResultFormat.MESSAGE)
-                                .build();
-                        GenerationResult titleResult = titleGen.call(titleParam);
-                        String generatedTitle = titleResult.getOutput().getChoices().get(0).getMessage().getContent().trim();
+                        String generatedTitle = aiRouter.completeText(
+                                List.of(new AiChatMessage(Role.USER.getValue(), titlePrompt)), userId)
+                                .value().trim();
                         if (!generatedTitle.isEmpty()) {
                             conversation.setTitle(generatedTitle);
                         }
@@ -448,7 +389,7 @@ public class ChatServiceImpl implements ChatService {
             } catch (Exception e) {
                 log.error("Chat error", e);
                 try {
-                    emitter.send(SseEmitter.event().name("error").data(e.getMessage()));
+                    emitter.send(SseEmitter.event().name("error").data(safeChatErrorMessage(e)));
                 } catch (Exception ex) {
                     log.error("Failed to send SSE error", ex);
                 }
@@ -463,15 +404,9 @@ public class ChatServiceImpl implements ChatService {
     public String generateTitle(String text) {
         try {
             String titlePrompt = "请根据用户的这句话，生成一个简短的对话标题（不超过10个字），只返回标题内容，不要有任何标点符号和其他废话：" + text;
-            Generation titleGen = new Generation();
-            GenerationParam titleParam = GenerationParam.builder()
-                    .apiKey(apiKey)
-                    .model(dashScopeChatModel)
-                    .messages(java.util.Collections.singletonList(Message.builder().role(Role.USER.getValue()).content(titlePrompt).build()))
-                    .resultFormat(GenerationParam.ResultFormat.MESSAGE)
-                    .build();
-            GenerationResult titleResult = titleGen.call(titleParam);
-            String generatedTitle = titleResult.getOutput().getChoices().get(0).getMessage().getContent().trim();
+            String generatedTitle = aiRouter.completeText(
+                    List.of(new AiChatMessage(Role.USER.getValue(), titlePrompt)), 0L)
+                    .value().trim();
             if (!generatedTitle.isEmpty()) {
                 return generatedTitle;
             }
@@ -485,24 +420,26 @@ public class ChatServiceImpl implements ChatService {
         return System.currentTimeMillis() + "_" + java.util.UUID.randomUUID().toString().substring(0, 8);
     }
 
-    private String resolveModel(String requestedModel) {
-        if (requestedModel == null || requestedModel.isBlank()) return dashScopeChatModel;
-        if ("spark-x2".equals(requestedModel) || "spark-x".equals(requestedModel)) return "spark-x2";
-        if (requestedModel.equals(dashScopeChatModel) || "qwen-plus".equals(requestedModel)) {
-            return dashScopeChatModel;
+    private String safeChatErrorMessage(Exception exception) {
+        if (exception instanceof IllegalArgumentException) {
+            return exception.getMessage();
         }
-        throw new IllegalArgumentException("不支持的对话模型: " + requestedModel);
-    }
-
-    private List<Map<String, String>> toSparkMessages(List<Message> messages) {
-        List<Map<String, String>> result = new ArrayList<>();
-        for (Message message : messages) {
-            Map<String, String> item = new LinkedHashMap<>();
-            item.put("role", message.getRole());
-            item.put("content", String.valueOf(message.getContent()));
-            result.add(item);
+        if (exception instanceof ProviderCallException providerException) {
+            return switch (providerException.category()) {
+                case RATE_LIMITED -> "当前使用人数较多，请稍后重试";
+                case QUOTA_EXHAUSTED -> "当前能力额度已用完，请稍后再试";
+                case CONTENT_SAFETY -> "请求未通过内容安全检查，请调整内容后重试";
+                case BAD_REQUEST, UNSUPPORTED_INPUT -> providerException.getMessage();
+                case TIMEOUT, UNAVAILABLE, INTERRUPTED, INVALID_RESPONSE, AUTHENTICATION ->
+                        "AI 服务暂时不可用，请稍后重试";
+            };
         }
-        return result;
+        String message = exception.getMessage();
+        if ("资料检索服务暂时不可用，请稍后重试".equals(message)
+                || "所选资料仍在解析或索引中，请处理完成后再提问".equals(message)) {
+            return message;
+        }
+        return "服务暂时不可用，请稍后重试";
     }
 
     private boolean isImageGeneration(ChatReq req) {
@@ -685,9 +622,45 @@ public class ChatServiceImpl implements ChatService {
             com.example.llm.entity.Message currentUserMsg,
             ChatReq req,
             SseEmitter emitter) throws Exception {
-        long startTime = System.currentTimeMillis();
         String prompt = req.getEffectiveQuestion().trim();
-        byte[] image = xfyunImageClient.generate(prompt, 1024, 1024);
+        com.example.llm.entity.Message existing = findExistingGeneratedImage(
+                conversation.getId(), currentUserMsg, req);
+        if (existing != null) {
+            resendGeneratedImage(existing, emitter);
+            return;
+        }
+
+        String operationKey = imageOperationKey(userId, conversation.getId(), currentUserMsg, req);
+        try (AiOperationGuard.Lease ignored = aiOperationGuard.acquire(operationKey, Duration.ofMinutes(5))) {
+            existing = findExistingGeneratedImage(conversation.getId(), currentUserMsg, req);
+            if (existing != null) {
+                resendGeneratedImage(existing, emitter);
+                return;
+            }
+            generateAndPersistImage(userId, conversation, currentUserMsg, req, emitter, prompt);
+        }
+    }
+
+    private boolean hasSelectedSources(ChatReq req) {
+        boolean hasKnowledgeBase = req.getKnowledgeBaseExternalId() != null
+                && !req.getKnowledgeBaseExternalId().isBlank();
+        List<String> assetIds = req.getSourceAssetExternalIds();
+        boolean hasAssets = assetIds != null && !assetIds.isEmpty();
+        if (assetIds != null && assetIds.size() > 20) {
+            throw new IllegalArgumentException("单个对话最多可额外关联20份资料");
+        }
+        return hasKnowledgeBase || hasAssets;
+    }
+
+    private void generateAndPersistImage(
+            Long userId,
+            Conversation conversation,
+            com.example.llm.entity.Message currentUserMsg,
+            ChatReq req,
+            SseEmitter emitter,
+            String prompt) throws Exception {
+        AiCallResult<byte[]> imageGeneration = aiRouter.generateImage(prompt, 1024, 1024);
+        byte[] image = imageGeneration.value();
         String artifactId = "image:" + java.util.UUID.randomUUID();
         File directory = new File(uploadPath, "generated-images" + File.separator + userId);
         Files.createDirectories(directory.toPath());
@@ -735,8 +708,9 @@ public class ChatServiceImpl implements ChatService {
         assistantMsg.setParentId(currentUserMsg != null ? currentUserMsg.getId() : null);
         assistantMsg.setRole(Role.ASSISTANT.getValue());
         assistantMsg.setContent(content);
-        assistantMsg.setModel("xfyun-image-generation");
-        assistantMsg.setDurationMs((int) (System.currentTimeMillis() - startTime));
+        assistantMsg.setKind("image");
+        assistantMsg.setModel(imageGeneration.routeKey());
+        assistantMsg.setDurationMs((int) Math.min(Integer.MAX_VALUE, imageGeneration.durationMs()));
         assistantMsg.setStatus(0);
         assistantMsg.setCreateTime(LocalDateTime.now());
         assistantMsg.setTurnId(req.getTurnId() != null ? req.getTurnId()
@@ -763,6 +737,57 @@ public class ChatServiceImpl implements ChatService {
         emitter.complete();
     }
 
+    private com.example.llm.entity.Message findExistingGeneratedImage(
+            Long conversationId,
+            com.example.llm.entity.Message currentUserMsg,
+            ChatReq req) {
+        String turnId = req.getTurnId() != null
+                ? req.getTurnId() : currentUserMsg != null ? currentUserMsg.getTurnId() : null;
+        if (turnId == null || turnId.isBlank()) return null;
+        int qVersion = req.getQVersion() != null ? req.getQVersion()
+                : currentUserMsg != null && currentUserMsg.getQVersion() != null
+                ? currentUserMsg.getQVersion() : 0;
+        int aVersion = req.getAVersion() != null ? req.getAVersion() : 0;
+        return messageMapper.selectOne(new LambdaQueryWrapper<com.example.llm.entity.Message>()
+                .eq(com.example.llm.entity.Message::getConversationId, conversationId)
+                .eq(com.example.llm.entity.Message::getRole, Role.ASSISTANT.getValue())
+                .eq(com.example.llm.entity.Message::getStatus, 0)
+                .eq(com.example.llm.entity.Message::getTurnId, turnId)
+                .eq(com.example.llm.entity.Message::getQVersion, qVersion)
+                .eq(com.example.llm.entity.Message::getAVersion, aVersion)
+                .eq(com.example.llm.entity.Message::getKind, "image")
+                .isNotNull(com.example.llm.entity.Message::getArtifacts)
+                .orderByDesc(com.example.llm.entity.Message::getCreateTime)
+                .last("LIMIT 1"));
+    }
+
+    private String imageOperationKey(
+            Long userId,
+            Long conversationId,
+            com.example.llm.entity.Message currentUserMsg,
+            ChatReq req) {
+        String turnId = req.getTurnId() != null
+                ? req.getTurnId() : currentUserMsg != null ? currentUserMsg.getTurnId() : generateTurnId();
+        int qVersion = req.getQVersion() != null ? req.getQVersion()
+                : currentUserMsg != null && currentUserMsg.getQVersion() != null
+                ? currentUserMsg.getQVersion() : 0;
+        int aVersion = req.getAVersion() != null ? req.getAVersion() : 0;
+        return "image:" + userId + ":" + conversationId + ":" + turnId + ":" + qVersion + ":" + aVersion;
+    }
+
+    private void resendGeneratedImage(
+            com.example.llm.entity.Message existing,
+            SseEmitter emitter) throws Exception {
+        emitter.send(SseEmitter.event().data(existing.getContent()));
+        List<?> artifacts = objectMapper.readValue(existing.getArtifacts(), List.class);
+        if (!artifacts.isEmpty()) {
+            emitter.send(SseEmitter.event().name("artifact")
+                    .data(objectMapper.writeValueAsString(artifacts.get(0))));
+        }
+        emitter.send(SseEmitter.event().name("finish").data("[]"));
+        emitter.complete();
+    }
+
     private String buildMediaContext(Long userId, Long conversationId, List<String> assetIds) {
         if (assetIds == null || assetIds.isEmpty()) return "";
         StringBuilder context = new StringBuilder();
@@ -774,8 +799,11 @@ public class ChatServiceImpl implements ChatService {
                 String recognized = asset.getTranscript();
                 if ((recognized == null || recognized.isBlank()) && "image".equals(asset.getKind())) {
                     byte[] bytes = Files.readAllBytes(new File(asset.getFilePath()).toPath());
-                    recognized = xfyunVisionClient.understand(bytes,
-                            "请准确识别这张图片的内容；如果包含题目、公式或文字，请完整保留。回答时使用中文。");
+                    recognized = aiRouter.understand(
+                            bytes,
+                            asset.getMimeType(),
+                            "请准确识别这张图片的内容；如果包含题目、公式或文字，请完整保留。回答时使用中文。")
+                            .value();
                     asset.setTranscript(recognized);
                     asset.setStatus("ready");
                     asset.setUpdateTime(LocalDateTime.now());

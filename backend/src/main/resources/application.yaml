@@ -10,6 +10,57 @@ app:
       username: ${V2_DB_USERNAME:${DB_USERNAME:root}}
       password: ${V2_DB_PASSWORD:${DB_PASSWORD:}}
       driver-class-name: com.mysql.cj.jdbc.Driver
+    storage:
+      mode: ${V2_STORAGE_MODE:local}
+      bucket-key: ${V2_STORAGE_BUCKET:local-private}
+      # Public deployments should set a storage-only secret. Local development may
+      # temporarily inherit AUTH_HASH_SECRET so no plaintext object key reaches MySQL.
+      key-secret: ${V2_STORAGE_KEY_SECRET:${app.auth.hash-secret:}}
+      part-size: 8388608
+      upload-session-ttl: PT24H
+      max-concurrent-uploads: 3
+      local:
+        root: ${V2_LOCAL_STORAGE_ROOT:./data/v2-storage}
+    processing:
+      enabled: ${V2_ASSET_PROCESSING_ENABLED:true}
+      poll-interval: ${V2_ASSET_POLL_INTERVAL:PT2S}
+      lease-duration: ${V2_ASSET_LEASE_DURATION:PT10M}
+      batch-size: ${V2_ASSET_BATCH_SIZE:3}
+      scanner:
+        mode: ${V2_FILE_SCANNER_MODE:clamav}
+        host: ${CLAMAV_HOST:localhost}
+        port: ${CLAMAV_PORT:3310}
+        connect-timeout: PT5S
+        read-timeout: PT2M
+        stream-chunk-size: 65536
+      parser:
+        key: tika-ocr
+        version: 2026-08-10.2
+        max-characters: 5000000
+        target-tokens: 800
+        overlap-tokens: 100
+        max-tokens: 1800
+      indexing:
+        enabled: ${V2_VECTOR_INDEXING_ENABLED:true}
+        provider: ${V2_EMBEDDING_PROVIDER:dashscope}
+        provider-model: ${V2_EMBEDDING_PROVIDER_MODEL:qwen3.7-text-embedding}
+        model-key: ${V2_EMBEDDING_MODEL_KEY:dashscope-qwen3.7-text-embedding-1024}
+        embedding-version: ${V2_EMBEDDING_VERSION:dashscope-qwen3.7-text-embedding-1024-v1}
+        index-name: ${V2_VECTOR_INDEX_NAME:examinsight-v2-chunks-qwen3.7-embedding-1024-v1}
+        dimensions: ${V2_EMBEDDING_DIMENSIONS:1024}
+        reconcile-batch-size: ${V2_INDEX_RECONCILE_BATCH_SIZE:200}
+    retrieval:
+      enabled: ${V2_RETRIEVAL_ENABLED:true}
+      default-top-k: ${V2_RETRIEVAL_TOP_K:6}
+      max-top-k: 12
+      candidate-multiplier: 4
+      min-semantic-score: ${V2_RETRIEVAL_MIN_SCORE:0.55}
+      default-context-tokens: ${V2_RETRIEVAL_CONTEXT_TOKENS:3200}
+      max-context-tokens: 8000
+      max-chunks-per-asset: 3
+      max-explicit-scope-items: 100
+      max-scoped-assets: 10000
+      max-query-characters: 2000
   auth:
     hash-secret: ${AUTH_HASH_SECRET:}
     cookie:
@@ -81,10 +132,20 @@ elasticsearch:
 # 阿里云 DashScope 配置
 dashscope:
   api-key: ${DASHSCOPE_API_KEY:}
+  openai-base-url: ${DASHSCOPE_OPENAI_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+  native-base-url: ${DASHSCOPE_NATIVE_BASE_URL:https://dashscope.aliyuncs.com/api/v1}
+  connect-timeout: PT15S
+  request-timeout: PT2M
   chat:
-    model: qwen-plus-2025-07-28
-    temperature: 0.7
-    max-tokens: 2000
+    model: ${DASHSCOPE_CHAT_MODEL:qwen3.7-plus}
+  vision:
+    model: ${DASHSCOPE_VISION_MODEL:qwen3.7-plus}
+  ocr:
+    model: ${DASHSCOPE_OCR_MODEL:qwen3.5-ocr}
+  image-generation:
+    model: ${DASHSCOPE_IMAGE_MODEL:qwen-image-3.0}
+  speech:
+    model: ${DASHSCOPE_ASR_MODEL:qwen3-asr-flash}
 embedding:
   reindex-on-startup: ${EMBEDDING_REINDEX_ON_STARTUP:false}
 
@@ -122,7 +183,7 @@ xfyun:
   embedding:
     document-url: https://emb-cn-huabei-1.xf-yun.com/
     query-url: https://emb-cn-huabei-1.xf-yun.com/
-    dimensions: 2048
+    dimensions: ${LEGACY_XFYUN_EMBEDDING_DIMENSIONS:2560}
 
 # RAG 配置
 rag:

@@ -3,7 +3,6 @@ import { ref } from "vue";
 import { defineStore } from "pinia";
 
 import { streamChat } from "@/api/chat";
-import { useModelStore } from "@/stores/model";
 import { useConversationStore } from "@/stores/conversation";
 import * as conversationApi from "@/api/conversation";
 import { isMockDataSource } from '@/config/dataSource'
@@ -22,6 +21,8 @@ import { rememberMockGeneratedResourcePreview } from '@/repositories/libraryReso
 import { presentationRepository } from '@/repositories/presentation'
 import { toPresentationChatCard } from '@/utils/presentation'
 import { chatRepository } from '@/repositories/chat'
+import { getAsset, uploadAsset } from '@/api/assetLibraryV2'
+import type { ConversationId } from '@/types/contracts/conversation'
 
 export type ChatRole = "user" | "assistant" | "system";
 
@@ -115,43 +116,43 @@ function errorText(error: unknown, fallback = '请求失败') {
   return error instanceof Error && error.message ? error.message : fallback
 }
 
-function keyForConversation(conversationId: number) {
+function keyForConversation(conversationId: ConversationId) {
   return `messages.${conversationId}`;
 }
 
-function loadLocal(conversationId: number): ChatMessage[] {
+function loadLocal(conversationId: ConversationId): ChatMessage[] {
   if (!isMockDataSource) return []
   return mockSession.get<ChatMessage[]>(keyForConversation(conversationId), [])
 }
 
-function saveLocal(conversationId: number, items: ChatMessage[]) {
+function saveLocal(conversationId: ConversationId, items: ChatMessage[]) {
   if (isMockDataSource) mockSession.set(keyForConversation(conversationId), items)
 }
 
-function keyForActiveQVersions(conversationId: number) {
+function keyForActiveQVersions(conversationId: ConversationId) {
   return `message-versions.questions.${conversationId}`;
 }
 
-function keyForActiveAVersions(conversationId: number) {
+function keyForActiveAVersions(conversationId: ConversationId) {
   return `message-versions.answers.${conversationId}`;
 }
 
-function loadLocalActiveQVersions(conversationId: number): Record<string, number> {
+function loadLocalActiveQVersions(conversationId: ConversationId): Record<string, number> {
   if (!isMockDataSource) return {}
   return mockSession.get<Record<string, number>>(keyForActiveQVersions(conversationId), {})
 }
 
-function loadLocalActiveAVersions(conversationId: number): Record<string, Record<number, number>> {
+function loadLocalActiveAVersions(conversationId: ConversationId): Record<string, Record<number, number>> {
   if (!isMockDataSource) return {}
   return mockSession.get<Record<string, Record<number, number>>>(keyForActiveAVersions(conversationId), {})
 }
 
-function saveLocalActiveQVersions(conversationId: number, versions: Record<string, number>) {
+function saveLocalActiveQVersions(conversationId: ConversationId, versions: Record<string, number>) {
   if (isMockDataSource) mockSession.set(keyForActiveQVersions(conversationId), versions)
 }
 
 function saveLocalActiveAVersions(
-  conversationId: number,
+  conversationId: ConversationId,
   versions: Record<string, Record<number, number>>,
 ) {
   if (isMockDataSource) mockSession.set(keyForActiveAVersions(conversationId), versions)
@@ -191,15 +192,13 @@ export const useMessageStore = defineStore("message", () => {
   const errorMessage = ref<string | null>(null);
   const controller = ref<AbortController | null>(null);
 
-  const modelStore = useModelStore();
-
-  function getMessages(conversationId: number) {
+  function getMessages(conversationId: ConversationId) {
     const key = String(conversationId);
     return byConversation.value[key] ?? [];
   }
 
   function appendLocalMessage(
-    conversationId: number,
+    conversationId: ConversationId,
     message: Omit<ChatMessage, "id" | "createTime"> & Partial<Pick<ChatMessage, "id" | "createTime">>,
   ) {
     initLocalIfNeeded(conversationId);
@@ -214,7 +213,7 @@ export const useMessageStore = defineStore("message", () => {
     return next;
   }
 
-  function updateLocalMessage(conversationId: number, messageId: string, patch: Partial<ChatMessage>) {
+  function updateLocalMessage(conversationId: ConversationId, messageId: string, patch: Partial<ChatMessage>) {
     initLocalIfNeeded(conversationId);
     const list = byConversation.value[String(conversationId)]!;
     const index = list.findIndex((message) => message.id === messageId);
@@ -254,7 +253,7 @@ export const useMessageStore = defineStore("message", () => {
     return resourceIds;
   }
 
-  async function retryArtifact(conversationId: number, messageId: string, artifactId: string) {
+  async function retryArtifact(conversationId: ConversationId, messageId: string, artifactId: string) {
     initLocalIfNeeded(conversationId)
     const list = byConversation.value[String(conversationId)]!
     const messageIndex = list.findIndex((message) => message.id === messageId)
@@ -297,7 +296,7 @@ export const useMessageStore = defineStore("message", () => {
     }
   }
 
-  function initLocalIfNeeded(conversationId: number) {
+  function initLocalIfNeeded(conversationId: ConversationId) {
     const key = String(conversationId);
     if (!byConversation.value[key]) {
       byConversation.value[key] = loadLocal(conversationId);
@@ -306,7 +305,7 @@ export const useMessageStore = defineStore("message", () => {
     }
   }
 
-  async function ensureLoaded(conversationId: number) {
+  async function ensureLoaded(conversationId: ConversationId) {
     const key = String(conversationId);
 
     initLocalIfNeeded(conversationId);
@@ -599,8 +598,134 @@ export const useMessageStore = defineStore("message", () => {
     controller.value?.abort();
   }
 
+  async function waitUntilAssetReady(assetId: string) {
+    const deadline = Date.now() + 120_000
+    while (Date.now() < deadline) {
+      const detail = await getAsset(assetId)
+      const versionStatus = detail.asset.version?.status?.toUpperCase()
+      if (versionStatus === 'READY') return detail.asset
+      if (['FAILED', 'REJECTED', 'QUARANTINED'].includes(versionStatus || '')) {
+        throw new Error(`资料“${detail.asset.name}”处理失败，请检查文件后重新上传。`)
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 800))
+    }
+    throw new Error('资料仍在解析，请稍后再发送。')
+  }
+
+  async function sendV2GeneralMessage(
+    conversationId: ConversationId,
+    content: string,
+    files: File[] | undefined,
+    sourceAssetIds: string[],
+  ) {
+    if (isStreaming.value) return
+    let text = content.trim()
+    if (!text && files?.length) text = '请分析我上传的资料。'
+    if (!text) return
+
+    await ensureLoaded(conversationId)
+    const key = String(conversationId)
+    const list = byConversation.value[key] ?? (byConversation.value[key] = [])
+    const nextController = new AbortController()
+    controller.value = nextController
+    errorMessage.value = null
+    isStreaming.value = true
+
+    const optimisticUserId = uid()
+    const optimisticAssistantId = uid()
+    const userMessage: ChatMessage = {
+      id: optimisticUserId,
+      role: 'user',
+      content: text,
+      createTime: Date.now(),
+      files: files?.map((file) => ({ name: file.name, type: file.type, size: file.size })),
+    }
+    const assistantMessage: ChatMessage = {
+      id: optimisticAssistantId,
+      role: 'assistant',
+      content: '',
+      createTime: Date.now(),
+      streaming: true,
+    }
+    list.push(userMessage, assistantMessage)
+
+    try {
+      const resolvedAssetIds = [...new Set(sourceAssetIds.filter(Boolean))]
+      for (const assetId of resolvedAssetIds) {
+        await waitUntilAssetReady(assetId)
+      }
+      for (const file of files ?? []) {
+        if (resolvedAssetIds.length >= 20) {
+          throw new Error('每次最多关联 20 个资料，请减少选择后重试。')
+        }
+        const uploaded = await uploadAsset(file, null)
+        const assetId = uploaded.completion.asset.assetId
+        await waitUntilAssetReady(assetId)
+        resolvedAssetIds.push(assetId)
+      }
+
+      const generator = await streamChat(
+        {
+          conversationId,
+          content: text,
+          sourceAssetExternalIds: resolvedAssetIds,
+          runtime: 'v2-general',
+        },
+        { signal: nextController.signal },
+      )
+
+      let assistantId = optimisticAssistantId
+      for await (const event of generator) {
+        if (event.type === 'run-accepted') {
+          userMessage.id = event.userMessageId
+          assistantMessage.id = event.assistantMessageId
+          assistantId = event.assistantMessageId
+          continue
+        }
+        if (event.type === 'text-delta') {
+          assistantMessage.content += event.delta
+          continue
+        }
+        if (event.type === 'run-completed') {
+          assistantId = event.assistantMessageId
+        }
+      }
+
+      const { listMessages } = await import('@/api/message')
+      const remote = await listMessages(conversationId)
+      const remoteUser = remote.find((message) => String(message.id) === String(userMessage.id))
+      const remoteAssistant = remote.find((message) => String(message.id) === String(assistantId))
+      if (remoteUser) {
+        userMessage.id = String(remoteUser.id)
+        userMessage.createTime = parseCreateTime(remoteUser.createTime)
+      }
+      if (remoteAssistant) {
+        assistantMessage.id = String(remoteAssistant.id)
+        assistantMessage.content = remoteAssistant.content
+        assistantMessage.sourceChunks = remoteAssistant.sourceChunks as ChatMessage['sourceChunks']
+        assistantMessage.createTime = parseCreateTime(remoteAssistant.createTime)
+      }
+      assistantMessage.streaming = false
+      assistantMessage.errorMsg = undefined
+      await useConversationStore().fetchList()
+    } catch (error) {
+      assistantMessage.streaming = false
+      if (isAbortError(error) || nextController.signal.aborted) {
+        assistantMessage.content ||= '已停止生成'
+      } else {
+        assistantMessage.errorMsg = errorText(error)
+        errorMessage.value = errorText(error)
+      }
+    } finally {
+      if (controller.value === nextController) {
+        controller.value = null
+        isStreaming.value = false
+      }
+    }
+  }
+
   async function sendMessage(
-    conversationId: number,
+    conversationId: ConversationId,
     content: string,
     turnId?: string,
     qVersion?: number,
@@ -618,8 +743,18 @@ export const useMessageStore = defineStore("message", () => {
       stageId?: number | string | null
       taskId?: number | string | null
       exerciseId?: number | string | null
+      runtime?: 'v2-general' | 'legacy-learning'
+      sourceAssetExternalIds?: string[]
     },
   ) {
+    if (extraOptions?.runtime === 'v2-general') {
+      return sendV2GeneralMessage(
+        conversationId,
+        content,
+        files,
+        extraOptions.sourceAssetExternalIds ?? [],
+      )
+    }
     if (isStreaming.value) return;
     let text = content.trim();
     const hasFiles = files && files.length > 0;
@@ -810,7 +945,6 @@ export const useMessageStore = defineStore("message", () => {
         {
           conversationId,
           content: finalQuestion,
-          model: modelStore.currentModel,
           knowledgeBaseId,
           fileContext,
           history: historyContext,
@@ -1052,7 +1186,7 @@ export const useMessageStore = defineStore("message", () => {
   }
 
   // 重新生成回答 (基于当前激活的问题版本)
-  async function regenerate(conversationId: number, turnId: string) {
+  async function regenerate(conversationId: ConversationId, turnId: string) {
     await ensureLoaded(conversationId);
     const convIdStr = String(conversationId);
     const messages = byConversation.value[convIdStr] || [];
@@ -1120,7 +1254,7 @@ export const useMessageStore = defineStore("message", () => {
   }
 
   // 编辑问题并重新生成 (创建新的问题版本)
-  async function editAndRegenerate(conversationId: number, turnId: string, newContent: string) {
+  async function editAndRegenerate(conversationId: ConversationId, turnId: string, newContent: string) {
     await ensureLoaded(conversationId);
     const convIdStr = String(conversationId);
     const messages = byConversation.value[convIdStr] || [];
@@ -1170,7 +1304,7 @@ export const useMessageStore = defineStore("message", () => {
   }
 
   // 切换问题版本
-  function switchQVersion(conversationId: number, turnId: string, qIndex: number) {
+  function switchQVersion(conversationId: ConversationId, turnId: string, qIndex: number) {
     const convIdStr = String(conversationId);
     if (!activeQVersions.value[convIdStr]) activeQVersions.value[convIdStr] = {};
     activeQVersions.value[convIdStr]![turnId] = qIndex;
@@ -1194,7 +1328,7 @@ export const useMessageStore = defineStore("message", () => {
   }
 
   // 切换回答版本 (针对当前选中的问题)
-  function switchAVersion(conversationId: number, turnId: string, qIndex: number, aIndex: number) {
+  function switchAVersion(conversationId: ConversationId, turnId: string, qIndex: number, aIndex: number) {
     const convIdStr = String(conversationId);
     if (!activeAVersions.value[convIdStr]) activeAVersions.value[convIdStr] = {};
     if (!activeAVersions.value[convIdStr]![turnId]) activeAVersions.value[convIdStr]![turnId] = {};
@@ -1203,7 +1337,7 @@ export const useMessageStore = defineStore("message", () => {
   }
 
   // 获取版本数
-  function getQVersionCount(conversationId: number, turnId: string): number {
+  function getQVersionCount(conversationId: ConversationId, turnId: string): number {
     const messages = byConversation.value[String(conversationId)] || [];
     const qVersions = new Set(
       messages.filter((m) => m.turnId === turnId && m.role === "user").map((m) => m.qVersion ?? 0),
@@ -1211,7 +1345,7 @@ export const useMessageStore = defineStore("message", () => {
     return qVersions.size;
   }
 
-  function getAVersionCount(conversationId: number, turnId: string, qIndex: number): number {
+  function getAVersionCount(conversationId: ConversationId, turnId: string, qIndex: number): number {
     const messages = byConversation.value[String(conversationId)] || [];
     const aVersions = new Set(
       messages
@@ -1221,11 +1355,11 @@ export const useMessageStore = defineStore("message", () => {
     return aVersions.size;
   }
 
-  function getActiveQVersion(conversationId: number, turnId: string): number {
+  function getActiveQVersion(conversationId: ConversationId, turnId: string): number {
     return activeQVersions.value[String(conversationId)]?.[turnId] ?? 0;
   }
 
-  function getActiveAVersion(conversationId: number, turnId: string, qIndex: number): number {
+  function getActiveAVersion(conversationId: ConversationId, turnId: string, qIndex: number): number {
     return activeAVersions.value[String(conversationId)]?.[turnId]?.[qIndex] ?? 0;
   }
 
@@ -1247,7 +1381,7 @@ export const useMessageStore = defineStore("message", () => {
     };
   }
 
-  function clearConversation(conversationId: number) {
+  function clearConversation(conversationId: ConversationId) {
     const key = String(conversationId);
     delete byConversation.value[key];
     delete activeQVersions.value[key];

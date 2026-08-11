@@ -658,15 +658,16 @@ src/
 
 以下文件目前仍有路由或其他页面引用，不能直接删除：
 
-- `views/ResourceCenterView.vue`
 - `views/ExamAnalysisListView.vue`、`views/ExamAnalysisView.vue`
 - `views/mindmap/*`
 - `views/admin/*`、`layout_admin/*`
 - `components/sidebar/*`
 
-2026-07-18 已按“入口可达性、import、测试依赖、替代实现、人工确认”完成清理：删除旧知识库列表/详情及其 Store、全部 `views/legacy` 与 `components/legacy`、零引用空壳和重复源码、示例测试及构建缓存。两个 RobotAI Learning SVG 经产品确认保留。
+2026-07-18 已按“入口可达性、import、测试依赖、替代实现、人工确认”完成清理：删除当时确认无引用的旧知识库页面、全部 `views/legacy` 与 `components/legacy`、零引用空壳和重复源码、示例测试及构建缓存。仍被聊天和学习链路调用的知识库 Store 不属于无引用代码。两个 RobotAI Learning SVG 经产品确认保留。
 
-本次只收敛前端实现，不减少后端接口范围。`api/document.ts` 与 `repositories/document.ts` 仍服务试卷分析和附件链路；完整删除记录见 `docs/frontend-file-inventory.md`。
+2026-08-09 已删除与个人资料库定位冲突的公共资料市场页面、路由、侧边栏入口和旧 `/api/resource` 客户端；资料库主入口固定为 `/library`。
+
+公共资料市场对应的前后端链路已同步移除；仍被聊天、学习和生成物预览调用的 `/api/resources` 暂不删除。`api/document.ts` 与 `repositories/document.ts` 仍服务试卷分析和附件链路；完整删除记录见 `docs/frontend-file-inventory.md`。
 
 建议执行顺序：
 

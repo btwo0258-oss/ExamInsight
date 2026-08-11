@@ -12,7 +12,6 @@ public class MessageVO {
     private String role; // "user" or "assistant"
     private String content;
     private String sourceChunks; // JSON string of references
-    private String model;
     private Integer durationMs;
     private LocalDateTime createTime;
     private String turnId;

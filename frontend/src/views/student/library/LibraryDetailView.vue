@@ -1,824 +1,343 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
-import AppIcon from "@/components/common/AppIcon.vue";
-import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
-import StudentShell from "@/components/layout/StudentShell.vue";
-import UploadMaterialModal from "@/components/library/UploadMaterialModal.vue";
-import { courseKnowledgeBases } from "@/mock";
-import { isMockDataSource } from "@/config/dataSource";
-import { useLibraryResourceStore } from "@/stores/libraryResource";
-import { useKnowledgeBaseStore } from "@/stores/knowledgeBase";
-import type { LibraryResource } from "@/stores/libraryResource";
-import { presentationRepository } from "@/repositories/presentation";
-import { spreadsheetRepository } from "@/repositories/spreadsheet";
-import { resourcePreviewRoute } from "@/utils/resourcePreview";
-import { downloadBlob } from "@/utils/download";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import {
+  ArrowLeft,
+  BookOpen,
+  Download,
+  File,
+  FileImage,
+  FileSpreadsheet,
+  FileText,
+  FolderOpen,
+  LoaderCircle,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Presentation,
+  RefreshCw,
+  Search,
+  Trash2,
+  Unlink,
+  Upload,
+} from 'lucide-vue-next'
+import AppButton from '@/components/common/AppButton.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import StudentShell from '@/components/layout/StudentShell.vue'
+import UploadMaterialModal from '@/components/library/UploadMaterialModal.vue'
+import V2AssetPickerModal from '@/components/library/V2AssetPickerModal.vue'
+import V2KnowledgeBaseModal from '@/components/library/V2KnowledgeBaseModal.vue'
+import {
+  fetchAssetContent,
+  getKnowledgeBase,
+  listKnowledgeBaseAssets,
+  removeAssetFromKnowledgeBase,
+} from '@/api/assetLibraryV2'
+import { useAssetLibraryV2Store } from '@/stores/assetLibraryV2'
+import { downloadBlob } from '@/utils/download'
+import type { KnowledgeBase, LibraryAsset } from '@/types/contracts/assetLibraryV2'
 
-const route = useRoute();
-const router = useRouter();
-const libraryResourceStore = useLibraryResourceStore();
-const knowledgeBaseStore = useKnowledgeBaseStore();
-const uploadOpen = ref(false);
-const detailLoading = ref(false);
-const detailError = ref("");
-const actionError = ref("");
-const searchQuery = ref("");
-const deleteTarget = ref<LibraryResource | null>(null);
-const knowledgeBaseId = computed(() => Number(route.params.id));
-const library = computed(() => {
-  if (!Number.isFinite(knowledgeBaseId.value) || knowledgeBaseId.value <= 0) return null;
-  const stored =
-    knowledgeBaseStore.current?.id === knowledgeBaseId.value
-      ? knowledgeBaseStore.current
-      : knowledgeBaseStore.list.find((item) => item.id === knowledgeBaseId.value);
-  if (!stored) return null;
-  const preset = isMockDataSource
-    ? courseKnowledgeBases.find((item) => item.id === knowledgeBaseId.value)
-    : undefined;
-  return {
-    id: knowledgeBaseId.value,
-    name: stored.name,
-    description: stored.description || "暂无说明",
-    tags: preset?.tags || [],
-    knowledgePoints: stored.knowledgePoints || [],
-    fileCount: stored.documentCount || 0,
-    chunkCount: stored.chunkCount || 0,
-    status: stored.availableForAi === false ? "processing" : "ready",
-    updatedAt: stored.updateTime || "刚刚",
-  };
-});
-const files = computed(() => {
-  if (!library.value) return [];
-  const query = searchQuery.value.trim().toLocaleLowerCase();
-  return libraryResourceStore.resources.filter((item) => {
-    if (item.knowledgeBaseId !== library.value?.id) return false;
-    return (
-      !query ||
-      `${item.name} ${item.format} ${fileStatusLabel(item.status)}`
-        .toLocaleLowerCase()
-        .includes(query)
-    );
-  });
-});
-const fileCount = computed(() =>
-  library.value
-    ? Math.max(
-        library.value.fileCount,
-        libraryResourceStore.resources.filter((item) => item.knowledgeBaseId === library.value?.id)
-          .length,
-      )
-    : 0,
-);
+const props = defineProps<{ id: string }>()
+const router = useRouter()
+const store = useAssetLibraryV2Store()
+const knowledgeBase = ref<KnowledgeBase | null>(null)
+const assets = ref<LibraryAsset[]>([])
+const nextCursor = ref<string | null>(null)
+const loading = ref(true)
+const loadingMore = ref(false)
+const error = ref('')
+const notice = ref('')
+const searchQuery = ref('')
+const uploadOpen = ref(false)
+const pickerOpen = ref(false)
+const editOpen = ref(false)
+const removeTarget = ref<LibraryAsset | null>(null)
+const trashKnowledgeBaseConfirmOpen = ref(false)
+const detailMenuOpen = ref(false)
+let refreshTimer: number | undefined
 
-function fileStatusLabel(status: LibraryResource["status"]) {
-  return { waiting: "等待解析", processing: "向量化中", ready: "解析完成", failed: "解析失败" }[
-    status
-  ];
+const visibleAssets = computed(() => {
+  const query = searchQuery.value.trim().toLocaleLowerCase()
+  return query ? assets.value.filter((asset) => asset.name.toLocaleLowerCase().includes(query)) : assets.value
+})
+const readyCount = computed(() => assets.value.filter((asset) => asset.version?.indexStatus === 'READY').length)
+const processingCount = computed(() => assets.value.filter((asset) => !['READY', 'FAILED', 'REJECTED', 'WITHDRAWN'].includes(asset.version?.status ?? '') || (asset.version?.status === 'READY' && !['READY', 'EMPTY', 'DEGRADED'].includes(asset.version.indexStatus))).length)
+
+function formatDate(value: string | null) {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date)
 }
 
-function getRecommendedUses(
-  lib: {
-    name: string;
-    description: string;
-    tags: string[];
-    fileCount: number;
-    chunkCount: number;
-  } | null,
-): string {
-  if (!lib) return "待上传资料后识别";
-  if (lib.fileCount === 0) return "待上传资料后识别";
-  if (lib.chunkCount === 0) return "资料处理中，请稍后再试";
-
-  // 根据知识库名称和描述动态生成推荐用途
-  const name = lib.name.toLowerCase();
-  const desc = lib.description.toLowerCase();
-  const tags = lib.tags.map((t) => t.toLowerCase());
-
-  if (name.includes("考试") || desc.includes("考试") || tags.some((t) => t.includes("考试"))) {
-    return "期末复习、错题强化、模拟考试";
-  }
-  if (name.includes("项目") || desc.includes("项目") || tags.some((t) => t.includes("项目"))) {
-    return "项目实操、代码案例、技术文档";
-  }
-  if (name.includes("课程") || desc.includes("课程") || tags.some((t) => t.includes("课程"))) {
-    return "课程学习、知识问答、思维导图";
-  }
-  if (name.includes("论文") || desc.includes("论文") || tags.some((t) => t.includes("论文"))) {
-    return "文献调研、论文写作、知识梳理";
-  }
-
-  return "知识问答、思维导图、个性化学习";
+function formatSize(bytes = 0) {
+  if (!bytes) return '—'
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-function presentationId(file: LibraryResource) {
-  return file.externalKey?.startsWith("presentation:")
-    ? file.externalKey.slice("presentation:".length)
-    : "";
+function fileIcon(asset: LibraryAsset) {
+  const extension = asset.name.split('.').pop()?.toLowerCase() ?? ''
+  if (['jpg', 'jpeg', 'png', 'webp'].includes(extension)) return FileImage
+  if (['xlsx', 'csv'].includes(extension)) return FileSpreadsheet
+  if (extension === 'pptx') return Presentation
+  if (['txt', 'md', 'docx'].includes(extension)) return FileText
+  return File
 }
 
-function spreadsheetId(file: LibraryResource) {
-  return file.externalKey?.startsWith("spreadsheet:")
-    ? file.externalKey.slice("spreadsheet:".length)
-    : "";
+function status(asset: LibraryAsset) {
+  const version = asset.version
+  if (!version || version.status === 'QUARANTINED') return { label: '安全检查中', tone: 'pending' }
+  if (version.status === 'PROCESSING') return { label: '解析中', tone: 'pending' }
+  if (['FAILED', 'REJECTED', 'WITHDRAWN'].includes(version.status)) return { label: '处理失败', tone: 'error' }
+  if (version.indexStatus === 'READY') return { label: '可用于 AI', tone: 'success' }
+  if (version.indexStatus === 'EMPTY') return { label: '无可索引文本', tone: 'neutral' }
+  if (version.indexStatus === 'DEGRADED') return { label: '部分索引失败', tone: 'error' }
+  return { label: '向量化中', tone: 'pending' }
 }
 
-function openFile(file: LibraryResource) {
-  if (file.status !== "ready") return;
-  void router.push(resourcePreviewRoute(file.resourceId, route.fullPath, "knowledge"));
+function isReadable(asset: LibraryAsset) {
+  return ['PROCESSING', 'READY', 'FAILED'].includes(asset.version?.status ?? '')
 }
 
-async function loadDetail() {
-  detailLoading.value = true;
-  detailError.value = "";
-  if (!Number.isFinite(knowledgeBaseId.value) || knowledgeBaseId.value <= 0) {
-    detailLoading.value = false;
-    return;
+async function loadPage(append = false, silent = false) {
+  if (!silent) {
+    if (append) loadingMore.value = true
+    else loading.value = true
   }
+  error.value = ''
   try {
-    await Promise.all([
-      knowledgeBaseStore.getDetail(knowledgeBaseId.value),
-      libraryResourceStore.fetchList(knowledgeBaseId.value),
-    ]);
-  } catch (error) {
-    detailError.value = error instanceof Error ? error.message : "获取知识库详情失败";
+    const [detail, page] = await Promise.all([
+      append && knowledgeBase.value ? Promise.resolve({ knowledgeBase: knowledgeBase.value }) : getKnowledgeBase(props.id),
+      listKnowledgeBaseAssets(props.id, append ? nextCursor.value : null),
+    ])
+    knowledgeBase.value = detail.knowledgeBase
+    assets.value = append ? [...assets.value, ...page.items] : page.items
+    nextCursor.value = page.nextCursor
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : '知识库加载失败。'
   } finally {
-    detailLoading.value = false;
-  }
-}
-
-async function retryFile(file: LibraryResource) {
-  try {
-    actionError.value = "";
-    await libraryResourceStore.retry(file.resourceId);
-  } catch (error) {
-    actionError.value = error instanceof Error ? error.message : "重试解析失败";
-  }
-}
-
-async function downloadFile(file: LibraryResource) {
-  try {
-    actionError.value = "";
-    const id = presentationId(file);
-    const sheetId = spreadsheetId(file);
-    if (!id) {
-      if (sheetId) {
-        const blob = await spreadsheetRepository.download(sheetId);
-        downloadBlob(blob, file.name);
-        return;
-      }
-      await libraryResourceStore.download(file.resourceId, file.name);
-      return;
+    if (!silent) {
+      loading.value = false
+      loadingMore.value = false
     }
-    const blob = await presentationRepository.download(id);
-    downloadBlob(blob, file.name);
-  } catch (error) {
-    actionError.value = error instanceof Error ? error.message : "下载失败";
   }
 }
 
-async function confirmDeleteFile() {
-  const target = deleteTarget.value;
-  deleteTarget.value = null;
-  if (!target) return;
+async function downloadAsset(asset: LibraryAsset) {
+  error.value = ''
   try {
-    actionError.value = "";
-    await libraryResourceStore.remove(target.resourceId);
-  } catch (error) {
-    actionError.value = error instanceof Error ? error.message : "删除失败";
+    const blob = await fetchAssetContent(asset.assetId, 'attachment')
+    downloadBlob(blob, asset.name)
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : '下载失败。'
   }
 }
 
-function handleUploadClose() {
-  uploadOpen.value = false;
-  // 刷新知识库详情和资源列表
-  void loadDetail();
+async function confirmRemove() {
+  const asset = removeTarget.value
+  removeTarget.value = null
+  if (!asset) return
+  try {
+    await removeAssetFromKnowledgeBase(props.id, asset.assetId)
+    assets.value = assets.value.filter((item) => item.assetId !== asset.assetId)
+    if (knowledgeBase.value) knowledgeBase.value.assetCount = Math.max(0, knowledgeBase.value.assetCount - 1)
+    notice.value = `已从知识库移除“${asset.name}”，个人资料库中的原文件仍然保留。`
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : '移除资料失败。'
+  }
 }
 
-onMounted(() => {
-  void loadDetail();
-});
+async function trashKnowledgeBase() {
+  const item = knowledgeBase.value
+  trashKnowledgeBaseConfirmOpen.value = false
+  if (!item) return
+  try {
+    await store.moveKnowledgeBaseToTrash(item.knowledgeBaseId)
+    await router.replace('/library')
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : '移入回收站失败。'
+  }
+}
 
-watch(knowledgeBaseId, () => void loadDetail());
+function handleKnowledgeBaseSaved(item: KnowledgeBase) {
+  knowledgeBase.value = item
+  notice.value = '知识库信息已保存。'
+}
+
+function handleAssetsAdded() {
+  notice.value = '资料已加入知识库。'
+  void loadPage()
+}
+
+function handleUploaded() {
+  notice.value = '资料已上传并关联该知识库，安全检查和解析会在后台继续。'
+  void Promise.all([loadPage(), store.loadAssets('library')])
+}
+
+function startRefreshTimer() {
+  window.clearInterval(refreshTimer)
+  refreshTimer = window.setInterval(() => {
+    if (document.hidden) return
+    if (assets.value.some((asset) => !['READY', 'FAILED', 'REJECTED', 'WITHDRAWN'].includes(asset.version?.status ?? '') || (asset.version?.status === 'READY' && asset.version.indexStatus === 'PROCESSING'))) {
+      void loadPage(false, true)
+    }
+  }, 5000)
+}
+
+watch(() => props.id, () => void loadPage())
+onMounted(() => {
+  void Promise.all([loadPage(), store.assets.length ? Promise.resolve() : store.refresh('library')])
+  startRefreshTimer()
+})
+onBeforeUnmount(() => window.clearInterval(refreshTimer))
 </script>
 
 <template>
   <StudentShell>
-    <div class="detail-page">
-      <section v-if="detailLoading" class="detail-state" aria-live="polite">
+    <main class="detail-page">
+      <section v-if="loading" class="state-panel" aria-live="polite">
+        <LoaderCircle class="spin" :size="28" />
         <strong>正在加载知识库…</strong>
       </section>
-      <section v-else-if="detailError" class="detail-state detail-state--error" role="alert">
-        <strong>知识库加载失败</strong>
-        <span>{{ detailError }}</span>
-        <button type="button" @click="loadDetail">重试</button>
-      </section>
-      <section v-else-if="!library" class="detail-state">
-        <strong>知识库不存在或已被删除</strong>
-        <button type="button" @click="router.push('/library')">返回资料库</button>
+      <section v-else-if="!knowledgeBase" class="state-panel">
+        <BookOpen :size="34" />
+        <strong>知识库不可用</strong>
+        <span>它可能已进入回收站或被删除。</span>
+        <AppButton variant="secondary" @click="router.push('/library')">返回资料库</AppButton>
       </section>
       <template v-else>
         <header class="hero">
-          <button class="back-btn" type="button" @click="router.push('/library')">
-            <AppIcon name="chevron-left" :size="18" />
-            返回资料库
+          <button class="back-button" type="button" @click="router.push('/library')">
+            <ArrowLeft :size="17" />返回资料库
           </button>
           <div class="hero-card">
-            <div>
-              <h1>{{ library.name }}</h1>
-              <p>{{ library.description }}</p>
-              <div class="tags">
-                <span v-for="tag in library.tags" :key="tag">{{ tag }}</span>
+            <button class="detail-more" type="button" aria-label="知识库菜单" @click.stop="detailMenuOpen = !detailMenuOpen">
+              <MoreHorizontal :size="19" />
+            </button>
+            <div v-if="detailMenuOpen" class="detail-menu">
+              <button type="button" @click="editOpen = true; detailMenuOpen = false"><Pencil :size="15" />编辑知识库</button>
+              <button class="danger" type="button" @click="trashKnowledgeBaseConfirmOpen = true; detailMenuOpen = false"><Trash2 :size="15" />移入回收站</button>
+            </div>
+            <div class="hero-copy">
+              <span class="title-icon"><BookOpen :size="25" /></span>
+              <div>
+                <h1>{{ knowledgeBase.name }}</h1>
+                <p>{{ knowledgeBase.description || '尚未填写说明' }}</p>
               </div>
             </div>
             <div class="hero-actions">
-              <button class="outline-btn" type="button" @click="uploadOpen = true">
-                <AppIcon name="upload-cloud" :size="18" />
-                上传资料
-              </button>
-              <button
-                class="primary-btn"
-                type="button"
-                @click="
-                  router.push({ path: '/learning/new', query: { knowledgeBaseId: library.id } })
-                "
-              >
-                <AppIcon name="graduation" :size="18" />
-                用于智能学习
-              </button>
+              <AppButton variant="secondary" @click="pickerOpen = true">
+                <template #icon><Plus :size="15" /></template>从资料库添加
+              </AppButton>
+              <AppButton @click="uploadOpen = true">
+                <template #icon><Upload :size="15" /></template>上传资料
+              </AppButton>
             </div>
           </div>
         </header>
 
-        <div v-if="actionError" class="action-error" role="alert">
-          <span>{{ actionError }}</span>
-          <button type="button" aria-label="关闭" @click="actionError = ''">
-            <AppIcon name="close" :size="14" />
-          </button>
+        <div v-if="notice" class="notice">
+          <span>{{ notice }}</span><button type="button" aria-label="关闭提示" @click="notice = ''">×</button>
+        </div>
+        <div v-if="error" class="error-banner" role="alert">
+          <span>{{ error }}</span><button type="button" @click="loadPage()"><RefreshCw :size="15" />重试</button>
         </div>
 
-        <section class="stats">
-          <article>
-            <strong>{{ fileCount }}</strong>
-            <span>文件</span>
-          </article>
-          <article>
-            <strong>{{ library.chunkCount }}</strong>
-            <span>知识片段</span>
-          </article>
-          <article>
-            <strong>{{ library.status === "ready" ? "已完成" : "处理中" }}</strong>
-            <span>向量化状态</span>
-          </article>
+        <section class="facts">
+          <article><strong>{{ knowledgeBase.assetCount }}</strong><span>资料总数</span></article>
+          <article><strong>{{ readyCount }}</strong><span>本页可用于 AI</span></article>
+          <article><strong>{{ processingCount }}</strong><span>本页处理中</span></article>
         </section>
 
         <div class="content-grid">
           <section class="panel files-panel">
-            <div class="section-head">
-              <h2>文件列表</h2>
-              <label>
-                <AppIcon name="search" :size="18" />
-                <input v-model="searchQuery" placeholder="搜索文件" />
+            <div class="panel-header">
+              <div>
+                <h2>文件列表</h2>
+                <p>移除只会解除知识库关联，不会删除个人资料库原文件。</p>
+              </div>
+              <label class="search-field">
+                <Search :size="16" /><input v-model="searchQuery" placeholder="搜索文件" />
               </label>
             </div>
-            <table>
-              <thead>
-                <tr>
-                  <th>文件名</th>
-                  <th>类型</th>
-                  <th>状态</th>
-                  <th>更新时间</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="file in files"
-                  :key="file.resourceId"
-                  :class="{ 'file-row--ready': file.status === 'ready' }"
-                  @click="openFile(file)"
-                >
-                  <td>
-                    <AppIcon
-                      :name="
-                        presentationId(file)
-                          ? 'presentation'
-                          : spreadsheetId(file)
-                            ? 'grid'
-                            : 'file'
-                      "
-                      :size="18"
-                    />
-                    {{ file.name }}
-                  </td>
-                  <td>{{ file.format }}</td>
-                  <td>
-                    <span
-                      class="status"
-                      :class="{
-                        success: file.status === 'ready',
-                        active: file.status === 'processing',
-                        failed: file.status === 'failed',
-                      }"
-                    >
-                      {{ fileStatusLabel(file.status) }}
-                    </span>
-                  </td>
-                  <td>{{ file.updatedAt }}</td>
-                  <td @click.stop>
-                    <button
-                      v-if="file.status === 'failed'"
-                      class="text-btn"
-                      type="button"
-                      :disabled="libraryResourceStore.isMutating"
-                      @click="retryFile(file)"
-                    >
-                      重试
-                    </button>
-                    <button
-                      class="icon-btn"
-                      type="button"
-                      aria-label="预览"
-                      title="预览文件"
-                      :disabled="file.status !== 'ready'"
-                      @click="openFile(file)"
-                    >
-                      <AppIcon name="eye" :size="17" />
-                    </button>
-                    <button
-                      class="icon-btn"
-                      type="button"
-                      aria-label="下载"
-                      @click="downloadFile(file)"
-                    >
-                      <AppIcon name="download" :size="17" />
-                    </button>
-                    <button
-                      class="icon-btn danger"
-                      type="button"
-                      aria-label="删除"
-                      @click="deleteTarget = file"
-                    >
-                      <AppIcon name="trash" :size="17" />
-                    </button>
-                  </td>
-                </tr>
-                <tr v-if="!files.length">
-                  <td class="table-empty" colspan="5">
-                    {{ searchQuery.trim() ? "没有匹配的文件" : "暂无文件" }}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+
+            <div v-if="visibleAssets.length" class="table-wrap">
+              <table>
+                <thead><tr><th>文件名</th><th>状态</th><th>内容</th><th>大小</th><th>更新时间</th><th aria-label="操作" /></tr></thead>
+                <tbody>
+                  <tr v-for="asset in visibleAssets" :key="asset.assetId">
+                    <td><div class="file-name"><span><component :is="fileIcon(asset)" :size="18" /></span><strong :title="asset.name">{{ asset.name }}</strong></div></td>
+                    <td><span class="status-chip" :class="`is-${status(asset).tone}`">{{ status(asset).label }}</span></td>
+                    <td>{{ asset.version?.chunkCount ?? 0 }} 个片段</td>
+                    <td>{{ formatSize(asset.version?.sizeBytes) }}</td>
+                    <td>{{ formatDate(asset.updatedAt) }}</td>
+                    <td>
+                      <div class="row-actions">
+                        <button
+                          :disabled="!isReadable(asset)"
+                          @click="router.push({ path: `/resources/${asset.assetId}/preview`, query: { source: 'library-v2', returnTo: `/library/${props.id}` } })"
+                        >预览</button>
+                        <button :disabled="!isReadable(asset)" aria-label="下载" @click="downloadAsset(asset)"><Download :size="16" /></button>
+                        <button class="danger" aria-label="从知识库移除" title="从知识库移除" @click="removeTarget = asset"><Unlink :size="16" /></button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div v-else class="empty-panel">
+              <FolderOpen :size="34" />
+              <strong>{{ searchQuery.trim() ? '没有匹配的资料' : '知识库里还没有资料' }}</strong>
+              <span>{{ searchQuery.trim() ? '换个关键词试试。' : '可上传新资料，或从个人资料库选择已有资料。' }}</span>
+              <div v-if="!searchQuery.trim()">
+                <AppButton variant="secondary" @click="pickerOpen = true">从资料库添加</AppButton>
+                <AppButton @click="uploadOpen = true">上传新资料</AppButton>
+              </div>
+            </div>
+            <div v-if="nextCursor" class="load-more"><AppButton variant="secondary" :loading="loadingMore" @click="loadPage(true)">加载更多</AppButton></div>
           </section>
 
           <aside class="panel summary-panel">
-            <div class="panel-title">
-              <AppIcon name="book" :size="22" />
-              <h2>知识库摘要</h2>
-            </div>
-            <p>
-              {{
-                library.description ||
-                "该知识库包含上传的学习资料，可用于知识问答、个性化学习手册生成、思维导图和代码案例生成。"
-              }}
-            </p>
+            <div class="summary-title"><BookOpen :size="21" /><h2>知识库信息</h2></div>
+            <p>{{ knowledgeBase.description || '尚未填写说明' }}</p>
             <div class="summary-list">
-              <article>
-                <span>主要知识点</span>
-                <strong>{{ library.knowledgePoints.join("、") || "待上传资料后识别" }}</strong>
-              </article>
-              <article>
-                <span>推荐用途</span>
-                <strong>{{ getRecommendedUses(library) }}</strong>
-              </article>
-              <article>
-                <span>最近更新</span>
-                <strong>{{ library.updatedAt }}</strong>
-              </article>
+              <article><span>资料数量</span><strong>{{ knowledgeBase.assetCount }} 个</strong></article>
+              <article><span>当前页索引状态</span><strong>{{ processingCount ? `${processingCount} 个处理中` : '全部处理完成' }}</strong></article>
+              <article><span>最近更新</span><strong>{{ formatDate(knowledgeBase.updatedAt) }}</strong></article>
             </div>
           </aside>
         </div>
       </template>
-    </div>
+    </main>
 
-    <UploadMaterialModal
-      :open="uploadOpen"
-      :knowledge-base-id="library?.id ?? null"
-      @close="handleUploadClose"
-    />
-
-    <ConfirmDialog
-      :open="Boolean(deleteTarget)"
-      title="删除文件"
-      :message="deleteTarget ? `确认删除“${deleteTarget.name}”？此操作无法撤销。` : ''"
-      confirm-text="删除"
-      confirm-variant="danger"
-      @close="deleteTarget = null"
-      @confirm="confirmDeleteFile"
-    />
+    <UploadMaterialModal :open="uploadOpen" :knowledge-base-id="knowledgeBase?.knowledgeBaseId" @close="uploadOpen = false" @uploaded="handleUploaded" />
+    <V2AssetPickerModal :open="pickerOpen" :knowledge-base-id="props.id" :existing-asset-ids="assets.map((asset) => asset.assetId)" @close="pickerOpen = false" @added="handleAssetsAdded" />
+    <V2KnowledgeBaseModal :open="editOpen" :knowledge-base="knowledgeBase" @close="editOpen = false" @saved="handleKnowledgeBaseSaved" />
+    <ConfirmDialog :open="Boolean(removeTarget)" title="从知识库移除" :message="removeTarget ? `移除“${removeTarget.name}”后，原文件仍保留在个人资料库中。` : ''" confirm-text="移除" @close="removeTarget = null" @confirm="confirmRemove" />
+    <ConfirmDialog :open="trashKnowledgeBaseConfirmOpen" title="移入回收站" :message="knowledgeBase ? `“${knowledgeBase.name}”将进入回收站，资料本身不会被删除。` : ''" confirm-text="移入回收站" confirm-variant="danger" @close="trashKnowledgeBaseConfirmOpen = false" @confirm="trashKnowledgeBase" />
   </StudentShell>
 </template>
 
 <style scoped>
-.detail-page {
-  min-height: 100%;
-  padding: 34px 28px 56px;
-  background: var(--color-bg);
-  color: var(--color-text);
-}
-
-.detail-page,
-.detail-page * {
-  box-sizing: border-box;
-}
-
-.hero,
-.stats,
-.content-grid,
-.detail-state,
-.action-error {
-  max-width: 1180px;
-  margin-left: auto;
-  margin-right: auto;
-}
-
-.detail-state {
-  min-height: 480px;
-  display: grid;
-  place-items: center;
-  align-content: center;
-  gap: 10px;
-  color: var(--color-text-muted);
-  text-align: center;
-}
-
-.detail-state strong {
-  color: var(--color-text);
-  font-size: 18px;
-}
-
-.detail-state button {
-  height: 36px;
-  padding: 0 14px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-surface);
-  color: var(--color-text);
-  cursor: pointer;
-}
-
-.detail-state--error span {
-  color: var(--color-danger);
-  overflow-wrap: anywhere;
-}
-
-.action-error {
-  min-height: 38px;
-  margin-top: 14px;
-  padding: 8px 10px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  border: 1px solid color-mix(in srgb, var(--color-danger) 35%, var(--color-border));
-  border-radius: 8px;
-  background: var(--color-surface);
-  color: var(--color-danger);
-  font-size: 13px;
-}
-
-.action-error button {
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-}
-
-h1,
-h2,
-p {
-  margin: 0;
-}
-
-.back-btn {
-  height: 28px;
-  border: 0;
-  background: transparent;
-  color: var(--color-text-muted);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 500;
-  border-radius: var(--ui-hover-radius);
-  padding: 0 8px;
-}
-
-.back-btn:hover,
-.outline-btn:hover {
-  background: var(--ui-hover-bg);
-}
-
-.back-btn .icon {
-  width: 14px;
-  height: 14px;
-}
-
-.hero-card {
-  margin-top: 14px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 24px;
-  background: var(--color-surface);
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 24px;
-  align-items: center;
-}
-
-h1 {
-  font-size: 30px;
-  color: var(--color-text);
-}
-
-.hero-card p {
-  margin-top: 10px;
-  color: var(--color-text-muted);
-  line-height: 1.6;
-}
-
-.tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 14px;
-}
-
-.tags span {
-  padding: 5px 10px;
-  border-radius: 6px;
-  background: var(--color-hover);
-  color: var(--color-text-muted);
-  font-size: 13px;
-}
-
-.hero-actions {
-  display: flex;
-  gap: 10px;
-}
-
-.outline-btn,
-.primary-btn {
-  height: 42px;
-  border-radius: 8px;
-  padding: 0 16px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  font-weight: 700;
-}
-
-.outline-btn {
-  border: 1px solid var(--color-border);
-  background: var(--color-surface);
-  color: var(--color-text);
-}
-
-.primary-btn {
-  border: 1px solid var(--color-primary);
-  background: var(--color-primary);
-  color: var(--color-on-primary);
-}
-
-.stats {
-  margin-top: 18px;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.stats article,
-.panel {
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-surface);
-  box-shadow: var(--shadow-sm);
-}
-
-.stats article {
-  padding: 18px;
-  display: grid;
-  gap: 5px;
-}
-
-.stats strong {
-  font-size: 26px;
-  color: var(--color-text);
-}
-
-.stats span {
-  color: var(--color-text-muted);
-}
-
-.content-grid {
-  margin-top: 18px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
-  gap: 18px;
-}
-
-.panel {
-  padding: 20px;
-}
-
-.section-head,
-.panel-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  margin-bottom: 14px;
-}
-
-.panel-title {
-  justify-content: flex-start;
-}
-
-h2 {
-  font-size: 21px;
-  color: var(--color-text);
-}
-
-.section-head label {
-  width: 220px;
-  height: 38px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 10px;
-  color: var(--color-text-muted);
-}
-
-.section-head input {
-  min-width: 0;
-  width: 100%;
-  border: 0;
-  outline: 0;
-  background: transparent;
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-th,
-td {
-  height: 44px;
-  border-top: 1px solid var(--color-border);
-  text-align: left;
-  color: var(--color-text);
-  font-size: 14px;
-}
-
-th {
-  color: var(--color-text-muted);
-  font-size: 13px;
-}
-
-.file-row--ready {
-  cursor: pointer;
-}
-.file-row--ready:hover td {
-  background: var(--color-hover);
-}
-
-td:first-child {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.status {
-  padding: 4px 9px;
-  border-radius: 999px;
-  background: var(--color-hover);
-  color: var(--color-text-muted);
-  font-size: 13px;
-}
-
-.status.success {
-  background: color-mix(in srgb, var(--color-success) 15%, var(--color-surface));
-  color: var(--color-success);
-}
-
-.status.active {
-  background: color-mix(in srgb, var(--color-info) 12%, var(--color-surface));
-  color: var(--color-info);
-}
-
-.status.failed {
-  background: color-mix(in srgb, var(--color-danger) 12%, var(--color-surface));
-  color: var(--color-danger);
-}
-
-.icon-btn {
-  border: 0;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  border-radius: var(--ui-hover-radius);
-  padding: 6px;
-}
-
-.icon-btn:hover {
-  background: var(--ui-hover-strong-bg);
-  color: var(--color-text);
-}
-
-.icon-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.icon-btn:disabled:hover {
-  background: transparent;
-  color: var(--color-text-muted);
-}
-
-.icon-btn.danger:hover {
-  color: var(--color-danger);
-}
-
-.text-btn {
-  height: 28px;
-  margin-right: 4px;
-  padding: 0 9px;
-  border: 1px solid var(--color-border);
-  border-radius: 7px;
-  background: transparent;
-  color: var(--color-text);
-  cursor: pointer;
-}
-
-.table-empty {
-  height: 120px;
-  display: table-cell !important;
-  color: var(--color-text-muted);
-  text-align: center;
-}
-
-.summary-panel {
-  align-self: start;
-}
-
-.summary-panel p {
-  color: var(--color-text-muted);
-  line-height: 1.7;
-}
-
-.summary-list {
-  margin-top: 16px;
-  display: grid;
-  gap: 12px;
-}
-
-.summary-list article {
-  border-top: 1px solid var(--color-border);
-  padding-top: 12px;
-}
-
-.summary-list span {
-  display: block;
-  color: var(--color-text-muted);
-  font-size: 13px;
-  margin-bottom: 5px;
-}
-
-.summary-list strong {
-  color: var(--color-text);
-  line-height: 1.5;
-}
-
-@media (max-width: 980px) {
-  .hero-card,
-  .stats,
-  .content-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .hero-actions {
-    flex-wrap: wrap;
-  }
-}
+.detail-page { min-height: 100%; padding: 30px clamp(22px, 4vw, 58px) 64px; box-sizing: border-box; background: var(--color-bg); color: var(--color-text); }
+.hero, .facts, .content-grid, .notice, .error-banner, .state-panel { max-width: 1180px; margin-left: auto; margin-right: auto; }
+.back-button { display: flex; align-items: center; gap: 6px; margin-bottom: 22px; border: 0; background: transparent; color: var(--color-text-muted); padding: 0; cursor: pointer; font: inherit; font-size: 13px; }.back-button:hover { color: var(--color-text); }
+.hero-card { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 24px; padding: 24px 58px 24px 24px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface); box-shadow: var(--shadow-sm); }
+.detail-more { position: absolute; top: 14px; right: 14px; width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 9px; background: transparent; color: var(--color-text-muted); cursor: pointer; }.detail-more:hover { background: var(--color-hover); color: var(--color-text); }
+.detail-menu { position: absolute; z-index: 30; top: 50px; right: 14px; width: 176px; padding: 6px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); box-shadow: var(--shadow-lg); }.detail-menu button { width: 100%; min-height: 38px; display: flex; align-items: center; gap: 9px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--color-text); cursor: pointer; font: inherit; text-align: left; }.detail-menu button:hover { background: var(--color-hover); }.detail-menu button.danger { color: var(--color-danger); }
+.hero-copy { min-width: 0; display: flex; align-items: flex-start; gap: 14px; }.title-icon { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 10px; background: var(--color-bg-alt); flex: 0 0 auto; }.hero-copy h1 { margin: 1px 0 7px; font-size: 28px; letter-spacing: -.03em; }.hero-copy p { margin: 0; color: var(--color-text-muted); line-height: 1.6; }.hero-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; max-width: 460px; }
+.facts { margin-top: 18px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }.facts article { min-height: 82px; padding: 16px 18px; display: grid; align-content: center; gap: 5px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface); box-shadow: var(--shadow-sm); }.facts strong { max-width: 95%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 24px; }.facts span { color: var(--color-text-muted); font-size: 13px; }
+.content-grid { margin-top: 18px; display: grid; grid-template-columns: minmax(0, 1fr) 320px; align-items: start; gap: 18px; }.panel { min-width: 0; padding: 20px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface); box-shadow: var(--shadow-sm); }.panel-header { margin-bottom: 13px; display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; }.panel-header h2 { margin: 0 0 5px; font-size: 18px; }.panel-header p { margin: 0; color: var(--color-text-muted); font-size: 12px; }.search-field { min-height: 38px; width: 210px; display: flex; align-items: center; gap: 7px; padding: 0 10px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); color: var(--color-text-muted); }.search-field input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--color-text); font: inherit; font-size: 12px; }
+.table-wrap { border: 1px solid var(--color-border); border-radius: 13px; overflow: hidden; background: var(--color-surface); }.table-wrap table { width: 100%; border-collapse: collapse; table-layout: fixed; }.table-wrap th { padding: 11px 14px; border-bottom: 1px solid var(--color-border); color: var(--color-text-muted); font-size: 11px; text-align: left; }.table-wrap td { padding: 12px 14px; border-bottom: 1px solid var(--color-border); color: var(--color-text-muted); font-size: 12px; }.table-wrap tr:last-child td { border-bottom: 0; }.table-wrap th:first-child { width: 30%; }.table-wrap th:nth-child(2) { width: 14%; }.table-wrap th:nth-child(3) { width: 11%; }.table-wrap th:nth-child(4) { width: 9%; }.table-wrap th:nth-child(5) { width: 17%; }.table-wrap th:last-child { width: 120px; }
+.file-name { min-width: 0; display: flex; align-items: center; gap: 10px; color: var(--color-text); }.file-name > span { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; background: var(--color-bg-alt); }.file-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.status-chip { display: inline-flex; min-height: 23px; align-items: center; border-radius: 99px; padding: 0 8px; white-space: nowrap; font-size: 11px; }.status-chip.is-success { background: color-mix(in srgb, var(--color-success) 12%, transparent); color: var(--color-success); }.status-chip.is-pending, .status-chip.is-neutral { background: var(--color-bg-alt); color: var(--color-text-muted); }.status-chip.is-error { background: color-mix(in srgb, var(--color-danger) 10%, transparent); color: var(--color-danger); }
+.row-actions { display: flex; justify-content: flex-end; gap: 4px; }.row-actions button { min-width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--color-text); padding: 0 7px; cursor: pointer; font: inherit; font-size: 12px; }.row-actions button:hover:not(:disabled) { background: var(--color-hover); }.row-actions button:disabled { opacity: .4; cursor: not-allowed; }.row-actions button.danger { color: var(--color-danger); }
+.empty-panel, .state-panel { min-height: 360px; display: grid; place-items: center; align-content: center; gap: 9px; color: var(--color-text-muted); text-align: center; }.empty-panel strong, .state-panel strong { color: var(--color-text); }.empty-panel span, .state-panel span { font-size: 13px; }.empty-panel > div { display: flex; gap: 8px; margin-top: 8px; }.load-more { display: flex; justify-content: center; margin-top: 18px; }
+.summary-title { display: flex; align-items: center; gap: 9px; }.summary-title h2 { margin: 0; font-size: 18px; }.summary-panel > p { margin: 14px 0 0; color: var(--color-text-muted); line-height: 1.7; }.summary-list { margin-top: 18px; display: grid; gap: 14px; }.summary-list article { padding-top: 13px; border-top: 1px solid var(--color-border); }.summary-list span { display: block; margin-bottom: 6px; color: var(--color-text-muted); font-size: 12px; }.summary-list strong { color: var(--color-text); font-size: 13px; line-height: 1.5; }
+.notice, .error-banner { min-height: 42px; box-sizing: border-box; margin-top: 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 12px; border-radius: 10px; font-size: 13px; }.notice { background: color-mix(in srgb, var(--color-success) 9%, var(--color-surface)); }.notice button { border: 0; background: transparent; color: inherit; font-size: 19px; cursor: pointer; }.error-banner { background: color-mix(in srgb, var(--color-danger) 9%, var(--color-surface)); color: var(--color-danger); }.error-banner button { display: flex; align-items: center; gap: 5px; border: 0; background: transparent; color: inherit; cursor: pointer; }
+.spin { animation: spin .85s linear infinite; }@keyframes spin { to { transform: rotate(360deg); } }
+@media (max-width: 980px) { .hero-card, .content-grid { grid-template-columns: 1fr; }.hero-actions { justify-content: flex-start; max-width: none; }.facts { grid-template-columns: repeat(3, 1fr); }.panel-header { align-items: stretch; flex-direction: column; }.search-field { width: 100%; box-sizing: border-box; }.table-wrap th:nth-child(3), .table-wrap td:nth-child(3), .table-wrap th:nth-child(4), .table-wrap td:nth-child(4), .table-wrap th:nth-child(5), .table-wrap td:nth-child(5) { display: none; }.table-wrap th:first-child { width: auto; }.detail-page { padding-left: 16px; padding-right: 16px; } }
+@media (max-width: 640px) { .hero-copy { flex-direction: column; }.facts { grid-template-columns: 1fr; }.hero-actions { display: grid; grid-template-columns: 1fr; }.table-wrap th:nth-child(2), .table-wrap td:nth-child(2) { display: none; } }
 </style>

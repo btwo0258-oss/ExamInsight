@@ -2,11 +2,15 @@ import type { EntityId } from "./common";
 
 export type ConversationType = "general" | "learning-setup" | "learning-tutor";
 
+// V2 general chat uses external string IDs while the temporarily retained learning flow uses local numbers.
+export type ConversationId = string | number;
+export type ConversationKnowledgeBaseId = string | number;
+
 export type ConversationDto = {
-  id: EntityId;
+  id: ConversationId;
   title: string | null;
-  kbId?: EntityId | null;
-  knowledgeBaseId?: EntityId | null;
+  kbId?: ConversationKnowledgeBaseId | null;
+  knowledgeBaseId?: ConversationKnowledgeBaseId | null;
   kbName?: string | null;
   isPinned: boolean;
   messageCount: number;
@@ -21,8 +25,8 @@ export type ConversationDto = {
 
 export type CreateConversationRequest = {
   title?: string;
-  kbId?: EntityId | null;
-  knowledgeBaseId?: EntityId | null;
+  kbId?: ConversationKnowledgeBaseId | null;
+  knowledgeBaseId?: ConversationKnowledgeBaseId | null;
   projectId?: EntityId | null;
   learningProjectName?: string;
   projectName?: string;
@@ -32,7 +36,7 @@ export type CreateConversationRequest = {
 export type UpdateConversationRequest = {
   title?: string;
   isPinned?: boolean;
-  knowledgeBaseId?: EntityId | null;
+  knowledgeBaseId?: ConversationKnowledgeBaseId | null;
   projectId?: EntityId | null;
   learningProjectName?: string;
   projectName?: string;

@@ -91,9 +91,6 @@ public class XfyunEmbeddingClient {
             String encodedVector = root.path("payload").path("feature").path("text").asText();
             if (encodedVector.isBlank()) throw new IllegalStateException("讯飞向量服务未返回向量数据");
             List<Double> vector = decodeVector(encodedVector);
-            if (vector.size() > config.getEmbeddingDimensions()) {
-                vector = new ArrayList<>(vector.subList(0, config.getEmbeddingDimensions()));
-            }
             if (vector.size() != config.getEmbeddingDimensions()) {
                 throw new IllegalStateException("讯飞向量维度异常，期望 "
                         + config.getEmbeddingDimensions() + "，实际 " + vector.size());

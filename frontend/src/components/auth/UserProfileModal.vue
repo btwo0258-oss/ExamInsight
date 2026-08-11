@@ -125,7 +125,7 @@ async function deleteAccount() {
               autocomplete="nickname"
               placeholder="最多可输入20个字"
             />
-            <AppButton type="submit" :loading="actionBusy">保存昵称</AppButton>
+            <AppButton type="submit" :loading="actionBusy">确认昵称</AppButton>
           </span>
         </label>
         <label class="field">

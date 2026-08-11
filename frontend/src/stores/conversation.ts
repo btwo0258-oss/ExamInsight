@@ -2,6 +2,7 @@ import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 import { useRoute, useRouter } from "vue-router";
 import * as conversationApi from "@/api/conversation";
+import type { ConversationId, ConversationKnowledgeBaseId } from "@/types/contracts/conversation";
 
 export const useConversationStore = defineStore("conversation", () => {
   const router = useRouter();
@@ -10,9 +11,9 @@ export const useConversationStore = defineStore("conversation", () => {
   const list = ref<conversationApi.Conversation[]>([]);
   const isInitialized = ref(false);
 
-  const currentId = computed<number | null>(() => {
+  const currentId = computed<ConversationId | null>(() => {
     const param = route.params.id;
-    if (typeof param === "string" && param) return Number(param);
+    if (typeof param === "string" && param) return param;
     return null;
   });
 
@@ -34,7 +35,7 @@ export const useConversationStore = defineStore("conversation", () => {
   }
 
   function upsertLocal(c: conversationApi.Conversation) {
-    const idx = list.value.findIndex((x) => x.id === c.id);
+    const idx = list.value.findIndex((x) => String(x.id) === String(c.id));
     if (idx !== -1) {
       list.value[idx] = c;
     } else {
@@ -42,8 +43,8 @@ export const useConversationStore = defineStore("conversation", () => {
     }
   }
 
-  function removeLocal(id: number) {
-    list.value = list.value.filter((x) => x.id !== id);
+  function removeLocal(id: ConversationId) {
+    list.value = list.value.filter((x) => String(x.id) !== String(id));
   }
 
   async function fetchList() {
@@ -63,7 +64,7 @@ export const useConversationStore = defineStore("conversation", () => {
     }
   }
 
-  async function create(payload?: { knowledgeBaseId?: number | null; title?: string; navigate?: boolean; projectId?: number | null; projectName?: string; conversationType?: conversationApi.Conversation['conversationType']; localOnly?: boolean }) {
+  async function create(payload?: { knowledgeBaseId?: ConversationKnowledgeBaseId | null; title?: string; navigate?: boolean; projectId?: number | null; projectName?: string; conversationType?: conversationApi.Conversation['conversationType']; localOnly?: boolean }) {
     const shouldNavigate = payload?.navigate !== false;
     const apiPayload = {
       knowledgeBaseId: payload?.knowledgeBaseId,
@@ -72,43 +73,56 @@ export const useConversationStore = defineStore("conversation", () => {
       projectName: payload?.projectName,
       conversationType: payload?.conversationType ?? 'general',
     };
-    const created = await conversationApi.createConversation(apiPayload);
+    const created = payload?.localOnly
+      ? {
+          id: Date.now(),
+          title: payload.title || "新对话",
+          knowledgeBaseId: payload.knowledgeBaseId ?? null,
+          isPinned: false,
+          messageCount: 0,
+          updateTime: nowMs(),
+          createTime: nowMs(),
+          projectId: payload.projectId ?? null,
+          projectName: payload.projectName,
+          conversationType: payload.conversationType ?? "general",
+        } satisfies conversationApi.Conversation
+      : await conversationApi.createConversation(apiPayload);
     upsertLocal(created);
     if (shouldNavigate) await router.push(`/chat/${created.id}`);
     return created.id;
   }
 
-  async function rename(id: number, nextTitle: string) {
-    await conversationApi.updateConversation(id, { title: nextTitle });
-    const existing = list.value.find((x) => x.id === id);
+  async function rename(id: ConversationId, nextTitle: string) {
+    const existing = list.value.find((x) => String(x.id) === String(id));
+    if (existing?.conversationType === "general") {
+      await conversationApi.updateConversation(id, { title: nextTitle });
+    }
     if (!existing) return;
     upsertLocal({ ...existing, title: nextTitle, updateTime: nowMs() });
   }
 
-  function setLocalTitle(id: number, nextTitle: string) {
-    const existing = list.value.find((item) => item.id === id);
+  function setLocalTitle(id: ConversationId, nextTitle: string) {
+    const existing = list.value.find((item) => String(item.id) === String(id));
     if (!existing || !nextTitle.trim()) return;
     upsertLocal({ ...existing, title: nextTitle.trim(), updateTime: nowMs() });
   }
 
-  async function moveToKnowledgeBase(id: number, knowledgeBaseId: number | null) {
-    const existing = list.value.find((x) => x.id === id);
+  async function moveToKnowledgeBase(id: ConversationId, knowledgeBaseId: ConversationKnowledgeBaseId | null) {
+    const existing = list.value.find((x) => String(x.id) === String(id));
     if (!existing) return;
 
-    await conversationApi.updateConversation(id, { knowledgeBaseId });
+    if (existing.conversationType === "general") {
+      await conversationApi.updateConversation(id, { knowledgeBaseId });
+    }
     upsertLocal({ ...existing, knowledgeBaseId, updateTime: nowMs(), title: existing.title });
   }
 
-  function linkLearningProject(id: number, projectId: number, projectName: string, conversationType?: conversationApi.Conversation['conversationType']) {
-    const existing = list.value.find((item) => item.id === id);
+  function linkLearningProject(id: ConversationId, projectId: number, projectName: string, conversationType?: conversationApi.Conversation['conversationType']) {
+    const existing = list.value.find((item) => String(item.id) === String(id));
     if (!existing) return;
     if (existing.projectId === projectId && existing.projectName === projectName && (!conversationType || existing.conversationType === conversationType)) return;
     const next = { ...existing, projectId, projectName, conversationType: conversationType ?? existing.conversationType };
     upsertLocal(next);
-    void conversationApi.updateConversation(id, { projectId, projectName, conversationType: next.conversationType })
-      .catch((error) => {
-        errorMessage.value = error instanceof Error ? error.message : '关联学习项目失败';
-      });
   }
 
   function restoreLearningConversation(
@@ -134,19 +148,21 @@ export const useConversationStore = defineStore("conversation", () => {
     });
   }
 
-  async function remove(id: number) {
-    await conversationApi.deleteConversation(id);
+  async function remove(id: ConversationId) {
+    const existing = list.value.find((item) => String(item.id) === String(id));
+    if (existing?.conversationType === "general") {
+      await conversationApi.deleteConversation(id);
+    }
     removeLocal(id);
-    if (currentId.value === id) {
+    if (String(currentId.value) === String(id)) {
       await router.push("/chat");
     }
   }
 
-  async function togglePin(id: number) {
-    const existing = list.value.find((x) => x.id === id);
+  async function togglePin(id: ConversationId) {
+    const existing = list.value.find((x) => String(x.id) === String(id));
     if (!existing) return;
     const isPinned = !existing.isPinned;
-    await conversationApi.updateConversation(id, { isPinned });
     existing.isPinned = isPinned;
   }
 
@@ -157,7 +173,7 @@ export const useConversationStore = defineStore("conversation", () => {
     isLoading.value = false;
   }
 
-  async function open(id: number) {
+  async function open(id: ConversationId) {
     await router.push(`/chat/${id}`);
   }
 

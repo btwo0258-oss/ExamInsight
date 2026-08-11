@@ -2,9 +2,10 @@
 import { computed, ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useMessageStore } from '@/stores/message'
 import type { ChatMessage } from '@/stores/message'
+import type { ConversationId } from '@/types/contracts/conversation'
 
 type Props = { 
-  conversationId: number | null 
+  conversationId: ConversationId | null 
   containerRef?: HTMLElement | null
 }
 const props = defineProps<Props>()

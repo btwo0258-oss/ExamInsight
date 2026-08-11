@@ -2,10 +2,11 @@
 import { computed } from 'vue'
 import ConversationItem from './ConversationItem.vue'
 import type { Conversation } from '@/api/conversation'
+import type { ConversationId } from '@/types/contracts/conversation'
 
 type Props = {
   items: Conversation[]
-  activeId: number | null
+  activeId: ConversationId | null
   showDate?: boolean
 }
 
@@ -13,9 +14,9 @@ const props = withDefaults(defineProps<Props>(), {
   showDate: true
 })
 const emit = defineEmits<{
-  open: [id: number]
-  rename: [id: number, title: string]
-  remove: [id: number]
+  open: [id: ConversationId]
+  rename: [id: ConversationId, title: string]
+  remove: [id: ConversationId]
 }>()
 
 const groupedList = computed(() => {

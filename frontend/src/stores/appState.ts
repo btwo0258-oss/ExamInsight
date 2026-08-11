@@ -1,7 +1,7 @@
 import { ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 
-type AppState = 'chat' | 'knowledge' | 'exam-analysis' | 'resource' | 'learning'
+type AppState = 'chat' | 'knowledge' | 'exam-analysis' | 'learning'
 
 export const useAppState = defineStore('appState', () => {
   const currentMode = ref<AppState>('chat')

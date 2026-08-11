@@ -1,40 +1,69 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
+import AppButton from "@/components/common/AppButton.vue";
 import AppIcon from "@/components/common/AppIcon.vue";
+import AppModal from "@/components/common/AppModal.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import ResourceTypeIcon from "@/components/common/ResourceTypeIcon.vue";
 import StudentShell from "@/components/layout/StudentShell.vue";
 import UploadMaterialModal from "@/components/library/UploadMaterialModal.vue";
-import LibraryKnowledgeCreateModal from "@/components/library/LibraryKnowledgeCreateModal.vue";
-import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
-import { useLibraryResourceStore } from "@/stores/libraryResource";
-import { useKnowledgeBaseStore } from "@/stores/knowledgeBase";
-import type { LibraryResource } from "@/stores/libraryResource";
-import type { KnowledgeBase } from "@/api/knowledgeBase";
-import type { ResourceFileType, ResourceSourceType } from "@/types/contracts/library";
-import { presentationRepository } from "@/repositories/presentation";
-import { spreadsheetRepository } from "@/repositories/spreadsheet";
-import { resourcePreviewRoute } from "@/utils/resourcePreview";
-import { resourceVisualTypeFromFile } from "@/utils/resourceVisual";
+import V2AssetThumbnail from "@/components/library/V2AssetThumbnail.vue";
+import V2KnowledgeBaseModal from "@/components/library/V2KnowledgeBaseModal.vue";
+import {
+  addAssetToKnowledgeBase,
+  fetchAssetContent,
+  getAssetPurgeJob,
+} from "@/api/assetLibraryV2";
+import { useAssetLibraryV2Store } from "@/stores/assetLibraryV2";
+import type {
+  KnowledgeBase as V2KnowledgeBase,
+  LibraryAsset as V2LibraryAsset,
+} from "@/types/contracts/assetLibraryV2";
 import { downloadBlob } from "@/utils/download";
 
-type LibraryFilter = "all" | "knowledge" | "mindmap" | "image" | "file";
+type LibraryFilter = "all" | "knowledge" | "image" | "file";
+type LibraryLocation = "library" | "trash";
 type ViewMode = "grid" | "list";
-type AdvancedFileType = Extract<
-  ResourceFileType,
-  "image" | "document" | "spreadsheet" | "presentation" | "pdf"
->;
+type SourceFilter = "uploaded" | "generated";
+type AdvancedFileType = "image" | "document" | "spreadsheet" | "presentation" | "pdf";
+
+type KnowledgeItem = {
+  id: string;
+  name: string;
+  description: string | null;
+  updateTime: string;
+  assetCount: number;
+  raw: V2KnowledgeBase;
+};
+
+type LibraryFile = {
+  resourceId: string;
+  name: string;
+  fileType: AdvancedFileType | "mindmap";
+  format: string;
+  sourceType: SourceFilter;
+  sizeBytes: number;
+  mimeType: string;
+  updatedAt: string;
+  raw: V2LibraryAsset;
+};
+
 type LibraryAsset =
-  | { kind: "knowledge"; id: string; source: KnowledgeBase }
-  | { kind: "file"; id: string; source: LibraryResource };
+  | { kind: "knowledge"; id: string; source: KnowledgeItem }
+  | { kind: "file"; id: string; source: LibraryFile };
 
 const router = useRouter();
-const libraryResourceStore = useLibraryResourceStore();
-const knowledgeBaseStore = useKnowledgeBaseStore();
+const store = useAssetLibraryV2Store();
+
 const uploadOpen = ref(false);
 const newKnowledgeOpen = ref(false);
+const editingKnowledgeBase = ref<V2KnowledgeBase | null>(null);
+const renameAssetTarget = ref<V2LibraryAsset | null>(null);
+const renameValue = ref("");
 const newMenuOpen = ref(false);
 const activeFilter = ref<LibraryFilter>("all");
+const libraryLocation = ref<LibraryLocation>("library");
 const viewMode = ref<ViewMode>(
   localStorage.getItem("examinsight.ui.library-view") === "list" ? "list" : "grid",
 );
@@ -43,25 +72,30 @@ const selectedIds = ref<string[]>([]);
 const knowledgeMenuId = ref<string | null>(null);
 const fileMenuId = ref<string | null>(null);
 const filterMenuOpen = ref(false);
-const sourceFilter = ref<ResourceSourceType | null>(null);
+const sourceFilter = ref<SourceFilter | null>(null);
 const fileTypeFilter = ref<AdvancedFileType | null>(null);
 const moveModalOpen = ref(false);
 const moveResourceIds = ref<string[]>([]);
-const moveTargetKnowledgeBaseId = ref<number | null>(null);
+const moveTargetKnowledgeBaseId = ref<string | null>(null);
 const deleteTargets = ref<LibraryAsset[]>([]);
+const purgeTargets = ref<LibraryAsset[]>([]);
 const actionError = ref("");
+const notice = ref("");
+const purgingAssetIds = ref<string[]>([]);
+let refreshTimer: number | undefined;
 
 const filters: Array<{ label: string; value: LibraryFilter }> = [
   { label: "全部", value: "all" },
   { label: "知识库", value: "knowledge" },
-  { label: "思维导图", value: "mindmap" },
   { label: "图片", value: "image" },
   { label: "文件", value: "file" },
 ];
-const sourceFilterOptions: Array<{ value: ResourceSourceType; label: string; icon: string }> = [
+
+const sourceFilterOptions: Array<{ value: SourceFilter; label: string; icon: string }> = [
   { value: "uploaded", label: "已上传", icon: "upload-cloud" },
   { value: "generated", label: "已生成", icon: "sparkle" },
 ];
+
 const fileTypeFilterOptions: Array<{ value: AdvancedFileType; label: string; icon: string }> = [
   { value: "image", label: "图片", icon: "image" },
   { value: "document", label: "文档", icon: "file" },
@@ -70,40 +104,88 @@ const fileTypeFilterOptions: Array<{ value: AdvancedFileType; label: string; ico
   { value: "pdf", label: "PDF", icon: "file" },
 ];
 
+const isTrashView = computed(() => libraryLocation.value === "trash");
+
+function extension(name: string) {
+  return name.split(".").pop()?.toLocaleLowerCase() || "";
+}
+
+function fileType(asset: V2LibraryAsset): LibraryFile["fileType"] {
+  const ext = extension(asset.name);
+  const mime = asset.version?.mimeType?.toLocaleLowerCase() || "";
+  if (asset.assetType === "MINDMAP") return "mindmap";
+  if (mime.startsWith("image/") || ["jpg", "jpeg", "png", "webp"].includes(ext)) return "image";
+  if (mime === "application/pdf" || ext === "pdf") return "pdf";
+  if (["xlsx", "xls", "csv"].includes(ext)) return "spreadsheet";
+  if (["pptx", "ppt"].includes(ext)) return "presentation";
+  return "document";
+}
+
+function toKnowledgeItem(item: V2KnowledgeBase): KnowledgeItem {
+  return {
+    id: item.knowledgeBaseId,
+    name: item.name,
+    description: item.description,
+    updateTime: item.updatedAt,
+    assetCount: item.assetCount,
+    raw: item,
+  };
+}
+
+function toLibraryFile(asset: V2LibraryAsset): LibraryFile {
+  const ext = extension(asset.name);
+  return {
+    resourceId: asset.assetId,
+    name: asset.name,
+    fileType: fileType(asset),
+    format: ext ? ext.toLocaleUpperCase() : "文件",
+    sourceType: asset.sourceType === "AI_GENERATED" ? "generated" : "uploaded",
+    sizeBytes: asset.version?.sizeBytes || 0,
+    mimeType: asset.version?.mimeType || "",
+    updatedAt: asset.updatedAt,
+    raw: asset,
+  };
+}
+
+const sourceKnowledgeBases = computed(() =>
+  (isTrashView.value ? store.trashedKnowledgeBases : store.knowledgeBases).map(toKnowledgeItem),
+);
+const sourceFiles = computed(() =>
+  (isTrashView.value ? store.trashedAssets : store.assets).map(toLibraryFile),
+);
+
 const knowledgeAssets = computed<LibraryAsset[]>(() =>
-  knowledgeBaseStore.list.map((source) => ({
+  sourceKnowledgeBases.value.map((source) => ({
     kind: "knowledge",
-    id: `knowledge-${source.id}`,
+    id: "knowledge-" + source.id,
     source,
   })),
 );
 
 const fileAssets = computed<LibraryAsset[]>(() =>
-  libraryResourceStore.resources.map((source) => ({
+  sourceFiles.value.map((source) => ({
     kind: "file",
-    id: `file-${source.resourceId}`,
+    id: "file-" + source.resourceId,
     source,
   })),
 );
 
 const visibleAssets = computed(() => {
-  let assets: LibraryAsset[] = [];
-  if (activeFilter.value === "knowledge") assets = knowledgeAssets.value;
-  if (activeFilter.value === "mindmap") {
-    assets = fileAssets.value.filter(
-      (asset) => asset.kind === "file" && asset.source.fileType === "mindmap",
-    );
+  let assets: LibraryAsset[];
+  if (activeFilter.value === "knowledge") {
+    assets = knowledgeAssets.value;
   } else if (activeFilter.value === "image") {
     assets = fileAssets.value.filter(
       (asset) => asset.kind === "file" && asset.source.fileType === "image",
     );
   } else if (activeFilter.value === "file") {
     assets = fileAssets.value.filter(
-      (asset) => asset.kind === "file" && !["image", "mindmap"].includes(asset.source.fileType),
+      (asset) => asset.kind === "file" && asset.source.fileType !== "image",
     );
-  } else if (activeFilter.value !== "knowledge") {
+  } else {
     assets = [...knowledgeAssets.value, ...fileAssets.value];
   }
+
   if (sourceFilter.value || fileTypeFilter.value) {
     assets = assets.filter(
       (asset) =>
@@ -112,37 +194,50 @@ const visibleAssets = computed(() => {
         (!fileTypeFilter.value || asset.source.fileType === fileTypeFilter.value),
     );
   }
+
   const query = searchQuery.value.trim().toLocaleLowerCase();
   if (!query) return assets;
   return assets.filter((asset) => {
-    const text =
-      asset.kind === "knowledge"
-        ? `${asset.source.name} ${asset.source.description || ""}`
-        : `${asset.source.name} ${asset.source.format} ${sourceLabel(asset.source)}`;
+    const text = asset.kind === "knowledge"
+      ? asset.source.name + " " + (asset.source.description || "")
+      : asset.source.name + " " + asset.source.format + " " + sourceLabel(asset.source);
     return text.toLocaleLowerCase().includes(query);
   });
 });
+const visibleKnowledgeAssets = computed(() => visibleAssets.value.filter((asset) => asset.kind === "knowledge"));
+const visibleFileAssets = computed(() => visibleAssets.value.filter((asset) => asset.kind === "file"));
 
-const pageError = computed(
-  () =>
-    actionError.value || knowledgeBaseStore.errorMessage || libraryResourceStore.errorMessage || "",
-);
-const pageLoading = computed(() => knowledgeBaseStore.isLoading || libraryResourceStore.isLoading);
+const pageError = computed(() => actionError.value || store.error || "");
+const pageLoading = computed(() => store.loading);
 const selectedAssets = computed(() =>
   [...knowledgeAssets.value, ...fileAssets.value].filter((asset) =>
     selectedIds.value.includes(asset.id),
   ),
 );
-
 const firstFileAfterKnowledgeId = computed(() => {
   if (!visibleAssets.value.some((asset) => asset.kind === "knowledge")) return null;
-  return visibleAssets.value.find((asset) => asset.kind === "file")?.id ?? null;
+  return visibleAssets.value.find((asset) => asset.kind === "file")?.id || null;
 });
-
 const selectedCount = computed(() => selectedIds.value.length);
 const hasSelection = computed(() => selectedCount.value > 0);
+const allVisibleSelected = computed(() =>
+  visibleAssets.value.length > 0
+  && visibleAssets.value.every((asset) => selectedIds.value.includes(asset.id)),
+);
+const someVisibleSelected = computed(() =>
+  visibleAssets.value.some((asset) => selectedIds.value.includes(asset.id)),
+);
 const activeAdvancedFilterCount = computed(
   () => Number(Boolean(sourceFilter.value)) + Number(Boolean(fileTypeFilter.value)),
+);
+const activeFilterCount = computed(
+  () => activeAdvancedFilterCount.value + Number(isTrashView.value),
+);
+const availableKnowledgeBases = computed(() => store.knowledgeBases.map(toKnowledgeItem));
+const hasMore = computed(() =>
+  isTrashView.value
+    ? Boolean(store.trashAssetCursor || store.trashKnowledgeBaseCursor)
+    : Boolean(store.assetCursor || store.knowledgeBaseCursor),
 );
 
 function openNewMenu() {
@@ -155,19 +250,33 @@ function openUpload() {
 }
 
 function openNewKnowledge() {
+  editingKnowledgeBase.value = null;
   newKnowledgeOpen.value = true;
   newMenuOpen.value = false;
 }
 
-function handleKnowledgeCreated() {
-  activeFilter.value = "knowledge";
+function handleKnowledgeSaved() {
+  activeFilter.value = "all";
   newKnowledgeOpen.value = false;
+  notice.value = "知识库已保存。";
+}
+
+function handleUploaded() {
+  notice.value = "资料已上传，后台会继续安全检查、解析和索引。";
+  void store.loadAssets("library");
 }
 
 function toggleSelection(id: string) {
   selectedIds.value = selectedIds.value.includes(id)
     ? selectedIds.value.filter((item) => item !== id)
     : [...selectedIds.value, id];
+}
+
+function toggleAllVisible() {
+  const visibleIds = new Set(visibleAssets.value.map((asset) => asset.id));
+  selectedIds.value = allVisibleSelected.value
+    ? selectedIds.value.filter((id) => !visibleIds.has(id))
+    : [...new Set([...selectedIds.value, ...visibleIds])];
 }
 
 function clearSelection() {
@@ -180,6 +289,7 @@ function isSelected(id: string) {
 
 function toggleKnowledgeMenu(id: string) {
   knowledgeMenuId.value = knowledgeMenuId.value === id ? null : id;
+  fileMenuId.value = null;
 }
 
 function closeKnowledgeMenu() {
@@ -188,6 +298,7 @@ function closeKnowledgeMenu() {
 
 function toggleFileMenu(id: string) {
   fileMenuId.value = fileMenuId.value === id ? null : id;
+  knowledgeMenuId.value = null;
 }
 
 function closeFileMenu() {
@@ -195,11 +306,9 @@ function closeFileMenu() {
 }
 
 function openMoveModal(resourceIds?: string[]) {
-  const ids =
-    resourceIds ??
-    selectedAssets.value
-      .filter((asset) => asset.kind === "file")
-      .map((asset) => asset.source.resourceId);
+  const ids = resourceIds || selectedAssets.value
+    .filter((asset) => asset.kind === "file")
+    .map((asset) => asset.source.resourceId);
   if (!ids.length) return;
   moveResourceIds.value = ids;
   moveTargetKnowledgeBaseId.value = null;
@@ -209,29 +318,49 @@ function openMoveModal(resourceIds?: string[]) {
 
 function openKnowledgeFromMove() {
   moveModalOpen.value = false;
-  newKnowledgeOpen.value = true;
+  openNewKnowledge();
 }
 
-function fileSize(file: LibraryResource) {
+function fileSize(file: LibraryFile) {
   if (!file.sizeBytes) return "—";
-  if (file.sizeBytes < 1024 * 1024) return `${Math.max(1, Math.round(file.sizeBytes / 1024))} KB`;
-  return `${(file.sizeBytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function fileVisualType(file: LibraryResource) {
-  return resourceVisualTypeFromFile(file.name, file.mimeType, file.fileType);
-}
-
-function sourceLabel(file: LibraryResource) {
-  if (file.sourceType === "uploaded") {
-    if (file.origin === "learning") return "智能学习上传";
-    if (file.origin === "chat") return "聊天上传";
-    return "资料库上传";
+  if (file.sizeBytes < 1024 * 1024) {
+    return Math.max(1, Math.round(file.sizeBytes / 1024)) + " KB";
   }
-  return file.origin === "learning" ? "智能学习生成" : "AI 生成";
+  return (file.sizeBytes / 1024 / 1024).toFixed(1) + " MB";
 }
 
-function toggleSourceFilter(value: ResourceSourceType) {
+function fileVisualType(file: LibraryFile) {
+  return file.fileType;
+}
+
+function sourceLabel(file: LibraryFile) {
+  return file.sourceType === "generated" ? "AI 生成" : "资料库上传";
+}
+
+function assetStatus(asset: V2LibraryAsset) {
+  const version = asset.version;
+  if (!version || version.status === "QUARANTINED") return { label: "安全检查中", tone: "pending" };
+  if (version.status === "PROCESSING") return { label: "解析中", tone: "pending" };
+  if (version.status === "REJECTED") return { label: "安全检查未通过", tone: "error" };
+  if (version.status === "WITHDRAWN") return { label: "已撤回", tone: "neutral" };
+  if (version.status === "FAILED") {
+    return fileType(asset) === "image"
+      ? { label: "识别失败", tone: "error" }
+      : { label: "解析失败", tone: "error" };
+  }
+  if (["READY", "KEYWORD_ONLY"].includes(version.indexStatus ?? "")) {
+    return { label: "", tone: "neutral" };
+  }
+  if (version.indexStatus === "EMPTY") return { label: "无可索引文本", tone: "neutral" };
+  if (version.indexStatus === "DEGRADED") return { label: "部分索引失败", tone: "error" };
+  return { label: "向量化中", tone: "pending" };
+}
+
+function isReadable(asset: V2LibraryAsset) {
+  return ["PROCESSING", "READY", "FAILED"].includes(asset.version?.status ?? "");
+}
+
+function toggleSourceFilter(value: SourceFilter) {
   sourceFilter.value = sourceFilter.value === value ? null : value;
 }
 
@@ -239,65 +368,114 @@ function toggleFileTypeFilter(value: AdvancedFileType) {
   fileTypeFilter.value = fileTypeFilter.value === value ? null : value;
 }
 
-function presentationId(file: LibraryResource) {
-  return file.externalKey?.startsWith("presentation:")
-    ? file.externalKey.slice("presentation:".length)
-    : "";
-}
-
-function spreadsheetId(file: LibraryResource) {
-  return file.externalKey?.startsWith("spreadsheet:")
-    ? file.externalKey.slice("spreadsheet:".length)
-    : "";
-}
-
 function openAsset(asset: LibraryAsset) {
+  if (isTrashView.value) return;
   if (asset.kind === "knowledge") {
-    void router.push(`/library/${asset.source.id}`);
+    void router.push("/library/" + asset.source.id);
     return;
   }
-  void router.push(resourcePreviewRoute(asset.source.resourceId, "/library", "library"));
+  if (isReadable(asset.source.raw)) {
+    void router.push({
+      path: `/resources/${asset.source.resourceId}/preview`,
+      query: { source: "library-v2", returnTo: "/library" },
+    });
+  }
 }
 
-function startLearning(knowledgeBaseId: number) {
+function startLearning(knowledgeBaseId: string) {
   closeKnowledgeMenu();
-  router.push({ path: "/learning/new", query: { knowledgeBaseId } });
+  void router.push({ path: "/learning/new", query: { knowledgeBaseId } });
+}
+
+function startChatWithSelection() {
+  actionError.value = "";
+  const knowledgeBases = selectedAssets.value.filter((asset) => asset.kind === "knowledge");
+  const files = selectedAssets.value.filter((asset) => asset.kind === "file");
+  if (knowledgeBases.length > 1) {
+    actionError.value = "一次对话最多关联 1 个知识库。";
+    return;
+  }
+  if (files.length > 20) {
+    actionError.value = "一次对话最多直接关联 20 个资料。";
+    return;
+  }
+  const unready = files.find((asset) => asset.kind === "file" && !isReadable(asset.source.raw));
+  if (unready) {
+    actionError.value = `“${assetName(unready)}”仍在处理中，请完成后再开始聊天。`;
+    return;
+  }
+  const knowledgeBaseId = knowledgeBases[0]?.kind === "knowledge"
+    ? knowledgeBases[0].source.id
+    : undefined;
+  const sourceAssetIds = files
+    .filter((asset): asset is Extract<LibraryAsset, { kind: "file" }> => asset.kind === "file")
+    .map((asset) => asset.source.resourceId)
+    .join(",");
+  void router.push({
+    path: "/chat",
+    query: {
+      knowledgeBaseId,
+      sourceAssetIds: sourceAssetIds || undefined,
+    },
+  });
 }
 
 async function loadData() {
   actionError.value = "";
   try {
-    await Promise.all([knowledgeBaseStore.fetchList(true), libraryResourceStore.fetchList(undefined, true)]);
+    await store.refresh(isTrashView.value ? "trash" : "library");
   } catch {
-    // Store error messages are rendered by the page.
+    // Store error is rendered by the page.
   }
 }
 
-async function renameKnowledge(item: KnowledgeBase) {
+async function loadMore() {
+  actionError.value = "";
+  try {
+    if (isTrashView.value) {
+      await Promise.all([
+        store.trashAssetCursor ? store.loadAssets("trash", true) : Promise.resolve(),
+        store.trashKnowledgeBaseCursor ? store.loadKnowledgeBases("trash", true) : Promise.resolve(),
+      ]);
+    } else {
+      await Promise.all([
+        store.assetCursor ? store.loadAssets("library", true) : Promise.resolve(),
+        store.knowledgeBaseCursor ? store.loadKnowledgeBases("library", true) : Promise.resolve(),
+      ]);
+    }
+  } catch (error) {
+    actionError.value = error instanceof Error ? error.message : "加载更多失败";
+  }
+}
+
+function renameKnowledge(item: KnowledgeItem) {
   closeKnowledgeMenu();
-  const name = window.prompt("输入新的知识库名称", item.name)?.trim();
-  if (!name || name === item.name) return;
-  try {
-    await knowledgeBaseStore.update({ ...item, name });
-  } catch (error) {
-    actionError.value = error instanceof Error ? error.message : "重命名失败";
-  }
+  editingKnowledgeBase.value = item.raw;
+  newKnowledgeOpen.value = true;
 }
 
-async function renameFile(file: LibraryResource) {
+function renameFile(file: LibraryFile) {
   closeFileMenu();
-  const name = window.prompt("输入新的文件名称", file.name)?.trim();
-  if (!name || name === file.name) return;
-  try {
-    await libraryResourceStore.rename(file.resourceId, name);
-  } catch (error) {
-    actionError.value = error instanceof Error ? error.message : "重命名失败";
-  }
+  renameAssetTarget.value = file.raw;
+  renameValue.value = file.name;
 }
 
 function renameAsset(asset: LibraryAsset) {
-  if (asset.kind === "knowledge") void renameKnowledge(asset.source);
-  else void renameFile(asset.source);
+  if (asset.kind === "knowledge") renameKnowledge(asset.source);
+  else renameFile(asset.source);
+}
+
+async function saveAssetName() {
+  const target = renameAssetTarget.value;
+  const name = renameValue.value.trim();
+  if (!target || !name) return;
+  try {
+    await store.renameAsset(target.assetId, name);
+    renameAssetTarget.value = null;
+    notice.value = "资料名称已更新。";
+  } catch (error) {
+    actionError.value = error instanceof Error ? error.message : "重命名失败";
+  }
 }
 
 function startLearningFromAsset(asset: LibraryAsset) {
@@ -313,18 +491,7 @@ async function downloadFiles(assets: LibraryAsset[]) {
   try {
     for (const asset of assets) {
       if (asset.kind !== "file") continue;
-      const id = presentationId(asset.source);
-      const sheetId = spreadsheetId(asset.source);
-      if (!id) {
-        if (sheetId) {
-          const blob = await spreadsheetRepository.download(sheetId);
-          downloadBlob(blob, asset.source.name);
-          continue;
-        }
-        await libraryResourceStore.download(asset.source.resourceId, asset.source.name);
-        continue;
-      }
-      const blob = await presentationRepository.download(id);
+      const blob = await fetchAssetContent(asset.source.resourceId, "attachment");
       downloadBlob(blob, asset.source.name);
     }
   } catch (error) {
@@ -345,81 +512,213 @@ async function confirmDelete() {
   actionError.value = "";
   try {
     for (const asset of targets) {
-      if (asset.kind === "knowledge") await knowledgeBaseStore.remove(asset.source.id);
-      else await libraryResourceStore.remove(asset.source.resourceId);
+      if (asset.kind === "knowledge") {
+        await store.moveKnowledgeBaseToTrash(asset.source.id);
+      } else {
+        await store.moveAssetToTrash(asset.source.resourceId);
+      }
     }
-    selectedIds.value = selectedIds.value.filter((id) => !targets.some((asset) => asset.id === id));
+    selectedIds.value = selectedIds.value.filter(
+      (id) => !targets.some((asset) => asset.id === id),
+    );
+    notice.value = targets.length + " 个项目已移入回收站。";
   } catch (error) {
-    actionError.value = error instanceof Error ? error.message : "删除失败";
+    actionError.value = error instanceof Error ? error.message : "移入回收站失败";
   }
 }
 
 async function moveSelectedResources() {
-  if (!moveResourceIds.value.length) return;
+  if (!moveResourceIds.value.length || !moveTargetKnowledgeBaseId.value) return;
   actionError.value = "";
   try {
     for (const resourceId of moveResourceIds.value) {
-      const resource = libraryResourceStore.resources.find(
-        (item) => item.resourceId === resourceId,
-      );
-      await libraryResourceStore.updateAssociations(resourceId, {
-        projectId: resource?.projectId ?? null,
-        knowledgeBaseId: moveTargetKnowledgeBaseId.value,
-      });
+      await addAssetToKnowledgeBase(moveTargetKnowledgeBaseId.value, resourceId);
     }
+    await Promise.all([store.loadAssets("library"), store.loadKnowledgeBases("library")]);
     moveModalOpen.value = false;
     clearSelection();
+    notice.value = "已加入知识库，个人资料库中的原文件仍然保留。";
   } catch (error) {
-    actionError.value = error instanceof Error ? error.message : "移动失败";
+    actionError.value = error instanceof Error ? error.message : "加入知识库失败";
   }
 }
 
-function knowledgeTitle(item: KnowledgeBase) {
-  return item.name.replace("资料库", "").trim();
+async function restoreAsset(asset: LibraryAsset) {
+  if (asset.kind === "knowledge") await store.restoreKnowledgeBase(asset.source.id);
+  else await store.restoreAsset(asset.source.resourceId);
+  selectedIds.value = selectedIds.value.filter((id) => id !== asset.id);
+  notice.value = "已恢复“" + assetName(asset) + "”。";
 }
 
-function knowledgeFileCount(item: KnowledgeBase) {
-  // 直接使用实际资源数量，避免重复计算
-  return libraryResourceStore.resources.filter((resource) => resource.knowledgeBaseId === item.id)
-    .length;
+async function restoreSelected() {
+  const targets = [...selectedAssets.value];
+  if (!targets.length) return;
+  actionError.value = "";
+  try {
+    for (const asset of targets) await restoreAsset(asset);
+    clearSelection();
+    notice.value = targets.length + " 个项目已恢复。";
+  } catch (error) {
+    actionError.value = error instanceof Error ? error.message : "恢复失败";
+  }
 }
 
-function knowledgeUpdatedAt(item: KnowledgeBase) {
-  return item.updateTime?.includes("今天") ? item.updateTime : item.updateTime || "刚刚";
+async function waitForPurge(asset: LibraryFile) {
+  purgingAssetIds.value = [...purgingAssetIds.value, asset.resourceId];
+  try {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1500));
+      const job = await getAssetPurgeJob(asset.resourceId);
+      if (job.status === "SUCCEEDED") {
+        store.forgetPurgedAsset(asset.resourceId);
+        notice.value = "已彻底删除“" + asset.name + "”。";
+        return;
+      }
+      if (["FAILED", "CANCELLED"].includes(job.status)) {
+        actionError.value = job.errorCode === "ASSET_VERSION_IN_USE"
+          ? "该资料已被学习项目或对话引用，暂时不能彻底删除。"
+          : "彻底删除失败，资料仍保留在回收站。";
+        return;
+      }
+    }
+    notice.value = "删除任务仍在后台执行，可稍后刷新回收站。";
+  } catch (error) {
+    actionError.value = error instanceof Error ? error.message : "获取删除进度失败";
+  } finally {
+    purgingAssetIds.value = purgingAssetIds.value.filter((id) => id !== asset.resourceId);
+  }
+}
+
+async function confirmPurge() {
+  const targets = [...purgeTargets.value];
+  purgeTargets.value = [];
+  if (!targets.length) return;
+  actionError.value = "";
+  try {
+    for (const target of targets) {
+      if (target.kind === "knowledge") {
+        await store.permanentlyDeleteKnowledgeBase(target.source.id);
+      } else {
+        await store.requestAssetPurge(target.source.resourceId);
+        void waitForPurge(target.source);
+      }
+    }
+    clearSelection();
+    notice.value = targets.some((target) => target.kind === "file")
+      ? "永久删除任务已提交，文件会在后台清理。"
+      : "知识库已彻底删除，个人资料原文件仍然保留。";
+  } catch (error) {
+    actionError.value = error instanceof Error ? error.message : "彻底删除失败";
+  }
+}
+
+function knowledgeTitle(item: KnowledgeItem) {
+  return item.name;
+}
+
+function knowledgeFileCount(item: KnowledgeItem) {
+  return item.assetCount;
+}
+
+function formatDate(value: string | null) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  const today = new Date();
+  if (date.toDateString() === today.toDateString()) {
+    return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(date);
+  }
+  return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(date);
+}
+
+function knowledgeUpdatedAt(item: KnowledgeItem) {
+  return formatDate(item.updateTime);
 }
 
 function assetModifiedAt(asset: LibraryAsset) {
-  if (asset.kind === "knowledge")
-    return knowledgeUpdatedAt(asset.source).includes("今天")
-      ? "今天"
-      : knowledgeUpdatedAt(asset.source);
-  return asset.source.updatedAt.includes("今天") ? "今天" : asset.source.updatedAt;
+  return asset.kind === "knowledge"
+    ? knowledgeUpdatedAt(asset.source)
+    : formatDate(asset.source.updatedAt);
 }
 
 function assetSize(asset: LibraryAsset) {
   return asset.kind === "knowledge" ? "—" : fileSize(asset.source);
 }
 
+function assetName(asset: LibraryAsset) {
+  return asset.kind === "knowledge" ? asset.source.name : asset.source.name;
+}
+
+function knowledgeDescription(asset: LibraryAsset) {
+  if (asset.kind !== "knowledge") return "";
+  return asset.source.description || "整理相关资料，供检索和智能学习使用。";
+}
+
+function openTrash() {
+  libraryLocation.value = isTrashView.value ? "library" : "trash";
+  activeFilter.value = "all";
+  filterMenuOpen.value = false;
+}
+
+function leaveTrash() {
+  libraryLocation.value = "library";
+  activeFilter.value = "all";
+}
+
+function closeMenus() {
+  newMenuOpen.value = false;
+  filterMenuOpen.value = false;
+  closeKnowledgeMenu();
+  closeFileMenu();
+}
+
+function startRefreshTimer() {
+  window.clearInterval(refreshTimer);
+  refreshTimer = window.setInterval(() => {
+    if (document.hidden || isTrashView.value) return;
+    if (
+      store.assets.some(
+        (asset) =>
+          !["READY", "FAILED", "REJECTED", "WITHDRAWN"].includes(asset.version?.status || ""),
+      )
+    ) {
+      void store.loadAssets("library").catch(() => undefined);
+    }
+  }, 5000);
+}
+
 watch(viewMode, (mode) => localStorage.setItem("examinsight.ui.library-view", mode));
+watch(activeFilter, () => {
+  clearSelection();
+  sourceFilter.value = null;
+  fileTypeFilter.value = null;
+});
+watch(libraryLocation, async (location) => {
+  clearSelection();
+  sourceFilter.value = null;
+  fileTypeFilter.value = null;
+  if (location === "trash" && !store.trashedAssets.length && !store.trashedKnowledgeBases.length) {
+    await loadData();
+  }
+});
 
 onMounted(() => {
   void loadData();
+  startRefreshTimer();
 });
-</script>
 
+onBeforeUnmount(() => window.clearInterval(refreshTimer));
+</script>
 <template>
   <StudentShell>
-    <div
-      class="library-page"
-      @click="
-        newMenuOpen = false;
-        filterMenuOpen = false;
-        closeKnowledgeMenu();
-        closeFileMenu();
-      "
-    >
+    <div class="library-page" @click="closeMenus">
       <header class="library-header">
-        <h1>资料库</h1>
+        <div class="page-title">
+          <button v-if="isTrashView" type="button" aria-label="返回资料库" @click="leaveTrash">
+            <AppIcon name="chevron-left" :size="20" />
+          </button>
+          <h1>{{ isTrashView ? "最近删除" : "资料库" }}</h1>
+        </div>
 
         <div class="header-actions" @click.stop>
           <label class="search-box">
@@ -427,7 +726,7 @@ onMounted(() => {
             <input v-model="searchQuery" placeholder="搜索" />
           </label>
 
-          <div class="new-menu-wrap">
+          <div v-if="!isTrashView" class="new-menu-wrap">
             <button class="new-btn" type="button" @click="openNewMenu">
               新建
               <AppIcon name="chevron-down" :size="15" />
@@ -447,13 +746,18 @@ onMounted(() => {
       </header>
 
       <div class="library-controls">
-        <div v-if="selectedCount" class="bulk-actions">
-          <button
-            class="bulk-primary"
-            type="button"
-            disabled
-            title="资料引用对话将在后端资源引用接口接入后开放"
-          >
+        <div v-if="selectedCount && isTrashView" class="bulk-actions">
+          <button type="button" @click="restoreSelected">
+            <AppIcon name="refresh-cw" :size="16" />
+            恢复
+          </button>
+          <button class="danger-outline" type="button" @click="purgeTargets = [...selectedAssets]">
+            <AppIcon name="trash" :size="16" />
+            彻底删除
+          </button>
+        </div>
+        <div v-else-if="selectedCount" class="bulk-actions">
+          <button class="primary-action" type="button" @click="startChatWithSelection">
             <AppIcon name="edit" :size="16" />
             开始聊天
           </button>
@@ -471,11 +775,11 @@ onMounted(() => {
             @click="openMoveModal()"
           >
             <AppIcon name="folder-move" :size="16" />
-            移动
+            加入知识库
           </button>
           <button class="danger-outline" type="button" @click="requestDelete(selectedAssets)">
             <AppIcon name="trash" :size="16" />
-            删除
+            移入回收站
           </button>
         </div>
         <div v-else class="tabs">
@@ -496,15 +800,15 @@ onMounted(() => {
           <div class="filter-menu-wrap" @click.stop>
             <button
               class="filter-btn ui-icon-action"
-              :class="{ active: filterMenuOpen || activeAdvancedFilterCount > 0 }"
+              :class="{ active: filterMenuOpen || activeFilterCount > 0 }"
               type="button"
               aria-label="筛选"
               :aria-expanded="filterMenuOpen"
               @click="filterMenuOpen = !filterMenuOpen"
             >
               <AppIcon name="list-filter" :size="18" />
-              <span v-if="activeAdvancedFilterCount" class="filter-count">{{
-                activeAdvancedFilterCount
+              <span v-if="activeFilterCount" class="filter-count">{{
+                activeFilterCount
               }}</span>
             </button>
             <div v-if="filterMenuOpen" class="filter-menu ui-menu-panel">
@@ -544,6 +848,16 @@ onMounted(() => {
                   :size="16"
                 />
               </button>
+              <div class="ui-menu-divider" />
+              <button
+                class="ui-menu-item filter-option"
+                :class="{ selected: isTrashView }"
+                type="button"
+                @click="openTrash"
+              >
+                <span class="ui-menu-icon"><AppIcon class="filter-trash-icon" name="trash" :size="18" /></span>
+                最近删除
+              </button>
             </div>
           </div>
           <span class="view-divider" />
@@ -568,6 +882,16 @@ onMounted(() => {
         </div>
       </div>
 
+      <div v-if="notice" class="library-notice" role="status">
+        <span>{{ notice }}</span>
+        <button type="button" aria-label="关闭提示" @click="notice = ''">×</button>
+      </div>
+
+      <div v-if="isTrashView" class="trash-notice">
+        <span>这里保存你主动删除的资料和知识库；恢复后会回到资料库。</span>
+        <button v-if="visibleAssets.length" type="button" @click="purgeTargets = [...visibleAssets]">全部彻底删除</button>
+      </div>
+
       <section v-if="pageError" class="library-state library-state--error" role="alert">
         <strong>资料加载失败</strong>
         <span>{{ pageError }}</span>
@@ -577,284 +901,175 @@ onMounted(() => {
         <strong>正在加载资料…</strong>
       </section>
       <section v-else-if="!visibleAssets.length" class="library-state">
-        <strong>{{ searchQuery.trim() ? "没有匹配的资料" : "暂无资料" }}</strong>
-        <span>{{ searchQuery.trim() ? "请调整搜索词或筛选条件" : "可上传资料或新建知识库" }}</span>
+        <strong>{{ searchQuery.trim() ? "没有匹配的资料" : isTrashView ? "回收站为空" : "暂无资料" }}</strong>
+        <span>{{ searchQuery.trim() ? "请调整搜索词或筛选条件" : isTrashView ? "移入回收站的资料和知识库会显示在这里" : "可上传资料或新建知识库" }}</span>
       </section>
 
-      <section
-        v-if="!pageLoading && !pageError && visibleAssets.length && viewMode === 'grid'"
-        class="asset-grid"
-      >
-        <article
-          v-for="asset in visibleAssets"
-          :key="asset.id"
-          class="asset-card ui-hover-row"
-          :class="{
-            'asset-card--knowledge': asset.kind === 'knowledge',
-            'asset-card--selected': isSelected(asset.id),
-            'asset-card--new-row': asset.id === firstFileAfterKnowledgeId,
-          }"
-          @click="openAsset(asset)"
-        >
-          <template v-if="asset.kind === 'knowledge'">
-            <ResourceTypeIcon
-              class="knowledge-icon"
-              type="knowledge"
-              :size="22"
-              :container-size="34"
-            />
-            <strong>{{ knowledgeTitle(asset.source) }}</strong>
-            <small
-              >{{ knowledgeFileCount(asset.source) }} 个文档 ·
-              {{ knowledgeUpdatedAt(asset.source) }}</small
-            >
-            <button
-              class="knowledge-more ui-icon-action"
-              type="button"
-              aria-label="知识库菜单"
-              @click.stop="toggleKnowledgeMenu(asset.id)"
-            >
-              <AppIcon name="more-horizontal" :size="16" />
-            </button>
-            <div
-              v-if="knowledgeMenuId === asset.id"
-              class="floating-menu asset-floating-menu ui-menu-panel"
-              @click.stop
-            >
-              <button
-                class="menu-action ui-menu-item"
-                type="button"
-                @click="startLearning(asset.source.id)"
-              >
-                <span class="ui-menu-icon"><AppIcon name="graduation" :size="16" /></span>
-                开始智能学习
-              </button>
-              <button
-                class="menu-action ui-menu-item"
-                type="button"
-                @click="renameKnowledge(asset.source)"
-              >
-                <span class="ui-menu-icon"><AppIcon name="edit" :size="16" /></span>
-                重命名
-              </button>
-              <div class="ui-menu-divider" />
-              <button
-                class="menu-action menu-action--danger ui-menu-item ui-menu-item--danger"
-                type="button"
-                @click="requestDelete([asset])"
-              >
-                <span class="ui-menu-icon"><AppIcon name="trash" :size="16" /></span>
-                删除知识库
-              </button>
+      <div v-if="!pageLoading && !pageError && visibleAssets.length && viewMode === 'grid'" class="resource-groups">
+        <section v-if="visibleKnowledgeAssets.length" class="resource-group">
+          <div class="asset-grid asset-grid--knowledge">
+            <div v-for="asset in visibleKnowledgeAssets" :key="asset.id" class="asset-card-shell">
+              <article class="asset-card asset-card--knowledge" :class="{ 'asset-card--selected': isSelected(asset.id) }" @click="openAsset(asset)">
+                <ResourceTypeIcon type="knowledge" variant="plain" :size="24" />
+                <div class="asset-card-copy">
+                  <strong>{{ assetName(asset) }}</strong>
+                  <p>{{ knowledgeDescription(asset) }}</p>
+                  <small>{{ knowledgeFileCount(asset.source) }} 个资料 · {{ knowledgeUpdatedAt(asset.source) }}</small>
+                </div>
+                <button class="asset-more" type="button" aria-label="知识库菜单" @click.stop="toggleKnowledgeMenu(asset.id)"><AppIcon name="more-horizontal" :size="18" /></button>
+                <button class="asset-check" :class="{ active: isSelected(asset.id), visible: hasSelection }" type="button" :aria-label="`选择 ${assetName(asset)}`" :aria-pressed="isSelected(asset.id)" @click.stop="toggleSelection(asset.id)">
+                  <AppIcon v-if="isSelected(asset.id)" name="check" :size="17" />
+                </button>
+                <div v-if="knowledgeMenuId === asset.id" class="floating-menu ui-menu-panel" @click.stop>
+                  <template v-if="isTrashView">
+                    <button class="ui-menu-item" type="button" @click="restoreAsset(asset)"><span class="ui-menu-icon"><AppIcon name="refresh-cw" :size="16" /></span>恢复</button>
+                    <button class="ui-menu-item ui-menu-item--danger" type="button" @click="purgeTargets = [asset]"><span class="ui-menu-icon"><AppIcon name="trash" :size="16" /></span>彻底删除</button>
+                  </template>
+                  <template v-else>
+                    <button class="ui-menu-item" type="button" @click="startLearning(asset.source.id)"><span class="ui-menu-icon"><AppIcon name="graduation" :size="16" /></span>开始智能学习</button>
+                    <button class="ui-menu-item" type="button" @click="renameKnowledge(asset.source)"><span class="ui-menu-icon"><AppIcon name="edit" :size="16" /></span>重命名</button>
+                    <div class="ui-menu-divider" />
+                    <button class="ui-menu-item ui-menu-item--danger" type="button" @click="requestDelete([asset])"><span class="ui-menu-icon"><AppIcon name="trash" :size="16" /></span>移入回收站</button>
+                  </template>
+                </div>
+              </article>
             </div>
-          </template>
+          </div>
+        </section>
 
-          <template v-else>
-            <button
-              class="asset-check"
-              type="button"
-              :aria-label="`选择 ${asset.source.name}`"
-              @click.stop="toggleSelection(asset.id)"
-            >
-              <span v-if="isSelected(asset.id)">✓</span>
-            </button>
-            <div class="asset-grid-actions" @click.stop>
-              <button
-                class="ui-icon-action"
-                type="button"
-                aria-label="重命名"
-                @click="renameFile(asset.source)"
-              >
-                <AppIcon name="edit" :size="18" />
-              </button>
-              <button
-                class="ui-icon-action"
-                type="button"
-                aria-label="移动"
-                @click="openMoveModal([asset.source.resourceId])"
-              >
-                <AppIcon name="folder-move" :size="18" />
-              </button>
-              <button
-                class="ui-icon-action"
-                type="button"
-                aria-label="下载"
-                @click="downloadFiles([asset])"
-              >
-                <AppIcon name="download" :size="18" />
-              </button>
-              <button
-                class="danger-icon ui-icon-action"
-                type="button"
-                aria-label="删除"
-                @click="requestDelete([asset])"
-              >
-                <AppIcon name="trash" :size="18" />
-              </button>
+        <section v-if="visibleFileAssets.length" class="resource-group">
+          <div class="asset-grid">
+            <div v-for="asset in visibleFileAssets" :key="asset.id" class="asset-card-shell">
+              <article class="asset-card" :class="{ 'asset-card--selected': isSelected(asset.id) }" @click="openAsset(asset)">
+                <div class="asset-card-heading">
+                  <strong>{{ asset.source.name }}</strong>
+                </div>
+                <V2AssetThumbnail
+                  v-if="asset.source.fileType === 'image' && !isTrashView"
+                  :asset="asset.source.raw"
+                />
+                <div v-else class="asset-card-visual" aria-hidden="true">
+                  <ResourceTypeIcon :type="fileVisualType(asset.source)" variant="plain" :size="44" />
+                </div>
+                <footer>
+                  <span>{{ asset.source.format }} · {{ fileSize(asset.source) }}</span>
+                  <span
+                    v-if="assetStatus(asset.source.raw).label"
+                    class="asset-state"
+                    :class="`asset-state--${assetStatus(asset.source.raw).tone}`"
+                  >{{ assetStatus(asset.source.raw).label }}</span>
+                </footer>
+                <button class="asset-more" type="button" aria-label="资料菜单" @click.stop="toggleFileMenu(asset.id)"><AppIcon name="more-horizontal" :size="18" /></button>
+                <button class="asset-check" :class="{ active: isSelected(asset.id), visible: hasSelection }" type="button" :aria-label="`选择 ${assetName(asset)}`" :aria-pressed="isSelected(asset.id)" @click.stop="toggleSelection(asset.id)">
+                  <AppIcon v-if="isSelected(asset.id)" name="check" :size="17" />
+                </button>
+                <div v-if="fileMenuId === asset.id" class="floating-menu ui-menu-panel" @click.stop>
+                  <template v-if="isTrashView">
+                    <button class="ui-menu-item" type="button" @click="restoreAsset(asset)"><span class="ui-menu-icon"><AppIcon name="refresh-cw" :size="16" /></span>恢复</button>
+                    <button class="ui-menu-item ui-menu-item--danger" type="button" @click="purgeTargets = [asset]"><span class="ui-menu-icon"><AppIcon name="trash" :size="16" /></span>彻底删除</button>
+                  </template>
+                  <template v-else>
+                    <button class="ui-menu-item" type="button" @click="downloadFiles([asset]); closeFileMenu()"><span class="ui-menu-icon"><AppIcon name="download" :size="16" /></span>下载</button>
+                    <button class="ui-menu-item" type="button" @click="renameAsset(asset)"><span class="ui-menu-icon"><AppIcon name="edit" :size="16" /></span>重命名</button>
+                    <button class="ui-menu-item" type="button" @click="openMoveForAsset(asset)"><span class="ui-menu-icon"><AppIcon name="folder-move" :size="16" /></span>加入知识库</button>
+                    <div class="ui-menu-divider" />
+                    <button class="ui-menu-item ui-menu-item--danger" type="button" @click="requestDelete([asset])"><span class="ui-menu-icon"><AppIcon name="trash" :size="16" /></span>移入回收站</button>
+                  </template>
+                </div>
+              </article>
             </div>
-            <strong>{{ asset.source.name }}</strong>
-            <ResourceTypeIcon
-              class="file-preview-icon"
-              :type="fileVisualType(asset.source)"
-              :size="34"
-              :container-size="58"
-            />
-            <small
-              >{{ asset.source.format }} · {{ fileSize(asset.source) }} ·
-              {{ sourceLabel(asset.source) }}</small
-            >
-          </template>
-        </article>
-      </section>
+          </div>
+        </section>
+      </div>
 
       <section v-else-if="!pageLoading && !pageError && visibleAssets.length" class="asset-list">
         <div class="asset-list-head">
-          <button
-            class="list-select-all"
-            :class="{ 'list-select-all--active': hasSelection }"
-            type="button"
-            aria-label="清除选择"
-            @click="clearSelection"
-          >
-            <span v-if="hasSelection" />
-          </button>
-          <span class="head-name">名称</span>
-          <span>修改时间 ↓</span>
+          <span class="selection-column">
+            <button
+              class="asset-row-check asset-row-check--all"
+              :class="{ active: someVisibleSelected }"
+              type="button"
+              aria-label="选择全部"
+              :aria-pressed="allVisibleSelected"
+              @click="toggleAllVisible"
+            >
+              <AppIcon v-if="allVisibleSelected" class="selection-check-icon" name="check" :size="13" />
+              <span v-else-if="someVisibleSelected" class="selection-dash" />
+            </button>
+          </span>
+          <span>名称</span>
+          <span>{{ isTrashView ? "删除时间" : "修改时间" }} ↓</span>
           <span>大小</span>
           <span />
         </div>
-        <article
-          v-for="asset in visibleAssets"
-          :key="asset.id"
-          class="asset-row ui-hover-row"
-          :class="{ 'asset-row--selected': isSelected(asset.id) }"
-          @click="openAsset(asset)"
-        >
-          <button
-            class="asset-row-check"
-            type="button"
-            :aria-label="`选择 ${asset.kind === 'knowledge' ? knowledgeTitle(asset.source) : asset.source.name}`"
-            @click.stop="toggleSelection(asset.id)"
-          >
-            <span v-if="isSelected(asset.id)">✓</span>
-          </button>
-          <ResourceTypeIcon
-            :type="asset.kind === 'knowledge' ? 'knowledge' : fileVisualType(asset.source)"
-            variant="plain"
-            :size="20"
-          />
-          <strong>{{
-            asset.kind === "knowledge" ? knowledgeTitle(asset.source) : asset.source.name
-          }}</strong>
-          <span>{{ assetModifiedAt(asset) }}</span>
-          <span>{{ assetSize(asset) }}</span>
-          <div class="row-actions">
-            <button
-              v-if="asset.kind === 'knowledge'"
-              class="ui-icon-action"
-              type="button"
-              @click.stop="toggleKnowledgeMenu(asset.id)"
-            >
-              <AppIcon name="more-horizontal" :size="16" />
-            </button>
-            <template v-else>
-              <button class="ui-icon-action" type="button" @click.stop="toggleFileMenu(asset.id)">
-                <AppIcon name="more-horizontal" :size="16" />
-              </button>
-            </template>
-          </div>
-          <div
-            v-if="knowledgeMenuId === asset.id"
-            class="floating-menu asset-floating-menu menu--row ui-menu-panel"
-            @click.stop
-          >
-            <button
-              class="menu-action ui-menu-item"
-              type="button"
-              @click="startLearningFromAsset(asset)"
-            >
-              <span class="ui-menu-icon"><AppIcon name="graduation" :size="16" /></span>
-              开始智能学习
-            </button>
-            <button class="menu-action ui-menu-item" type="button" @click="renameAsset(asset)">
-              <span class="ui-menu-icon"><AppIcon name="edit" :size="16" /></span>
-              重命名
-            </button>
-            <div class="ui-menu-divider" />
-            <button
-              class="menu-action menu-action--danger ui-menu-item ui-menu-item--danger"
-              type="button"
-              @click="requestDelete([asset])"
-            >
-              <span class="ui-menu-icon"><AppIcon name="trash" :size="16" /></span>
-              删除知识库
+        <div v-for="asset in visibleAssets" :key="asset.id" class="asset-list-entry">
+          <div class="selection-column">
+            <button class="asset-row-check" :class="{ active: isSelected(asset.id) }" type="button" :aria-label="`选择 ${assetName(asset)}`" :aria-pressed="isSelected(asset.id)" @click.stop="toggleSelection(asset.id)">
+              <AppIcon v-if="isSelected(asset.id)" class="selection-check-icon" name="check" :size="13" />
             </button>
           </div>
-          <div
-            v-if="fileMenuId === asset.id"
-            class="floating-menu asset-floating-menu menu--row ui-menu-panel"
-            @click.stop
-          >
-            <button
-              class="menu-action ui-menu-item"
-              type="button"
-              @click="
-                downloadFiles([asset]);
-                closeFileMenu();
-              "
-            >
-              <span class="ui-menu-icon"><AppIcon name="download" :size="16" /></span>
-              下载
-            </button>
-            <button class="menu-action ui-menu-item" type="button" @click="renameAsset(asset)">
-              <span class="ui-menu-icon"><AppIcon name="edit" :size="16" /></span>
-              重命名
-            </button>
-            <button class="menu-action ui-menu-item" type="button" @click="openMoveForAsset(asset)">
-              <span class="ui-menu-icon"><AppIcon name="folder-move" :size="16" /></span>
-              移动
-            </button>
-            <div class="ui-menu-divider" />
-            <button
-              class="menu-action menu-action--danger ui-menu-item ui-menu-item--danger"
-              type="button"
-              @click="requestDelete([asset])"
-            >
-              <span class="ui-menu-icon"><AppIcon name="trash" :size="16" /></span>
-              删除
-            </button>
-          </div>
-        </article>
+          <article class="asset-row" :class="{ 'asset-row--selected': isSelected(asset.id) }" @click="openAsset(asset)">
+            <ResourceTypeIcon :type="asset.kind === 'knowledge' ? 'knowledge' : fileVisualType(asset.source)" variant="plain" :size="20" />
+            <div class="row-copy">
+              <strong>{{ assetName(asset) }}</strong>
+              <small v-if="asset.kind === 'knowledge' || assetStatus(asset.source.raw).label">
+                {{ asset.kind === 'knowledge' ? `${knowledgeFileCount(asset.source)} 个资料` : assetStatus(asset.source.raw).label }}
+              </small>
+            </div>
+            <span>{{ assetModifiedAt(asset) }}</span>
+            <span>{{ assetSize(asset) }}</span>
+            <button class="row-more" type="button" aria-label="项目菜单" @click.stop="asset.kind === 'knowledge' ? toggleKnowledgeMenu(asset.id) : toggleFileMenu(asset.id)"><AppIcon name="more-horizontal" :size="18" /></button>
+            <div v-if="knowledgeMenuId === asset.id || fileMenuId === asset.id" class="floating-menu menu--row ui-menu-panel" @click.stop>
+              <template v-if="isTrashView">
+                <button class="ui-menu-item" type="button" @click="restoreAsset(asset)"><span class="ui-menu-icon"><AppIcon name="refresh-cw" :size="16" /></span>恢复</button>
+                <button class="ui-menu-item ui-menu-item--danger" type="button" @click="purgeTargets = [asset]"><span class="ui-menu-icon"><AppIcon name="trash" :size="16" /></span>彻底删除</button>
+              </template>
+              <template v-else-if="asset.kind === 'knowledge'">
+                <button class="ui-menu-item" type="button" @click="startLearningFromAsset(asset)"><span class="ui-menu-icon"><AppIcon name="graduation" :size="16" /></span>开始智能学习</button>
+                <button class="ui-menu-item" type="button" @click="renameAsset(asset)"><span class="ui-menu-icon"><AppIcon name="edit" :size="16" /></span>重命名</button>
+                <div class="ui-menu-divider" />
+                <button class="ui-menu-item ui-menu-item--danger" type="button" @click="requestDelete([asset])"><span class="ui-menu-icon"><AppIcon name="trash" :size="16" /></span>移入回收站</button>
+              </template>
+              <template v-else>
+                <button class="ui-menu-item" type="button" @click="downloadFiles([asset]); closeFileMenu()"><span class="ui-menu-icon"><AppIcon name="download" :size="16" /></span>下载</button>
+                <button class="ui-menu-item" type="button" @click="renameAsset(asset)"><span class="ui-menu-icon"><AppIcon name="edit" :size="16" /></span>重命名</button>
+                <button class="ui-menu-item" type="button" @click="openMoveForAsset(asset)"><span class="ui-menu-icon"><AppIcon name="folder-move" :size="16" /></span>加入知识库</button>
+                <div class="ui-menu-divider" />
+                <button class="ui-menu-item ui-menu-item--danger" type="button" @click="requestDelete([asset])"><span class="ui-menu-icon"><AppIcon name="trash" :size="16" /></span>移入回收站</button>
+              </template>
+            </div>
+          </article>
+        </div>
       </section>
+
+      <div v-if="hasMore" class="library-load-more">
+        <button type="button" :disabled="store.loading" @click="loadMore">加载更多</button>
+      </div>
     </div>
 
-    <UploadMaterialModal :open="uploadOpen" @close="uploadOpen = false" />
+    <UploadMaterialModal
+      :open="uploadOpen"
+      @close="uploadOpen = false"
+      @uploaded="handleUploaded"
+    />
 
-    <LibraryKnowledgeCreateModal
+    <V2KnowledgeBaseModal
       :open="newKnowledgeOpen"
+      :knowledge-base="editingKnowledgeBase"
       @close="newKnowledgeOpen = false"
-      @created="handleKnowledgeCreated"
+      @saved="handleKnowledgeSaved"
     />
 
     <div v-if="moveModalOpen" class="modal-backdrop" @click.self="moveModalOpen = false">
       <section class="move-modal">
         <header>
-          <h2>移动到...</h2>
+          <h2>加入知识库</h2>
           <button type="button" @click="moveModalOpen = false">×</button>
         </header>
         <span class="move-label">知识库</span>
         <div class="move-list">
           <button
-            type="button"
-            :class="{ selected: moveTargetKnowledgeBaseId === null }"
-            @click="moveTargetKnowledgeBaseId = null"
-          >
-            <span class="move-icon"><AppIcon name="close" :size="18" /></span>
-            <span>不归属知识库</span>
-            <AppIcon name="chevron-right" :size="16" />
-          </button>
-          <button
-            v-for="item in knowledgeBaseStore.list"
+            v-for="item in availableKnowledgeBases"
             :key="item.id"
             type="button"
             :class="{ selected: moveTargetKnowledgeBaseId === item.id }"
@@ -874,10 +1089,10 @@ onMounted(() => {
           <button
             class="move-confirm"
             type="button"
-            :disabled="libraryResourceStore.isMutating"
+            :disabled="store.mutating || !moveTargetKnowledgeBaseId"
             @click="moveSelectedResources"
           >
-            {{ libraryResourceStore.isMutating ? "移动中…" : "移动这里" }}
+            {{ store.mutating ? "加入中…" : "加入这里" }}
           </button>
         </footer>
       </section>
@@ -885,304 +1100,204 @@ onMounted(() => {
 
     <ConfirmDialog
       :open="deleteTargets.length > 0"
-      title="确认删除"
-      :message="`将删除 ${deleteTargets.length} 个项目。此操作无法撤销。`"
-      confirm-text="删除"
+      title="移入回收站"
+      :message="`将 ${deleteTargets.length} 个项目移入回收站，之后仍可恢复。`"
+      confirm-text="移入回收站"
       confirm-variant="danger"
       @close="deleteTargets = []"
       @confirm="confirmDelete"
     />
+
+    <ConfirmDialog
+      :open="purgeTargets.length > 0"
+      title="彻底删除"
+      :message="purgeTargets.some((target) => target.kind === 'file')
+        ? `将永久删除 ${purgeTargets.length} 个项目中的原文件、解析内容和索引，该操作不可撤销。`
+        : `将彻底删除 ${purgeTargets.length} 个知识库及其关联，个人资料原文件仍会保留。`"
+      confirm-text="彻底删除"
+      confirm-variant="danger"
+      @close="purgeTargets = []"
+      @confirm="confirmPurge"
+    />
+
+    <AppModal :open="Boolean(renameAssetTarget)" title="重命名资料" @close="renameAssetTarget = null">
+      <label class="rename-field">
+        <span>资料名称</span>
+        <input v-model="renameValue" maxlength="255" @keyup.enter="saveAssetName" />
+      </label>
+      <template #footer>
+        <div class="rename-actions">
+          <AppButton variant="ghost" @click="renameAssetTarget = null">取消</AppButton>
+          <AppButton :disabled="!renameValue.trim()" :loading="store.mutating" @click="saveAssetName">
+            保存
+          </AppButton>
+        </div>
+      </template>
+    </AppModal>
   </StudentShell>
 </template>
 
 <style scoped>
 .library-page {
+  width: min(1180px, calc(100% - 48px));
   min-height: 100%;
-  padding: 58px 64px 72px;
-  background: var(--color-bg);
-  color: var(--color-text);
-}
-
-.library-page,
-.library-page * {
+  margin: 0 auto;
+  padding: 48px 0 72px;
   box-sizing: border-box;
+  color: var(--color-text);
 }
 
 .library-header,
-.library-controls,
-.asset-grid,
-.asset-list,
-.library-state {
-  max-width: 980px;
-  margin-left: auto;
-  margin-right: auto;
-}
-
-h1,
-h2,
-p {
-  margin: 0;
-}
-
-h1 {
-  font-size: 34px;
-  font-weight: 800;
-  color: var(--color-text);
-}
-
-.library-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 48px;
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.search-box {
-  width: 240px;
-  height: 36px;
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 12px;
-  background: var(--color-surface);
-  color: var(--color-text-muted);
-}
-
-.search-box input {
-  width: 100%;
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-}
-
-.new-menu-wrap {
-  position: relative;
-}
-
-.new-btn {
-  height: 36px;
-  border: 0;
-  border-radius: 999px;
-  padding: 0 14px;
-  background: var(--color-primary);
-  color: var(--color-on-primary);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 700;
-}
-
-.new-menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 30;
-  width: 178px;
-}
-
-.new-menu button {
-  height: var(--ui-menu-item-height);
-}
-
 .library-controls {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
-  margin-bottom: 26px;
+  gap: 24px;
 }
 
-.tabs {
-  display: flex;
-  gap: 12px;
-}
-
-.tabs button {
-  height: 38px;
-  border: 1px solid transparent;
-  border-radius: 999px;
+.library-header { margin-bottom: 54px; }
+.page-title { position: relative; display: flex; align-items: center; }
+.page-title h1 { margin: 0; font-size: clamp(32px, 4vw, 46px); font-weight: 700; letter-spacing: -.045em; }
+.page-title button,
+.library-notice button {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 9px;
   background: transparent;
   color: var(--color-text);
-  padding: 0 16px;
   cursor: pointer;
 }
-
-.tabs button.active {
-  border-color: var(--color-border);
-  background: var(--color-surface);
-  color: var(--color-text);
+.page-title button {
+  position: absolute;
+  right: calc(100% + 8px);
 }
+.page-title button:hover,
+.library-notice button:hover { background: var(--color-hover); }
 
-.view-tools {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
-.view-tools > span {
-  color: var(--color-text);
-  font-size: 14px;
-  margin: 0 10px;
-}
-
-.bulk-actions {
+.header-actions { display: flex; align-items: center; gap: 12px; }
+.search-box {
+  width: min(360px, 34vw);
+  height: 48px;
   display: flex;
   align-items: center;
   gap: 10px;
-}
-
-.bulk-actions button,
-.view-tools > button:not(.round-icon):not(.filter-btn),
-.bulk-primary,
-.danger-outline {
-  height: 34px;
+  padding: 0 16px;
   border: 1px solid var(--color-border);
   border-radius: 999px;
   background: var(--color-surface);
-  color: var(--color-text);
-  padding: 0 16px;
+  color: var(--color-text-muted);
+  box-sizing: border-box;
+}
+.search-box input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--color-text); font: inherit; }
+.new-menu-wrap,
+.filter-menu-wrap { position: relative; }
+.new-btn {
+  height: 48px;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.bulk-actions button:disabled {
-  color: var(--color-text-muted);
-  background: var(--color-hover);
-  cursor: not-allowed;
-}
-
-.bulk-primary {
-  background: var(--color-primary) !important;
-  color: var(--color-on-primary) !important;
-  border-color: var(--color-primary) !important;
-  padding: 0 18px;
-}
-
-.bulk-primary :deep(svg) {
+  gap: 8px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--color-primary);
   color: var(--color-on-primary);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
 }
-
-.bulk-primary:disabled {
-  opacity: 0.48;
+.new-menu,
+.filter-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 40;
+  width: 210px;
 }
+.filter-menu { width: 230px; padding: 8px; }
+.filter-section-label { display: block; padding: 8px 10px 5px; color: var(--color-text-muted); font-size: 12px; }
+.filter-section-label--divided { margin-top: 6px; border-top: 1px solid var(--color-border); padding-top: 12px; }
+.filter-check { margin-left: auto; }
+.filter-trash-icon { color: var(--color-text); }
 
-.danger-outline {
-  color: #ff2457 !important;
-  border-color: #ff2457 !important;
+.library-controls { min-height: 46px; margin-bottom: 24px; }
+.tabs,
+.bulk-actions,
+.view-tools { display: flex; align-items: center; gap: 8px; }
+.tabs button,
+.bulk-actions button {
+  min-height: 38px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 15px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font: inherit;
 }
-
-.filter-btn,
-.round-icon {
-  width: 36px;
-  height: 36px;
+.tabs button:hover,
+.tabs button.active { background: var(--color-hover); color: var(--color-text); }
+.bulk-actions button { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--color-border); color: var(--color-text); }
+.bulk-actions .primary-action { border-color: var(--color-text); background: var(--color-text); color: var(--color-background); }
+.bulk-actions .danger-outline { color: var(--color-danger); border-color: color-mix(in srgb, var(--color-danger) 30%, var(--color-border)); }
+.bulk-actions button:disabled { opacity: .4; cursor: not-allowed; }
+.view-tools > span { color: var(--color-text-muted); font-size: 13px; }
+.round-icon,
+.filter-btn {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
   border: 0;
   border-radius: 10px;
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
-  display: grid;
-  place-items: center;
 }
-
-.view-tools .filter-btn {
-  position: relative;
-  background: transparent;
-  color: var(--color-text-muted);
-}
-
-.filter-menu-wrap {
-  position: relative;
-}
-
-.filter-menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 40;
-  width: 240px;
-  padding: 8px;
-}
-
+.round-icon:hover,
+.round-icon.active,
+.filter-btn:hover,
+.filter-btn.active { background: var(--color-hover); color: var(--color-text); }
+.view-divider { width: 1px; height: 22px; margin: 0 2px; background: var(--color-border); }
 .filter-count {
   position: absolute;
-  top: -4px;
-  right: -4px;
-  min-width: 17px;
-  height: 17px;
-  padding: 0 4px;
+  top: -2px;
+  right: -2px;
+  min-width: 16px;
+  height: 16px;
   display: grid;
   place-items: center;
-  border: 2px solid var(--color-bg);
-  border-radius: 9px;
+  border-radius: 999px;
   background: var(--color-text);
-  color: var(--color-bg);
+  color: var(--color-surface);
   font-size: 10px;
-  font-weight: 700;
 }
 
-.filter-section-label {
-  display: block;
-  padding: 5px 9px 4px;
+.library-notice,
+.trash-notice {
+  min-height: 44px;
+  margin-bottom: 22px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--color-bg-alt);
+  color: var(--color-text);
+  box-sizing: border-box;
+}
+.library-notice,
+.trash-notice { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.trash-notice button {
+  border: 0;
+  background: transparent;
   color: var(--color-text-muted);
-  font-size: 11px;
+  cursor: pointer;
+  font: inherit;
 }
-
-.filter-section-label--divided {
-  margin-top: 6px;
-  padding-top: 10px;
-  border-top: 1px solid var(--color-border);
-}
-
-.filter-option {
-  width: 100%;
-}
-
-.filter-option.selected {
-  background: var(--ui-hover-strong-bg);
-  color: var(--color-text);
-}
-
-.filter-check {
-  margin-left: auto;
-}
-
-.view-divider {
-  width: 1px;
-  height: 24px;
-  background: var(--color-border);
-  margin: 0 4px;
-}
-
-.round-icon.active,
-.round-icon:hover,
-.view-tools .filter-btn:hover,
-.view-tools .filter-btn:focus-visible {
-  background: var(--color-hover);
-  color: var(--color-text);
-}
-
-.view-tools .filter-btn.active {
-  background: var(--color-hover);
-  color: var(--color-text);
-}
-
+.trash-notice button:hover { color: var(--color-danger); }
 .library-state {
-  min-height: 260px;
+  min-height: 340px;
   display: grid;
   place-items: center;
   align-content: center;
@@ -1190,408 +1305,232 @@ h1 {
   color: var(--color-text-muted);
   text-align: center;
 }
-
-.library-state strong {
-  color: var(--color-text);
-  font-size: 16px;
-}
-
+.library-state strong { color: var(--color-text); }
 .library-state button {
-  height: 34px;
+  min-height: 36px;
   margin-top: 6px;
   padding: 0 14px;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: 9px;
   background: var(--color-surface);
   color: var(--color-text);
   cursor: pointer;
 }
+.library-state--error span { color: var(--color-danger); }
 
-.library-state--error span {
-  max-width: 560px;
-  color: var(--color-danger);
-  overflow-wrap: anywhere;
-}
-
-.asset-grid {
+.resource-groups { display: grid; gap: 18px; }
+.asset-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.asset-card-shell { position: relative; min-width: 0; }
+.asset-check {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 4;
+  width: 28px;
+  height: 28px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
+  place-items: center;
+  border: 2px solid var(--color-border);
+  border-radius: 50%;
+  background: var(--color-surface);
+  color: var(--color-text);
+  padding: 0;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .14s ease, border-color .14s ease, background-color .14s ease;
 }
-
-.asset-card--new-row {
-  grid-column-start: 1;
+.asset-card:hover > .asset-check,
+.asset-check.visible,
+.asset-check:focus-visible,
+.asset-check.active { opacity: 1; }
+.asset-check.active {
+  border-color: var(--color-text);
+  background: var(--color-surface);
 }
+.asset-check:focus-visible { outline: 2px solid var(--color-text); outline-offset: 2px; }
 
 .asset-card {
   position: relative;
-  min-height: 246px;
-  border: 1px solid var(--color-border);
-  border-radius: 18px;
-  background: linear-gradient(180deg, var(--color-surface) 0%, var(--color-surface-subtle) 100%);
-  padding: 18px 18px 16px;
-  cursor: pointer;
+  min-height: 250px;
   display: grid;
   grid-template-rows: auto 1fr auto;
-  box-shadow: var(--shadow-sm);
-}
-
-.asset-card--knowledge {
-  min-height: 96px;
-  height: 96px;
-  grid-template-columns: 44px minmax(0, 1fr);
-  grid-template-rows: 1fr auto;
-  align-items: center;
-  column-gap: 12px;
-  box-shadow: none;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
   background: var(--color-surface);
+  box-sizing: border-box;
+  cursor: pointer;
+  transition: background-color .14s ease, border-color .14s ease;
 }
-
-.asset-card--knowledge strong {
-  align-self: end;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
-}
-
-.asset-card--knowledge small {
-  grid-column: 2;
-  align-self: start;
-  margin-top: 3px;
-}
-
+.asset-card:hover { background: var(--color-hover); }
 .asset-card--selected {
   border-color: var(--color-text);
-  box-shadow:
-    inset 0 0 0 1px var(--color-text),
-    var(--shadow-sm);
+  background: var(--color-hover);
+  box-shadow: inset 0 0 0 1px var(--color-text);
 }
-
-.asset-card strong {
-  max-width: 78%;
-  color: var(--color-text);
-  font-size: 15px;
-  line-height: 1.35;
+.asset-card--knowledge {
+  min-height: 138px;
+  grid-template-columns: 30px minmax(0, 1fr);
+  grid-template-rows: 1fr;
+  align-items: start;
+  gap: 13px;
 }
-
-.asset-card small {
+.asset-card-copy { min-width: 0; padding-right: 34px; }
+.asset-card strong,
+.row-copy strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text); font-size: 15px; }
+.asset-card-copy p {
+  height: 40px;
+  margin: 8px 0 7px;
+  overflow: hidden;
   color: var(--color-text-muted);
   font-size: 13px;
+  line-height: 20px;
 }
-
-.knowledge-icon {
-  grid-row: 1 / 3;
-}
-
-.asset-check {
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  width: 24px;
-  height: 24px;
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  background: var(--color-surface);
-  color: var(--color-info);
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 900;
-  z-index: 3;
-  opacity: 0;
-  pointer-events: auto;
-  transition: opacity 0.15s ease;
-}
-
-.asset-card:hover .asset-check,
-.asset-card--selected .asset-check {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.asset-more {
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  width: 34px;
-  height: 34px;
-  border: 0;
-  border-radius: 10px;
-  background: var(--color-hover);
-  color: var(--color-text-muted);
-  cursor: pointer;
+.asset-card small,
+.row-copy small { color: var(--color-text-muted); font-size: 12px; }
+.asset-card-heading { min-width: 0; padding-right: 32px; }
+.asset-card-visual {
+  min-height: 148px;
   display: grid;
   place-items: center;
-  opacity: 0;
-  transition:
-    opacity 0.15s ease,
-    background 0.15s ease;
+  color: var(--color-text);
 }
+.asset-card footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-right: 38px; color: var(--color-text-muted); font-size: 12px; }
+.asset-state { white-space: nowrap; font-weight: 600; }
+.asset-state--error { color: var(--color-danger); }
+.asset-state--pending,
+.asset-state--neutral { color: var(--color-text-muted); }
 
+.asset-more,
+.row-more {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.asset-more { position: absolute; top: 10px; right: 10px; opacity: 0; }
 .asset-card:hover .asset-more,
-.asset-card--selected .asset-more {
-  opacity: 1;
-}
-
-.asset-more:hover {
-  background: var(--color-hover);
-  color: var(--color-text);
-}
-
-.asset-grid-actions {
-  position: absolute;
-  right: 12px;
-  top: 62px;
-  z-index: 2;
-  display: grid;
-  gap: 8px;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.15s ease;
-}
-
-.asset-grid-actions button {
-  width: 24px;
-  height: 24px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--color-text);
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-}
-
-.asset-grid-actions button:hover {
-  background: var(--color-hover-strong);
-  color: var(--color-text);
-}
-
-.asset-card:hover .asset-grid-actions,
-.asset-card--selected .asset-grid-actions {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.knowledge-more {
-  position: absolute;
-  right: 16px;
-  top: 50%;
-  width: 34px;
-  height: 34px;
-  border: 0;
-  border-radius: 10px;
-  background: var(--color-hover);
-  color: var(--color-text-muted);
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-  opacity: 0;
-  transform: translateY(-50%);
-  transition:
-    opacity 0.15s ease,
-    background 0.15s ease;
-}
-
-.asset-card--knowledge:hover .knowledge-more {
-  opacity: 1;
-}
-
-.knowledge-more:hover {
-  background: var(--color-hover);
-  color: var(--color-text);
-}
-
-.floating-menu {
-  position: absolute;
-  right: 14px;
-  top: 54px;
-  z-index: 25;
-  width: 166px;
-}
-
-.menu-action {
-  height: var(--ui-menu-item-height);
-}
-
-.menu-action :deep(svg) {
-  width: 16px;
-  height: 16px;
-  stroke-width: 2;
-}
-
-.danger-text {
-  color: #ff2457 !important;
-}
-
-.row-actions button {
-  width: 26px;
-  height: 26px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-}
-
-.row-actions button:hover {
-  background: var(--color-hover);
-  color: var(--color-text);
-}
-
-.danger-icon {
-  color: #ff2457 !important;
-}
-
-.file-preview-icon {
-  place-self: center;
-}
+.asset-card--selected .asset-more,
+.asset-more:focus-visible { opacity: 1; }
+.asset-more:hover,
+.row-more:hover { background: var(--color-hover-strong); color: var(--color-text); }
+.floating-menu { position: absolute; top: 46px; right: 10px; z-index: 30; width: 184px; }
+.menu--row { top: 54px; right: 8px; }
 
 .asset-list {
+  --asset-list-check-column: 44px;
+  --asset-list-date-column: 140px;
+  --asset-list-size-column: 110px;
+  --asset-list-menu-column: 40px;
   display: grid;
-  gap: 0;
-  max-width: 820px;
+  gap: 4px;
 }
-
 .asset-list-head {
   min-height: 42px;
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) 140px 120px 54px;
+  grid-template-columns:
+    var(--asset-list-check-column)
+    minmax(0, 1fr)
+    var(--asset-list-date-column)
+    var(--asset-list-size-column)
+    var(--asset-list-menu-column);
   align-items: center;
-  gap: 10px;
-  padding: 0 8px;
-  color: var(--color-text);
-  font-size: 14px;
+  padding-right: 12px;
+  box-sizing: border-box;
+  color: var(--color-text-muted);
+  font-size: 13px;
 }
-
-.head-name {
-  padding-left: 38px;
+.asset-list-head > span:nth-child(2) { padding-left: 12px; }
+.asset-list-entry {
+  position: relative;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: var(--asset-list-check-column) minmax(0, 1fr);
+  align-items: center;
 }
-
-.list-select-all,
+.selection-column { display: grid; place-items: center; }
 .asset-row-check {
-  width: 18px;
-  height: 18px;
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  background: var(--color-surface);
-  color: var(--color-on-primary);
-  cursor: pointer;
+  width: 26px;
+  height: 26px;
   display: grid;
   place-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: transparent;
   padding: 0;
-  opacity: 0;
-  pointer-events: auto;
-  transition: opacity 0.15s ease;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: border-color .14s ease, background-color .14s ease, color .14s ease;
 }
-
-.list-select-all--active,
-.asset-row--selected .asset-row-check {
-  border-color: var(--color-primary);
-  background: var(--color-primary);
-  opacity: 1;
-  pointer-events: auto;
+.asset-row-check:hover { border-color: var(--color-text-muted); }
+.asset-row-check.active {
+  border-color: var(--color-text);
+  background: var(--color-text);
+  color: var(--color-surface);
 }
-
-.list-select-all span {
-  width: 10px;
-  height: 2px;
-  border-radius: 999px;
-  background: var(--color-on-primary);
-}
-
+.asset-row-check:focus-visible { outline: 2px solid var(--color-text); outline-offset: 2px; }
+.asset-row-check :deep(.selection-check-icon path) { stroke-width: 3; }
+.selection-dash { width: 10px; height: 2px; border-radius: 999px; background: currentColor; }
 .asset-row {
   position: relative;
-  min-height: 65px;
-  border: 0;
-  border-bottom: 1px solid var(--color-border);
-  border-radius: 0;
-  display: grid;
-  grid-template-columns: 26px 34px minmax(0, 1fr) 140px 120px 54px;
-  align-items: center;
-  gap: 10px;
-  padding: 0 8px;
-  color: var(--color-text);
-  cursor: pointer;
-}
-
-.asset-row:hover,
-.asset-row--selected {
-  background: var(--color-hover);
-  border-radius: 12px;
-  border-color: transparent;
-}
-
-.asset-row strong {
   min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  color: var(--color-text);
-}
-
-.asset-row-check {
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.asset-row:hover .asset-row-check,
-.asset-row-check:focus-visible {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-@media (hover: none) {
-  .asset-check,
-  .asset-row-check {
-    opacity: 1;
-  }
-}
-
-.row-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 4px;
-  opacity: 0;
-  transition: opacity 0.15s ease;
-}
-
-.asset-row:hover .row-actions,
-.asset-row--selected .row-actions {
-  opacity: 1;
-}
-
-.menu--row {
-  top: 44px;
-  right: 12px;
-}
-
-.outline-btn,
-.primary-btn {
-  height: 40px;
-  border-radius: 8px;
-  display: inline-flex;
+  min-height: 66px;
+  display: grid;
+  grid-template-columns:
+    44px
+    minmax(0, 1fr)
+    var(--asset-list-date-column)
+    var(--asset-list-size-column)
+    var(--asset-list-menu-column);
   align-items: center;
-  justify-content: center;
-  gap: 10px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-sizing: border-box;
+  color: var(--color-text);
   cursor: pointer;
-  font-weight: 700;
-  padding: 0 16px;
+  transition: background-color .14s ease, border-color .14s ease;
 }
+.asset-row:hover,
+.asset-row--selected { background: var(--color-hover); border-color: transparent; }
+.row-copy { min-width: 0; }
+.row-copy small { display: block; margin-top: 3px; }
+.row-more { opacity: 0; }
+.asset-row:hover .row-more,
+.asset-row--selected .row-more,
+.row-more:focus-visible { opacity: 1; }
 
-.outline-btn {
+.library-load-more { display: flex; justify-content: center; margin-top: 26px; }
+.library-load-more button {
+  min-height: 38px;
+  padding: 0 18px;
   border: 1px solid var(--color-border);
+  border-radius: 999px;
   background: var(--color-surface);
   color: var(--color-text);
+  cursor: pointer;
 }
+.library-load-more button:disabled { opacity: .5; }
 
-.primary-btn {
-  border: 1px solid var(--color-primary);
-  background: var(--color-primary);
-  color: var(--color-on-primary);
+.rename-field { display: grid; gap: 8px; }
+.rename-field input {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-sizing: border-box;
 }
+.rename-actions { display: flex; justify-content: flex-end; gap: 10px; }
 
 .modal-backdrop {
   position: fixed;
@@ -1602,257 +1541,89 @@ h1 {
   padding: 24px;
   background: var(--color-overlay);
 }
-
-.new-knowledge-modal {
-  width: min(620px, 100%);
-  padding: 20px;
-  border-radius: 16px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  box-shadow: var(--shadow-lg);
-}
-
-.new-knowledge-modal header,
-.new-knowledge-modal footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-}
-
-.new-knowledge-modal header button {
-  border: 0;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  font-size: 24px;
-}
-
-.new-knowledge-form {
-  display: grid;
-  gap: 14px;
-  margin-top: 16px;
-}
-
-.new-knowledge-form label {
-  display: grid;
-  gap: 8px;
-  color: var(--color-text);
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.new-knowledge-form input,
-.new-knowledge-form textarea {
-  min-width: 0;
-  width: 100%;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-surface);
-  padding: 0 12px;
-  box-sizing: border-box;
-  font-size: 14px;
-  font-weight: 400;
-}
-
-.new-knowledge-form input::placeholder,
-.new-knowledge-form textarea::placeholder {
-  color: var(--color-text-muted);
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.new-knowledge-form input {
-  height: 40px;
-}
-
-.new-knowledge-form textarea {
-  min-height: 96px;
-  resize: none;
-  padding: 10px 12px;
-}
-
-.new-knowledge-modal footer {
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  margin-top: 18px;
-}
-
 .move-modal {
-  width: min(872px, 100%);
-  min-height: 560px;
-  padding: 32px;
-  border: 1px solid var(--color-border);
-  border-radius: 16px;
-  background: var(--color-surface);
-  box-shadow: var(--shadow-lg);
+  width: min(760px, 100%);
+  min-height: 500px;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
-}
-
-.move-modal header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 22px;
-}
-
-.move-modal h2 {
-  font-size: 20px;
-  font-weight: 500;
-}
-
-.move-modal header button {
-  width: 30px;
-  height: 30px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  cursor: pointer;
-  font-size: 24px;
-}
-
-.move-modal header button:hover {
-  background: var(--color-hover);
-}
-
-.move-label {
-  color: var(--color-text);
-  font-size: 13px;
-  margin-bottom: 16px;
-}
-
-.move-list {
-  min-height: 0;
-  overflow: auto;
-  display: grid;
-  align-content: start;
-}
-
-.move-list button {
-  height: 58px;
-  border: 0;
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-surface);
-  color: var(--color-text);
-  cursor: pointer;
-  display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) 20px;
-  align-items: center;
-  gap: 12px;
-  text-align: left;
-}
-
-.move-list button:hover {
-  background: var(--color-hover);
-}
-
-.move-list button.selected {
-  background: var(--color-hover);
-  box-shadow: inset 3px 0 var(--color-primary);
-}
-
-.move-icon {
-  width: 32px;
-  height: 32px;
+  padding: 26px;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
-  display: grid;
-  place-items: center;
+  border-radius: 16px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-lg);
 }
-
-.move-modal footer {
+.move-modal header,
+.move-modal footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.move-modal header { margin-bottom: 18px; }
+.move-modal header h2 { margin: 0; font-size: 20px; }
+.move-modal header button { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--color-text); cursor: pointer; font-size: 22px; }
+.move-label { color: var(--color-text-muted); font-size: 13px; }
+.move-list { min-height: 0; margin-top: 10px; overflow: auto; }
+.move-list button {
+  width: 100%;
+  min-height: 58px;
   display: grid;
-  grid-template-columns: auto 1fr auto auto;
+  grid-template-columns: 36px minmax(0, 1fr) 18px;
   align-items: center;
   gap: 10px;
-  padding-top: 18px;
-}
-
-.move-confirm {
-  height: 34px;
   border: 0;
-  border-radius: 999px;
-  background: var(--color-primary);
-  color: var(--color-on-primary);
-  padding: 0 16px;
+  border-bottom: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text);
   cursor: pointer;
-  font-weight: 700;
+  text-align: left;
+}
+.move-list button:hover,
+.move-list button.selected { background: var(--color-hover); }
+.move-icon { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--color-border); border-radius: 8px; color: var(--color-text); }
+.move-modal footer { justify-content: flex-end; padding-top: 18px; }
+.move-modal footer > span { flex: 1; }
+.outline-btn,
+.move-confirm {
+  min-height: 38px;
+  padding: 0 15px;
+  border-radius: 9px;
+  cursor: pointer;
+  font: inherit;
+}
+.outline-btn { border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); }
+.move-confirm { border: 0; background: var(--color-primary); color: var(--color-on-primary); }
+.move-confirm:disabled { opacity: .45; cursor: not-allowed; }
+
+@media (hover: none) {
+  .asset-check,
+  .asset-more,
+  .row-more { opacity: 1; }
 }
 
-.move-confirm:disabled {
-  opacity: 0.48;
-  cursor: not-allowed;
+@media (max-width: 980px) {
+  .asset-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .asset-list { --asset-list-date-column: 100px; --asset-list-size-column: 0px; }
+  .asset-list-head > span:nth-child(4),
+  .asset-row > span:nth-child(4) { display: none; }
 }
 
-@media (max-width: 1180px) {
-  .library-page {
-    padding: 42px 28px 56px;
-  }
-
-  .asset-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
+@media (max-width: 720px) {
+  .library-page { width: min(100% - 28px, 1180px); padding-top: 28px; }
   .library-header,
-  .library-controls {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .view-tools {
-    flex-wrap: wrap;
-  }
-
-  .asset-row {
-    grid-template-columns: 26px 28px minmax(0, 1fr) 64px;
-  }
-
-  .asset-row > span:nth-of-type(2),
-  .asset-row > span:nth-of-type(3) {
-    display: none;
-  }
-}
-
-@media (max-width: 760px) {
+  .library-controls { align-items: stretch; flex-direction: column; }
+  .library-header { margin-bottom: 30px; }
   .header-actions,
-  .search-box {
-    width: 100%;
+  .search-box { width: 100%; }
+  .header-actions { align-items: stretch; }
+  .new-menu-wrap { flex: 0 0 auto; }
+  .library-controls { gap: 16px; }
+  .tabs { overflow-x: auto; }
+  .view-tools { justify-content: flex-end; }
+  .asset-grid { grid-template-columns: 1fr; }
+  .asset-list {
+    --asset-list-check-column: 38px;
+    --asset-list-date-column: 0px;
+    --asset-list-size-column: 0px;
   }
-
-  .header-actions {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .new-btn {
-    width: 100%;
-    justify-content: center;
-  }
-
-  .new-menu {
-    left: 0;
-    right: 0;
-    width: 100%;
-  }
-
-  .tabs {
-    width: 100%;
-    overflow-x: auto;
-  }
-
-  .asset-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .view-tools > button:not(.round-icon):not(.filter-btn) {
-    width: 100%;
-    justify-content: center;
-  }
-
-  .new-knowledge-modal footer .outline-btn,
-  .new-knowledge-modal footer .primary-btn {
-    width: 100%;
-  }
+  .asset-list-head > span:nth-child(3),
+  .asset-list-head > span:nth-child(4),
+  .asset-row > span { display: none; }
+  .move-modal { min-height: 440px; padding: 20px; }
 }
 </style>

@@ -42,7 +42,7 @@ public class XfyunConfig {
     @Value("${xfyun.embedding.query-url:https://emb-cn-huabei-1.xf-yun.com/}")
     private String embeddingQueryUrl;
 
-    @Value("${xfyun.embedding.dimensions:2048}")
+    @Value("${xfyun.embedding.dimensions:2560}")
     private int embeddingDimensions;
 
     public String getAppId() { return appId; }
@@ -58,6 +58,10 @@ public class XfyunConfig {
     public String getEmbeddingQueryUrl() { return embeddingQueryUrl; }
     public int getEmbeddingDimensions() { return embeddingDimensions; }
 
+    public boolean hasApiCredentials() {
+        return !isBlank(appId) && !isBlank(apiKey) && !isBlank(apiSecret);
+    }
+
     public String getSparkApiPassword() {
         if (sparkApiPassword != null && !sparkApiPassword.isBlank()) return sparkApiPassword.trim();
         requireApiCredentials();
@@ -65,7 +69,7 @@ public class XfyunConfig {
     }
 
     public void requireApiCredentials() {
-        if (isBlank(appId) || isBlank(apiKey) || isBlank(apiSecret)) {
+        if (!hasApiCredentials()) {
             throw new IllegalStateException("讯飞服务未配置，请设置 XFYUN_APP_ID、XFYUN_API_KEY 和 XFYUN_API_SECRET");
         }
     }

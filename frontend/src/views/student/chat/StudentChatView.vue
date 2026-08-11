@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import AppIcon from '@/components/common/AppIcon.vue'
 import AppInput from '@/components/common/AppInput.vue'
+import ChatSourceSelector from '@/components/chat/input/ChatSourceSelector.vue'
 import StudentShell from '@/components/layout/StudentShell.vue'
 import SegmentPanel from '@/components/chat/SegmentPanel.vue'
 import MessageList from '@/components/chat/message/MessageList.vue'
@@ -19,6 +20,7 @@ import { isMockDataSource } from '@/config/dataSource'
 import type { ChatClientAction } from '@/repositories/chat'
 import { snapshotLearningProfile } from '@/utils/learningSetup'
 import { createRandomId } from '@/utils/randomId'
+import type { ConversationId } from '@/types/contracts/conversation'
 
 const conversationStore = useConversationStore()
 const messageStore = useMessageStore()
@@ -34,8 +36,8 @@ const projectId = computed(() => {
   return Number.isFinite(value) && value > 0 ? value : null
 })
 const routeConversation = computed(() => {
-  const id = Number(route.params.id)
-  return Number.isFinite(id) ? conversationStore.list.find((item) => item.id === id) : null
+  const id = typeof route.params.id === 'string' ? route.params.id : ''
+  return id ? conversationStore.list.find((item) => String(item.id) === id) ?? null : null
 })
 const isLearningRoute = computed(() => route.name === 'learning-new' || route.name === 'learning-setup')
 const isLearningChat = computed(() => isLearningRoute.value || route.query.learning === '1' || projectId.value !== null)
@@ -50,6 +52,8 @@ const learningProject = computed(() => projectId.value ? learningStore.getPlan(p
 type LearningPhase = 'idle' | 'analyzing' | 'profile' | 'document' | 'generating'
 const learningPhase = ref<LearningPhase>('idle')
 const selectedKnowledgeBaseId = ref<number | null>(null)
+const generalKnowledgeBaseId = ref<string | null>(null)
+const generalSourceAssetIds = ref<string[]>([])
 const knowledgeMenuOpen = ref(false)
 const knowledgeMenuQuery = ref('')
 const knowledgeCreateOpen = ref(false)
@@ -229,7 +233,7 @@ async function clearLearningSetup(activeProjectId = projectId.value) {
 async function requestLearningProfile(text: string) {
   const knowledgeBase = selectedKnowledgeBase.value
   return learningStore.generateLearningProfile({
-    conversationId: activeChatId.value,
+    conversationId: activeLearningChatId.value,
     knowledgeBaseId: selectedKnowledgeBaseId.value,
     text,
     currentProfile: learningProfile.value,
@@ -243,7 +247,7 @@ async function requestLearningProfile(text: string) {
 async function requestLearningConfirmation() {
   const result = await learningStore.generateLearningConfirmation({
     setupId: learningSetupId.value,
-    conversationId: activeChatId.value,
+    conversationId: activeLearningChatId.value,
     knowledgeBaseId: selectedKnowledgeBaseId.value,
     goal: learningPrompt.value || learningProfile.value.goal,
     profile: learningProfile.value,
@@ -270,8 +274,13 @@ const filteredKnowledgeBases = computed(() => {
 })
 
 const activeChatId = computed(() => conversationStore.currentId)
+const activeLearningChatId = computed<number | null>(() => {
+  if (!isLearningChat.value) return null
+  const numeric = Number(activeChatId.value)
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null
+})
 
-async function loadConversationMessages(id: number) {
+async function loadConversationMessages(id: ConversationId) {
   const loaded = await messageStore.ensureLoaded(id)
   if (!loaded) {
     retryAction.value = () => loadConversationMessages(id)
@@ -279,7 +288,10 @@ async function loadConversationMessages(id: number) {
   }
   if (isLearningSetupChat.value) {
     await restoreLearningSetup(projectId.value)
-    restoreLearningCards(id)
+    const learningConversationId = Number(id)
+    if (Number.isFinite(learningConversationId) && learningConversationId > 0) {
+      restoreLearningCards(learningConversationId)
+    }
   }
   const autoMsgKey = `chat_auto_msg_${id}`
   const autoMsgStr = sessionStorage.getItem(autoMsgKey)
@@ -307,7 +319,9 @@ watch(
 
 const currentConversation = computed(() => {
   if (!activeChatId.value) return null
-  return conversationStore.list.find((item) => item.id === activeChatId.value) || null
+  return conversationStore.list.find(
+    (item) => String(item.id) === String(activeChatId.value),
+  ) || null
 })
 
 const pageTitle = computed(() => currentConversation.value?.title || '新对话')
@@ -486,14 +500,19 @@ async function ensureTutorConversation() {
     matched = conversationStore.list.find((item) => item.id === storedId)
   }
 
-  const conversationId = matched?.id ?? await conversationStore.create({
+  const rawConversationId = matched?.id ?? await conversationStore.create({
     knowledgeBaseId: project.knowledgeBaseId ?? null,
     title,
     navigate: false,
     projectId: project.id,
     projectName: project.title,
     conversationType: 'learning-tutor',
+    localOnly: true,
   })
+  const conversationId = Number(rawConversationId)
+  if (!Number.isFinite(conversationId) || conversationId <= 0) {
+    throw new Error('学习助教会话初始化失败')
+  }
   if (isMockDataSource) sessionStorage.setItem(storageKey, String(conversationId))
   conversationStore.linkLearningProject(conversationId, project.id, project.title, 'learning-tutor')
   return conversationId
@@ -504,7 +523,7 @@ async function sendTutorQuestion(question: string, files?: File[], clientAction?
   if (!nextQuestion && !files?.length) return
   const conversationId = await ensureTutorConversation()
   if (!conversationId || !learningProject.value) return
-  if (activeChatId.value !== conversationId) {
+  if (activeLearningChatId.value !== conversationId) {
     await router.replace({
       path: `/chat/${conversationId}`,
       query: { projectId: String(learningProject.value.id), tutor: '1' },
@@ -543,9 +562,9 @@ async function ensureLearningConversation(text: string) {
     })
     activeProjectId = draft.id
   }
-  let conversationId = activeChatId.value
+  let conversationId = activeLearningChatId.value
   if (!conversationId) {
-    conversationId = await conversationStore.create({
+    const rawConversationId = await conversationStore.create({
       knowledgeBaseId: selectedKnowledgeBaseId.value,
       title: `${learningProject.value?.title || text.slice(0, 22) || '新学习项目'} · 方案制定`,
       projectId: activeProjectId,
@@ -554,6 +573,11 @@ async function ensureLearningConversation(text: string) {
       localOnly: true,
       navigate: false,
     })
+    const createdConversationId = Number(rawConversationId)
+    if (!Number.isFinite(createdConversationId) || createdConversationId <= 0) {
+      throw new Error('学习方案会话初始化失败')
+    }
+    conversationId = createdConversationId
   }
   const projectName = learningStore.getPlan(activeProjectId)?.title || text.slice(0, 22) || '新学习项目'
   conversationStore.linkLearningProject(conversationId, activeProjectId, projectName, 'learning-setup')
@@ -585,7 +609,7 @@ function showProfile(conversationId: number, text: string, existingMessageId?: s
       messageStore.updateLocalMessage(conversationId, messageId, {
         learningData: { loading: false, confirmed: false, profile: learningProfile.value },
       })
-      if (activeChatId.value === conversationId) {
+      if (activeLearningChatId.value === conversationId) {
         learningPhase.value = 'profile'
         persistLearningSetup()
       }
@@ -596,7 +620,7 @@ function showProfile(conversationId: number, text: string, existingMessageId?: s
         learningData: undefined,
         errorMsg: error instanceof Error ? error.message : '学习画像生成失败',
       })
-      if (activeChatId.value === conversationId) {
+      if (activeLearningChatId.value === conversationId) {
         learningPhase.value = 'idle'
         reportFlowError(error, '学习画像生成失败', () => showProfile(conversationId, text, messageId))
       }
@@ -634,7 +658,9 @@ async function onSend(text: string, files?: File[], complete?: (success?: boolea
       files,
       'chat',
       null,
-      currentConversation.value?.knowledgeBaseId ?? null,
+      typeof currentConversation.value?.knowledgeBaseId === 'number'
+        ? currentConversation.value.knowledgeBaseId
+        : null,
     )
   }
 
@@ -671,18 +697,30 @@ async function onSend(text: string, files?: File[], complete?: (success?: boolea
   }
 
   if (!activeChatId.value) {
-    const newChatId = await conversationStore.create()
+    const selectedSourceIds = [...generalSourceAssetIds.value]
+    const selectedKnowledgeBase = generalKnowledgeBaseId.value
+    const newChatId = await conversationStore.create({
+      knowledgeBaseId: selectedKnowledgeBase,
+    })
     await messageStore.sendMessage(newChatId, text, undefined, undefined, undefined, files, false, {
       clientAction: pendingClientAction.value,
       projectId: projectId.value,
+      runtime: 'v2-general',
+      sourceAssetExternalIds: selectedSourceIds,
     })
     succeeded = !messageStore.errorMessage
     return
   }
 
+  if (currentConversation.value?.conversationType === 'general'
+    && String(currentConversation.value.knowledgeBaseId ?? '') !== String(generalKnowledgeBaseId.value ?? '')) {
+    await conversationStore.moveToKnowledgeBase(activeChatId.value, generalKnowledgeBaseId.value)
+  }
   await messageStore.sendMessage(activeChatId.value, text, undefined, undefined, undefined, files, false, {
     clientAction: pendingClientAction.value,
     projectId: projectId.value,
+    runtime: 'v2-general',
+    sourceAssetExternalIds: generalSourceAssetIds.value,
   })
   succeeded = !messageStore.errorMessage
   } catch (error) {
@@ -694,8 +732,8 @@ async function onSend(text: string, files?: File[], complete?: (success?: boolea
 }
 
 async function confirmLearningProfile(messageId: string) {
-  if (!activeChatId.value || learningPhase.value !== 'profile') return
-  const conversationId = activeChatId.value
+  if (!activeLearningChatId.value || learningPhase.value !== 'profile') return
+  const conversationId = activeLearningChatId.value
   messageStore.updateLocalMessage(conversationId, messageId, {
     learningData: { loading: false, confirmed: true, profile: learningProfile.value },
   })
@@ -714,7 +752,7 @@ async function confirmLearningProfile(messageId: string) {
       messageStore.updateLocalMessage(conversationId, documentMessage.id, {
         learningData: { loading: false, content: confirmationDocument.value, resourceId: learningConfirmationResourceId.value },
       })
-      if (activeChatId.value !== conversationId) return
+      if (activeLearningChatId.value !== conversationId) return
       decisionDismissed.value = false
       learningPhase.value = 'document'
       persistLearningSetup()
@@ -722,7 +760,7 @@ async function confirmLearningProfile(messageId: string) {
       messageStore.updateLocalMessage(conversationId, documentMessage.id, {
         learningData: { loading: false, content: '' },
       })
-      if (activeChatId.value !== conversationId) return
+      if (activeLearningChatId.value !== conversationId) return
       learningPhase.value = 'profile'
       reportFlowError(error, '学习方案确认稿生成失败', () => regenerateLearningDocument(documentMessage.id))
     }
@@ -730,26 +768,26 @@ async function confirmLearningProfile(messageId: string) {
 }
 
 function updateLearningProfile(messageId: string, profile: LearningProfileData) {
-  if (!activeChatId.value || learningPhase.value !== 'profile') return
+  if (!activeLearningChatId.value || learningPhase.value !== 'profile') return
   learningProfile.value = profile
-  messageStore.updateLocalMessage(activeChatId.value, messageId, {
+  messageStore.updateLocalMessage(activeLearningChatId.value, messageId, {
     learningData: { loading: false, confirmed: false, profile },
   })
   persistLearningSetup()
 }
 
 function updateLearningDocument(messageId: string, content: string) {
-  if (!activeChatId.value) return
+  if (!activeLearningChatId.value) return
   confirmationDocument.value = content
-  messageStore.updateLocalMessage(activeChatId.value, messageId, {
+  messageStore.updateLocalMessage(activeLearningChatId.value, messageId, {
     learningData: { loading: false, content, resourceId: learningConfirmationResourceId.value },
   })
   persistLearningSetup()
 }
 
 function regenerateLearningDocument(messageId: string) {
-  if (!activeChatId.value || messageId !== currentDocumentMessageId.value) return
-  const conversationId = activeChatId.value
+  if (!activeLearningChatId.value || messageId !== currentDocumentMessageId.value) return
+  const conversationId = activeLearningChatId.value
   learningPhase.value = 'analyzing'
   decisionDismissed.value = false
   messageStore.updateLocalMessage(conversationId, messageId, {
@@ -762,14 +800,14 @@ function regenerateLearningDocument(messageId: string) {
       messageStore.updateLocalMessage(conversationId, messageId, {
         learningData: { loading: false, content: confirmationDocument.value, resourceId: learningConfirmationResourceId.value },
       })
-      if (activeChatId.value !== conversationId) return
+      if (activeLearningChatId.value !== conversationId) return
       learningPhase.value = 'document'
       persistLearningSetup()
     } catch (error) {
       messageStore.updateLocalMessage(conversationId, messageId, {
         learningData: { loading: false, content: '' },
       })
-      if (activeChatId.value !== conversationId) return
+      if (activeLearningChatId.value !== conversationId) return
       learningPhase.value = 'profile'
       reportFlowError(error, '学习方案确认稿生成失败', () => regenerateLearningDocument(messageId))
     }
@@ -825,9 +863,9 @@ function scheduleLearningPlanGeneration(conversationId: number) {
         knowledgeBaseName: selectedKnowledgeBase.value?.name,
       })
       await clearLearningSetup(draftProjectId)
-      if (activeChatId.value === conversationId) await router.push(`/learning/${generated.id}`)
+      if (activeLearningChatId.value === conversationId) await router.push(`/learning/${generated.id}`)
     } catch (error) {
-      if (activeChatId.value !== conversationId) return
+      if (activeLearningChatId.value !== conversationId) return
       learningPhase.value = 'document'
       reportFlowError(error, '学习方案生成失败', () => scheduleLearningPlanGeneration(conversationId))
     }
@@ -854,12 +892,12 @@ async function resumeLearningPlanGeneration() {
 }
 
 function confirmLearningPlan() {
-  if (!activeChatId.value || learningPhase.value !== 'document') return
+  if (!activeLearningChatId.value || learningPhase.value !== 'document') return
   if (isGeneratedLearningProject()) {
     void clearLearningSetup().then(() => router.replace(`/learning/${projectId.value}`))
     return
   }
-  const conversationId = activeChatId.value
+  const conversationId = activeLearningChatId.value
   decisionDismissed.value = true
   appendLearningMessage(conversationId, 'user', '确认当前学习方案，开始生成学习路径和相关内容。')
   appendLearningMessage(conversationId, 'assistant', '已确认。我正在生成学习路径、练习任务和思维导图…')
@@ -906,7 +944,7 @@ async function runHomePromptAction(action: HomePromptAction) {
       projectName: learningProject.value?.title,
       conversationType: isTutorChat.value ? 'learning-tutor' : 'general',
     })
-    if (activeChatId.value !== conversationId) {
+    if (String(activeChatId.value ?? '') !== String(conversationId)) {
       const query = projectId.value ? { projectId: String(projectId.value) } : undefined
       await router.replace({ path: `/chat/${conversationId}`, query })
     }
@@ -965,7 +1003,7 @@ async function initializeLearningChat() {
       return
     }
     await restoreLearningSetup(projectId.value)
-    if (activeChatId.value) restoreLearningCards(activeChatId.value)
+    if (activeLearningChatId.value) restoreLearningCards(activeLearningChatId.value)
     await resumeLearningPlanGeneration()
   } catch (error) {
     reportFlowError(error, '初始化学习方案对话失败', initializeLearningChat)
@@ -978,6 +1016,27 @@ onMounted(() => {
   void initializeLearningChat()
   window.addEventListener('keydown', handleKeyDown)
 })
+
+watch(
+  [currentConversation, () => route.query.knowledgeBaseId, () => route.query.sourceAssetIds, isLearningChat],
+  ([conversation, requestedKnowledgeBaseId, requestedAssetIds, learning]) => {
+    if (learning) return
+    generalKnowledgeBaseId.value = typeof requestedKnowledgeBaseId === 'string'
+      ? requestedKnowledgeBaseId
+      : typeof conversation?.knowledgeBaseId === 'string'
+        ? conversation.knowledgeBaseId
+        : null
+    const rawAssetIds = Array.isArray(requestedAssetIds)
+      ? requestedAssetIds.join(',')
+      : typeof requestedAssetIds === 'string'
+        ? requestedAssetIds
+        : ''
+    generalSourceAssetIds.value = [...new Set(
+      rawAssetIds.split(',').map((value) => value.trim()).filter(Boolean),
+    )].slice(0, 20)
+  },
+  { immediate: true },
+)
 
 let routeIntentHandled = false
 watch(
@@ -1173,7 +1232,7 @@ watch(
           :media-enabled="true"
           :media-purpose="isLearningChat ? 'learning-input' : 'chat-attachment'"
           :media-context="{
-            conversationId: activeChatId,
+            conversationId: activeLearningChatId,
             knowledgeBaseId: selectedKnowledgeBaseId,
             projectId,
           }"
@@ -1202,6 +1261,13 @@ watch(
                 </button>
               </div>
             </div>
+          </template>
+          <template v-else-if="!isLearningChat" #context>
+            <ChatSourceSelector
+              v-model:knowledge-base-id="generalKnowledgeBaseId"
+              v-model:asset-ids="generalSourceAssetIds"
+              :disabled="messageStore.isStreaming"
+            />
           </template>
         </AppInput>
 

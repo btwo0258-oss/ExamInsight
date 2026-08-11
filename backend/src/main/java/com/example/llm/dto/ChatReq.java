@@ -26,6 +26,12 @@ public class ChatReq {
 
     private Long kbId;
 
+    /** V2 source scope. At most one knowledge base can be selected. */
+    private String knowledgeBaseExternalId;
+
+    /** V2 direct source attachments. Public Beta allows at most 20 assets. */
+    private java.util.List<String> sourceAssetExternalIds;
+
     public String getEffectiveQuestion() {
         return question != null ? question : message;
     }

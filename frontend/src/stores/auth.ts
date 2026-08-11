@@ -20,6 +20,7 @@ import { useExamAnalysisStore } from '@/stores/examAnalysis'
 import { useMindMapStore } from '@/stores/mindmap'
 import { useLearningStore } from '@/stores/learning'
 import { useLibraryResourceStore } from '@/stores/libraryResource'
+import { useAssetLibraryV2Store } from '@/stores/assetLibraryV2'
 
 export type User = {
   id: string
@@ -55,6 +56,7 @@ export const useAuthStore = defineStore('auth', () => {
     useMindMapStore().clearAll()
     useLearningStore().clearAll()
     useLibraryResourceStore().clearAll()
+    useAssetLibraryV2Store().clear()
   }
 
   function expireLocalSession() {

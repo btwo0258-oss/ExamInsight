@@ -9,7 +9,6 @@ function mountInput() {
     props: { mediaEnabled: true },
     global: {
       stubs: {
-        ModelSwitch: true,
         AttachmentCard: true,
         ImageCaptureUploader: true,
         VoiceRecorder: true,

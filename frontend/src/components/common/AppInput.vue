@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Paperclip, Plus } from 'lucide-vue-next'
-import ModelSwitch from './ModelSwitch.vue'
 import AttachmentCard from '@/components/chat/input/AttachmentCard.vue'
 import ImageCaptureUploader from '@/components/capture/ImageCaptureUploader.vue'
 import VoiceRecorder from '@/components/capture/VoiceRecorder.vue'
@@ -258,7 +257,6 @@ function send() {
           </div>
 
           <div class="toolbar-right">
-            <ModelSwitch align="right" />
             <VoiceRecorder
               v-if="mediaEnabled"
               :disabled="disabled || isStreaming || submitting"

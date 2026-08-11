@@ -7,6 +7,7 @@ import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import { useRouter } from 'vue-router'
 import KnowledgeBaseCreate from '../knowledge/KnowledgeBaseCreate.vue'
 import type { Conversation } from '@/api/conversation'
+import type { ConversationId } from '@/types/contracts/conversation'
 
 import AppIcon from '@/components/common/AppIcon.vue'
 
@@ -16,9 +17,9 @@ type Props = {
 }
 const props = defineProps<Props>()
 const emit = defineEmits<{
-  open: [id: number]
-  rename: [id: number, title: string]
-  remove: [id: number]
+  open: [id: ConversationId]
+  rename: [id: ConversationId, title: string]
+  remove: [id: ConversationId]
 }>()
 
 const conversationStore = useConversationStore()

@@ -90,14 +90,19 @@ export const useLearningTutorStore = defineStore('learningTutor', () => {
       conversationStore.restoreLearningConversation(storedId, plan.id, plan.title, plan.knowledgeBaseId || null, title)
       matched = conversationStore.list.find((item) => item.id === storedId)
     }
-    const conversationId = matched?.id ?? await conversationStore.create({
+    const rawConversationId = matched?.id ?? await conversationStore.create({
       knowledgeBaseId: plan.knowledgeBaseId || null,
       title,
       navigate: false,
       projectId: plan.id,
       projectName: plan.title,
       conversationType: 'learning-tutor',
+      localOnly: true,
     })
+    const conversationId = Number(rawConversationId)
+    if (!Number.isFinite(conversationId) || conversationId <= 0) {
+      throw new Error('学习助教会话初始化失败')
+    }
     conversationIds.value[plan.id] = conversationId
     if (isMockDataSource) sessionStorage.setItem(storageKey(plan.id), String(conversationId))
     conversationStore.linkLearningProject(conversationId, plan.id, plan.title, 'learning-tutor')

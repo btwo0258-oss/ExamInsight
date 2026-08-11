@@ -4,6 +4,7 @@ import type {
   CreateConversationRequest,
   UpdateConversationRequest,
 } from "@/types/contracts/conversation";
+import type { ConversationId } from "@/types/contracts/conversation";
 
 export type Conversation = ConversationDto;
 
@@ -16,12 +17,12 @@ export function createConversation(payload?: CreateConversationRequest): Promise
 }
 
 export function updateConversation(
-  id: number,
+  id: ConversationId,
   payload: UpdateConversationRequest,
 ): Promise<Conversation> {
   return conversationRepository.update(id, payload);
 }
 
-export function deleteConversation(id: number): Promise<void> {
+export function deleteConversation(id: ConversationId): Promise<void> {
   return conversationRepository.remove(id);
 }

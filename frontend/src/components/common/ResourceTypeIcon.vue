@@ -16,8 +16,9 @@ const props = withDefaults(defineProps<{
 })
 
 const visual = computed(() => resourceVisuals[props.type] ?? resourceVisuals.other)
+const iconColor = computed(() => props.variant === 'plain' ? 'currentColor' : visual.value.color)
 const style = computed(() => ({
-  '--resource-icon-color': visual.value.color,
+  '--resource-icon-color': iconColor.value,
   '--resource-icon-container-size': `${props.variant === 'plain' ? props.size : props.containerSize}px`,
   '--resource-icon-radius': `${Math.max(4, Math.round(props.containerSize * 0.25))}px`,
 }))
@@ -31,7 +32,7 @@ const style = computed(() => ({
     :style="style"
     aria-hidden="true"
   >
-    <AppIcon :name="visual.icon" :size="size" :color="visual.color" />
+    <AppIcon :name="visual.icon" :size="size" :color="iconColor" />
   </span>
 </template>
 

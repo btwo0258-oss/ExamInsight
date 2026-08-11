@@ -5,20 +5,17 @@ import { useRouter } from "vue-router";
 import SidebarHeader from "./SidebarHeader.vue";
 import NewChatButton from "./NewChatButton.vue";
 import LearningWorkspaceSection from "./LearningWorkspaceSection.vue";
-import ResourceCenterSection from "./ResourceCenterSection.vue";
 import ConversationList from "./ConversationList.vue";
 import KnowledgeBaseSection from "./KnowledgeBaseSection.vue";
 import ExamAnalysisSection from "./ExamAnalysisSection.vue";
 import MindMapSection from "./MindMapSection.vue";
 import ThemeToggle from "./ThemeToggle.vue";
 import SidebarFooter from "./SidebarFooter.vue";
-import AppIcon from "@/components/common/AppIcon.vue";
 
 import { useAuthStore } from "@/stores/auth";
 import { useConversationStore } from "@/stores/conversation";
 import { useKnowledgeBaseStore } from "@/stores/knowledgeBase";
 import { useMindMapStore } from "@/stores/mindmap";
-import { useAppState } from "@/stores/appState";
 
 type Props = { open: boolean };
 defineProps<Props>();
@@ -29,7 +26,6 @@ const authStore = useAuthStore();
 const conversationStore = useConversationStore();
 const knowledgeBaseStore = useKnowledgeBaseStore();
 const mindMapStore = useMindMapStore();
-const appState = useAppState();
 
 const pinnedItems = computed(() => conversationStore.pinnedConversations);
 
@@ -73,7 +69,6 @@ watch(
       <NewChatButton />
 
       <LearningWorkspaceSection />
-      <ResourceCenterSection />
       <KnowledgeBaseSection />
       <ExamAnalysisSection />
       <MindMapSection />

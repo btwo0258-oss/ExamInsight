@@ -12,6 +12,7 @@ services:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
       - --innodb-buffer-pool-size=512M
+      - --ngram_token_size=2
     volumes:
       - mysql_data:/var/lib/mysql
       - ./deploy/mysql/init-clean-schema.sh:/docker-entrypoint-initdb.d/00-init-clean-schema.sh:ro
@@ -40,21 +41,40 @@ services:
       - internal
 
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.4
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.19
     restart: unless-stopped
     environment:
       discovery.type: single-node
       xpack.security.enabled: "false"
+      action.auto_create_index: "false"
       ES_JAVA_OPTS: -Xms1g -Xmx1g
     mem_limit: 2g
     volumes:
       - elasticsearch_data:/usr/share/elasticsearch/data
+    ports:
+      - "${ELASTICSEARCH_BIND_ADDRESS:-127.0.0.1}:${ELASTICSEARCH_PORT:-9200}:9200"
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS 'http://127.0.0.1:9200/_cluster/health?wait_for_status=yellow' >/dev/null || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 30
       start_period: 60s
+    networks:
+      - internal
+
+  clamav:
+    image: clamav/clamav:1.4
+    profiles: ["security-scan"]
+    restart: unless-stopped
+    mem_limit: 3g
+    ports:
+      - "${CLAMAV_BIND_ADDRESS:-127.0.0.1}:${CLAMAV_PORT:-3310}:3310"
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --ping 1 >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
     networks:
       - internal
 
@@ -75,6 +95,25 @@ services:
       ELASTICSEARCH_HOST: elasticsearch
       ELASTICSEARCH_PORT: 9200
       UPLOAD_PATH: /app/data/uploads
+      V2_STORAGE_MODE: ${V2_STORAGE_MODE:-local}
+      V2_STORAGE_BUCKET: ${V2_STORAGE_BUCKET:-local-private}
+      V2_STORAGE_KEY_SECRET: ${V2_STORAGE_KEY_SECRET:?Set a separate V2_STORAGE_KEY_SECRET in .env}
+      V2_LOCAL_STORAGE_ROOT: ${V2_LOCAL_STORAGE_ROOT:-/app/data/v2-storage}
+      V2_ASSET_PROCESSING_ENABLED: ${V2_ASSET_PROCESSING_ENABLED:-true}
+      V2_FILE_SCANNER_MODE: ${V2_FILE_SCANNER_MODE:-clamav}
+      CLAMAV_HOST: ${CLAMAV_HOST:-clamav}
+      CLAMAV_PORT: ${CLAMAV_PORT:-3310}
+      V2_VECTOR_INDEXING_ENABLED: ${V2_VECTOR_INDEXING_ENABLED:-true}
+      V2_EMBEDDING_PROVIDER: ${V2_EMBEDDING_PROVIDER:-dashscope}
+      V2_EMBEDDING_PROVIDER_MODEL: ${V2_EMBEDDING_PROVIDER_MODEL:-text-embedding-v4}
+      V2_EMBEDDING_MODEL_KEY: ${V2_EMBEDDING_MODEL_KEY:-dashscope-text-embedding-v4-1024}
+      V2_EMBEDDING_VERSION: ${V2_EMBEDDING_VERSION:-dashscope-text-embedding-v4-1024-v1}
+      V2_VECTOR_INDEX_NAME: ${V2_VECTOR_INDEX_NAME:-examinsight-v2-chunks-dashscope-v4-1024-v1}
+      V2_EMBEDDING_DIMENSIONS: ${V2_EMBEDDING_DIMENSIONS:-1024}
+      V2_RETRIEVAL_ENABLED: ${V2_RETRIEVAL_ENABLED:-true}
+      V2_RETRIEVAL_TOP_K: ${V2_RETRIEVAL_TOP_K:-6}
+      V2_RETRIEVAL_MIN_SCORE: ${V2_RETRIEVAL_MIN_SCORE:-0.55}
+      V2_RETRIEVAL_CONTEXT_TOKENS: ${V2_RETRIEVAL_CONTEXT_TOKENS:-3200}
       CORS_ALLOWED_ORIGIN_PATTERNS: ${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN in .env}
       AUTH_HASH_SECRET: ${AUTH_HASH_SECRET:?Set AUTH_HASH_SECRET in .env}
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
@@ -91,6 +130,7 @@ services:
       SMTP_STARTTLS_ENABLE: ${SMTP_STARTTLS_ENABLE:-true}
       AUTH_MAIL_FROM: ${AUTH_MAIL_FROM:?Set AUTH_MAIL_FROM in .env}
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      DASHSCOPE_EMBEDDING_ENDPOINT: ${DASHSCOPE_EMBEDDING_ENDPOINT:-https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings}
       XFYUN_APP_ID: ${XFYUN_APP_ID:-}
       XFYUN_API_KEY: ${XFYUN_API_KEY:-}
       XFYUN_API_SECRET: ${XFYUN_API_SECRET:-}
@@ -100,6 +140,7 @@ services:
       TZ: Asia/Shanghai
     volumes:
       - uploads_data:/app/data/uploads
+      - v2_storage_data:/app/data/v2-storage
     depends_on:
       mysql:
         condition: service_healthy
@@ -172,5 +213,6 @@ volumes:
   redis_data:
   elasticsearch_data:
   uploads_data:
+  v2_storage_data:
   letsencrypt_data:
   certbot_webroot:
