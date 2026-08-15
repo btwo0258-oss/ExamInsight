@@ -72,9 +72,6 @@ CREATE TABLE asset_preview_derivative (
     CONSTRAINT ck_asset_preview_derivative__status CHECK (
         status IN ('QUEUED', 'PROCESSING', 'READY', 'FAILED', 'NOT_SUPPORTED')
     ),
-    CONSTRAINT ck_asset_preview_derivative__ready_shape CHECK (
-        status <> 'READY' OR storage_object_id IS NOT NULL
-    ),
     INDEX idx_asset_preview_derivative__status (status, updated_at)
 ) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 
@@ -102,10 +99,6 @@ CREATE TABLE ai_context_source (
         FOREIGN KEY (asset_version_id) REFERENCES asset_version (id),
     CONSTRAINT ck_ai_context_source__kind CHECK (
         source_kind IN ('KNOWLEDGE_BASE', 'DIRECT_ASSET')
-    ),
-    CONSTRAINT ck_ai_context_source__base_shape CHECK (
-        (source_kind = 'KNOWLEDGE_BASE' AND knowledge_base_id IS NOT NULL)
-        OR (source_kind = 'DIRECT_ASSET' AND knowledge_base_id IS NULL)
     ),
     INDEX idx_ai_context_source__version_id (asset_version_id),
     INDEX idx_ai_context_source__knowledge_base_id (knowledge_base_id)
@@ -154,10 +147,6 @@ CREATE TABLE artifact_draft (
     ),
     CONSTRAINT ck_artifact_draft__content CHECK (
         JSON_TYPE(content_json) = 'OBJECT'
-    ),
-    CONSTRAINT ck_artifact_draft__confirmation CHECK (
-        (status = 'CONFIRMED' AND confirmed_asset_version_id IS NOT NULL AND confirmed_at IS NOT NULL)
-        OR (status <> 'CONFIRMED' AND confirmed_at IS NULL)
     ),
     INDEX idx_artifact_draft__conversation_status (conversation_id, status, updated_at),
     INDEX idx_artifact_draft__user_type (user_id, artifact_type, updated_at)

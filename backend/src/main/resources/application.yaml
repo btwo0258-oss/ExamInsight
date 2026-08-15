@@ -58,7 +58,7 @@ app:
       default-context-tokens: ${V2_RETRIEVAL_CONTEXT_TOKENS:3200}
       max-context-tokens: 8000
       max-chunks-per-asset: 3
-      max-explicit-scope-items: 100
+      max-explicit-scope-items: ${V2_MAX_EXPLICIT_SCOPE_ITEMS:20}
       max-scoped-assets: 10000
       max-query-characters: 2000
   auth:

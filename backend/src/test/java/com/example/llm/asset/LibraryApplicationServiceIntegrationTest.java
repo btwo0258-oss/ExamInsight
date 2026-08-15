@@ -24,6 +24,7 @@ import com.example.llm.asset.storage.LocalObjectStorageGateway;
 import com.example.llm.asset.storage.StorageObjectKeyCipher;
 import com.example.llm.auth.config.AuthProperties;
 import com.example.llm.auth.security.AuthCrypto;
+import com.example.llm.integration.ai.AiCapabilityRouter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
@@ -45,6 +46,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -183,6 +185,7 @@ class LibraryApplicationServiceIntegrationTest {
                 vectorIndex,
                 processingProperties,
                 embeddingRuntime,
+                mock(AiCapabilityRouter.class),
                 clock);
 
         LocalDateTime now = LocalDateTime.now(clock);

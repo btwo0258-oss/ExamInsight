@@ -1,16 +1,18 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
 import {
-  ArrowUp, FileText, Image, LoaderCircle, Mic, Network, Presentation,
+  ArrowUp, FileText, Image, LoaderCircle, Network, Presentation,
   RotateCcw, Square, Volume2,
 } from 'lucide-vue-next'
 
 import ChatArtifactCard from '@/components/artifact/ChatArtifactCard.vue'
 import ChatSourceSelector from '@/components/chat/input/ChatSourceSelector.vue'
+import VoiceRecorder from '@/components/capture/VoiceRecorder.vue'
 import StudentShell from '@/components/layout/StudentShell.vue'
+import { synthesizeSpeech } from '@/api/chatV2'
 import { useAuthStore } from '@/stores/auth'
 import { useChatV2Store } from '@/stores/chatV2'
 import type { Artifact, ChatMessage } from '@/types/contracts/chatV2'
@@ -26,6 +28,12 @@ const selectedAssetIds = ref<string[]>([])
 const scrollContainer = ref<HTMLElement | null>(null)
 const composer = ref<HTMLTextAreaElement | null>(null)
 const artifactBusyId = ref('')
+const voiceError = ref('')
+const speechLoadingMessageId = ref('')
+const speechPlayingMessageId = ref('')
+let speechAbortController: AbortController | null = null
+let speechAudio: HTMLAudioElement | null = null
+let speechObjectUrl = ''
 
 const routeConversationId = computed(() => typeof route.params.id === 'string' ? route.params.id : '')
 const hasMessages = computed(() => chatStore.messages.some(message => ['USER', 'ASSISTANT'].includes(message.role)))
@@ -61,6 +69,58 @@ function resizeComposer() {
   if (!element) return
   element.style.height = '0px'
   element.style.height = `${Math.min(Math.max(element.scrollHeight, 48), 180)}px`
+}
+
+function handleTranscribed(text: string) {
+  const value = text.trim()
+  if (!value) return
+  prompt.value = prompt.value.trim() ? `${prompt.value.trim()} ${value}` : value
+  voiceError.value = ''
+  nextTick(() => {
+    composer.value?.focus()
+    resizeComposer()
+  })
+}
+
+function stopSpeech() {
+  speechAbortController?.abort()
+  speechAbortController = null
+  speechAudio?.pause()
+  speechAudio = null
+  if (speechObjectUrl) URL.revokeObjectURL(speechObjectUrl)
+  speechObjectUrl = ''
+  speechLoadingMessageId.value = ''
+  speechPlayingMessageId.value = ''
+}
+
+async function toggleSpeech(message: ChatMessage) {
+  if (speechPlayingMessageId.value === message.id || speechLoadingMessageId.value === message.id) {
+    stopSpeech()
+    return
+  }
+  stopSpeech()
+  voiceError.value = ''
+  speechLoadingMessageId.value = message.id
+  speechAbortController = new AbortController()
+  try {
+    const audioBlob = await synthesizeSpeech(message.content, speechAbortController.signal)
+    speechAbortController = null
+    speechObjectUrl = URL.createObjectURL(audioBlob)
+    speechAudio = new Audio(speechObjectUrl)
+    speechAudio.onended = stopSpeech
+    speechAudio.onerror = () => {
+      voiceError.value = '回答朗读失败，请稍后重试。'
+      stopSpeech()
+    }
+    speechLoadingMessageId.value = ''
+    speechPlayingMessageId.value = message.id
+    await speechAudio.play()
+  } catch (error) {
+    if (!(error instanceof DOMException && error.name === 'AbortError')) {
+      voiceError.value = error instanceof Error ? error.message : '回答朗读失败，请稍后重试。'
+    }
+    stopSpeech()
+  }
 }
 
 async function scrollToBottom(behavior: ScrollBehavior = 'smooth') {
@@ -153,6 +213,8 @@ onMounted(async () => {
   }
 })
 
+onBeforeUnmount(stopSpeech)
+
 watch(routeConversationId, async (conversationId) => {
   if (conversationId) await loadConversation(conversationId)
   else chatStore.clearActive()
@@ -209,7 +271,17 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
                 >{{ citation.number }}. {{ citation.assetName }}<small v-if="citation.locator">{{ citation.locator }}</small></button>
               </div>
               <div v-if="message.content && message.finalizedAt" class="message-actions">
-                <button type="button" title="朗读回答" aria-label="朗读回答"><Volume2 :size="16" /></button>
+                <button
+                  type="button"
+                  :title="speechPlayingMessageId === message.id ? '停止朗读' : '朗读回答'"
+                  :aria-label="speechPlayingMessageId === message.id ? '停止朗读' : '朗读回答'"
+                  :aria-pressed="speechPlayingMessageId === message.id"
+                  @click="toggleSpeech(message)"
+                >
+                  <LoaderCircle v-if="speechLoadingMessageId === message.id" class="spin" :size="16" />
+                  <Square v-else-if="speechPlayingMessageId === message.id" :size="13" fill="currentColor" />
+                  <Volume2 v-else :size="16" />
+                </button>
               </div>
               <div v-if="artifactsFor(message).length" class="artifact-list">
                 <ChatArtifactCard
@@ -248,6 +320,7 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
             @input="resizeComposer"
             @keydown="handleComposerKeydown"
           />
+          <p v-if="voiceError" class="voice-error" role="alert">{{ voiceError }}</p>
           <div class="composer-toolbar">
             <ChatSourceSelector
               v-model:knowledge-base-id="selectedKnowledgeBaseId"
@@ -255,7 +328,12 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
               :disabled="chatStore.sending"
             />
             <div class="composer-actions">
-              <button type="button" class="icon-button" title="语音转文字" aria-label="语音转文字"><Mic :size="18" /></button>
+              <VoiceRecorder
+                chat-v2
+                :disabled="chatStore.sending"
+                @transcribed="handleTranscribed"
+                @error="voiceError = $event"
+              />
               <button v-if="chatStore.sending" type="button" class="send-button" title="停止生成" @click="chatStore.cancel"><Square :size="15" fill="currentColor" /></button>
               <button v-else type="button" class="send-button" :disabled="!canSend" title="发送" @click="submit"><ArrowUp :size="20" /></button>
             </div>
@@ -303,11 +381,10 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
 .composer-dock { position: absolute; right: 0; bottom: 0; left: 0; padding: 18px 24px 14px; background: linear-gradient(transparent, var(--color-bg) 25%); }
 .composer-box { width: min(820px, 100%); margin: 0 auto; padding: 10px 12px 9px; border: 1px solid var(--color-border); border-radius: 25px; background: var(--color-bg); box-shadow: 0 8px 30px rgb(0 0 0 / 8%); }
 .composer-box textarea { display: block; width: 100%; min-height: 48px; max-height: 180px; resize: none; padding: 9px 8px; border: 0; outline: 0; color: inherit; background: transparent; font: 15px/1.55 inherit; }
+.voice-error { margin: 0 8px 8px; color: var(--color-danger); font-size: 12px; }
 .composer-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .composer-actions { display: flex; gap: 7px; }
-.icon-button, .send-button { display: grid; width: 36px; height: 36px; padding: 0; place-items: center; border: 0; border-radius: 50%; cursor: pointer; }
-.icon-button { color: var(--color-text); background: transparent; }
-.icon-button:hover { background: var(--color-surface); }
+.send-button { display: grid; width: 36px; height: 36px; padding: 0; place-items: center; border: 0; border-radius: 50%; cursor: pointer; }
 .send-button { color: var(--color-bg); background: var(--color-text); }
 .send-button:disabled { cursor: default; opacity: .25; }
 .composer-dock > small { display: block; margin-top: 8px; color: var(--color-text-muted); font-size: 11px; text-align: center; }
