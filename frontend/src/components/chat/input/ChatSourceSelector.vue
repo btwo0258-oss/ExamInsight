@@ -1,63 +1,85 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { Check, ChevronDown, FileText, Folder, Search } from 'lucide-vue-next'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { Check, ChevronDown, Folder, Plus, X } from 'lucide-vue-next'
 
 import { useAssetLibraryV2Store } from '@/stores/assetLibraryV2'
 
 const props = defineProps<{
   knowledgeBaseId: string | null
-  assetIds: string[]
   disabled?: boolean
 }>()
 
 const emit = defineEmits<{
   'update:knowledgeBaseId': [value: string | null]
-  'update:assetIds': [value: string[]]
 }>()
 
 const store = useAssetLibraryV2Store()
+const root = ref<HTMLElement | null>(null)
 const open = ref(false)
-const query = ref('')
+const creating = ref(false)
+const createName = ref('')
+const createInput = ref<HTMLInputElement | null>(null)
+const createError = ref('')
 
-const readyAssets = computed(() => store.assets.filter(asset => (
-  asset.status?.toUpperCase() === 'ACTIVE'
-  && asset.version?.status?.toUpperCase() === 'READY'
-)))
-const filteredKnowledgeBases = computed(() => {
-  const keyword = query.value.trim().toLocaleLowerCase()
-  return store.knowledgeBases.filter(item => !keyword || item.name.toLocaleLowerCase().includes(keyword))
-})
-const filteredAssets = computed(() => {
-  const keyword = query.value.trim().toLocaleLowerCase()
-  return readyAssets.value.filter(item => !keyword || item.name.toLocaleLowerCase().includes(keyword))
-})
-const selectedCount = computed(() => props.assetIds.length + (props.knowledgeBaseId ? 1 : 0))
+const selectedKnowledgeBase = computed(() => (
+  store.knowledgeBases.find(item => item.knowledgeBaseId === props.knowledgeBaseId) ?? null
+))
+const triggerLabel = computed(() => selectedKnowledgeBase.value?.name || '不关联知识库')
+
+async function ensureKnowledgeBases() {
+  if (store.knowledgeBases.length || store.loading) return
+  await store.loadKnowledgeBases('library').catch(() => undefined)
+}
 
 async function toggle() {
   if (props.disabled) return
   open.value = !open.value
-  if (open.value && !store.assets.length && !store.knowledgeBases.length) {
-    await store.refresh('library').catch(() => undefined)
+  if (open.value) await ensureKnowledgeBases()
+}
+
+function selectKnowledgeBase(value: string | null) {
+  emit('update:knowledgeBaseId', value)
+  open.value = false
+  creating.value = false
+  createName.value = ''
+  createError.value = ''
+}
+
+async function startCreating() {
+  creating.value = true
+  createError.value = ''
+  await nextTick()
+  createInput.value?.focus()
+}
+
+async function createKnowledgeBase() {
+  const name = createName.value.trim()
+  if (!name || store.mutating) return
+  createError.value = ''
+  try {
+    const created = await store.createKnowledgeBase(name, '')
+    selectKnowledgeBase(created.knowledgeBaseId)
+  } catch (error) {
+    createError.value = error instanceof Error ? error.message : '创建知识库失败。'
   }
 }
 
-function toggleAsset(assetId: string) {
-  if (props.assetIds.includes(assetId)) {
-    emit('update:assetIds', props.assetIds.filter(id => id !== assetId))
-  } else if (props.assetIds.length < 20) {
-    emit('update:assetIds', [...props.assetIds, assetId])
-  }
+function handleDocumentPointerDown(event: PointerEvent) {
+  if (root.value?.contains(event.target as Node)) return
+  open.value = false
+  creating.value = false
 }
 
 onMounted(() => {
-  if (!store.assets.length && !store.knowledgeBases.length) {
-    void store.refresh('library').catch(() => undefined)
-  }
+  document.addEventListener('pointerdown', handleDocumentPointerDown)
+  void ensureKnowledgeBases()
 })
+
+onBeforeUnmount(() => document.removeEventListener('pointerdown', handleDocumentPointerDown))
 </script>
 
 <template>
-  <div class="chat-source-selector">
+  <div ref="root" class="chat-source-selector">
     <button
       class="source-trigger"
       type="button"
@@ -66,99 +88,105 @@ onMounted(() => {
       @click="toggle"
     >
       <Folder :size="16" />
-      <span>{{ selectedCount ? `已关联 ${selectedCount} 项` : '添加资料' }}</span>
-      <ChevronDown :size="14" />
+      <span>{{ triggerLabel }}</span>
+      <ChevronDown :size="14" :class="{ rotated: open }" />
     </button>
 
     <div v-if="open" class="source-panel">
-      <label class="source-search">
-        <Search :size="16" />
-        <input v-model="query" placeholder="搜索知识库或资料" />
-      </label>
-
-      <section class="source-section">
-        <header><strong>知识库</strong><small>最多 1 个</small></header>
+      <div class="source-options">
         <button
           class="source-option"
           type="button"
           :aria-selected="knowledgeBaseId === null"
-          @click="emit('update:knowledgeBaseId', null)"
+          @click="selectKnowledgeBase(null)"
         >
-          <span class="source-radio" :class="{ selected: knowledgeBaseId === null }" />
-          <span>不关联知识库</span>
+          <X :size="17" />
+          <span class="source-name">无</span>
+          <Check v-if="knowledgeBaseId === null" :size="17" :stroke-width="2.4" />
         </button>
+
         <button
-          v-for="item in filteredKnowledgeBases"
+          v-for="item in store.knowledgeBases"
           :key="item.knowledgeBaseId"
           class="source-option"
           type="button"
           :aria-selected="knowledgeBaseId === item.knowledgeBaseId"
-          @click="emit('update:knowledgeBaseId', item.knowledgeBaseId)"
+          @click="selectKnowledgeBase(item.knowledgeBaseId)"
         >
-          <span class="source-radio" :class="{ selected: knowledgeBaseId === item.knowledgeBaseId }" />
-          <Folder :size="16" />
+          <Folder :size="17" />
           <span class="source-name">{{ item.name }}</span>
           <small>{{ item.assetCount }} 项</small>
+          <Check
+            v-if="knowledgeBaseId === item.knowledgeBaseId"
+            :size="17"
+            :stroke-width="2.4"
+          />
         </button>
-      </section>
+
+        <p v-if="store.loading && !store.knowledgeBases.length" class="source-empty">正在加载知识库</p>
+      </div>
 
       <div class="source-divider" />
-      <section class="source-section">
-        <header><strong>单独资料</strong><small>{{ assetIds.length }}/20</small></header>
-        <button
-          v-for="item in filteredAssets"
-          :key="item.assetId"
-          class="source-option"
-          type="button"
-          :aria-selected="assetIds.includes(item.assetId)"
-          @click="toggleAsset(item.assetId)"
-        >
-          <span class="source-check" :class="{ selected: assetIds.includes(item.assetId) }">
-            <Check v-if="assetIds.includes(item.assetId)" :size="12" :stroke-width="3" />
-          </span>
-          <FileText :size="16" />
-          <span class="source-name">{{ item.name }}</span>
-        </button>
-        <p v-if="!filteredAssets.length" class="source-empty">暂无解析完成的资料</p>
-      </section>
+
+      <button v-if="!creating" class="create-entry" type="button" @click="startCreating">
+        <Plus :size="18" />
+        <span>新建空白知识库</span>
+      </button>
+      <form v-else class="create-form" @submit.prevent="createKnowledgeBase">
+        <input
+          ref="createInput"
+          v-model="createName"
+          maxlength="60"
+          placeholder="知识库名称"
+          @keydown.esc="creating = false"
+        />
+        <button type="submit" :disabled="!createName.trim() || store.mutating">创建</button>
+      </form>
+      <p v-if="createError" class="create-error">{{ createError }}</p>
     </div>
   </div>
 </template>
 
 <style scoped>
-.chat-source-selector { position: relative; }
+.chat-source-selector { position: relative; min-width: 0; }
 .source-trigger {
-  display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px;
-  border: 1px solid var(--color-border); border-radius: 999px; color: var(--color-text);
-  background: var(--color-bg); cursor: pointer;
+  display: inline-flex; max-width: min(360px, 70vw); height: 34px; align-items: center; gap: 7px;
+  padding: 0 10px; border: 0; border-radius: 10px; color: var(--color-text);
+  background: transparent; font: inherit; cursor: pointer;
 }
-.source-trigger:disabled { cursor: not-allowed; opacity: .48; }
-.source-trigger:not(:disabled):hover { background: var(--color-surface); }
+.source-trigger span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.source-trigger svg:last-child { flex: 0 0 auto; transition: transform .16s ease; }
+.source-trigger svg.rotated { transform: rotate(180deg); }
+.source-trigger:not(:disabled):hover { background: rgb(0 0 0 / 5%); }
+.source-trigger:disabled { cursor: not-allowed; opacity: .45; }
 .source-panel {
-  position: absolute; bottom: 42px; left: 0; z-index: 40; width: min(420px, calc(100vw - 48px));
-  max-height: 440px; overflow: auto; padding: 10px; border: 1px solid var(--color-border);
+  position: absolute; bottom: 42px; left: 0; z-index: 45; width: min(360px, calc(100vw - 32px));
+  max-height: 390px; overflow: auto; padding: 10px; border: 1px solid var(--color-border);
   border-radius: 18px; color: var(--color-text); background: var(--color-bg);
-  box-shadow: 0 18px 48px rgb(0 0 0 / 15%);
+  box-shadow: 0 16px 46px rgb(0 0 0 / 16%);
 }
-.source-search {
-  display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 11px; margin-bottom: 8px;
-  border: 1px solid var(--color-border); border-radius: 12px;
+.source-options { display: grid; gap: 3px; }
+.source-option, .create-entry {
+  display: flex; width: 100%; min-height: 42px; align-items: center; gap: 10px; padding: 8px 10px;
+  border: 0; border-radius: 11px; color: inherit; background: transparent; font: inherit;
+  text-align: left; cursor: pointer;
 }
-.source-search input { width: 100%; border: 0; outline: 0; color: inherit; background: transparent; font: inherit; }
-.source-section { display: grid; gap: 2px; }
-.source-section header { display: flex; justify-content: space-between; padding: 8px 9px 5px; font-size: 13px; }
-.source-section small { color: var(--color-text-muted); font-weight: 400; }
-.source-option {
-  display: flex; align-items: center; gap: 9px; min-height: 40px; padding: 7px 9px; border: 0;
-  border-radius: 10px; color: inherit; background: transparent; text-align: left; cursor: pointer;
-}
-.source-option:hover, .source-option[aria-selected='true'] { background: var(--color-surface); }
+.source-option:hover, .source-option[aria-selected='true'], .create-entry:hover { background: var(--color-surface); }
 .source-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.source-radio, .source-check { flex: 0 0 auto; width: 17px; height: 17px; border: 1.5px solid var(--color-border); }
-.source-radio { border-radius: 50%; }
-.source-radio.selected { border: 5px solid var(--color-text); }
-.source-check { display: grid; place-items: center; border-radius: 5px; }
-.source-check.selected { border-color: var(--color-text); color: var(--color-bg); background: var(--color-text); }
-.source-divider { height: 1px; margin: 8px 4px; background: var(--color-border); }
-.source-empty { margin: 8px; color: var(--color-text-muted); font-size: 13px; }
+.source-option small { flex: 0 0 auto; color: var(--color-text-muted); font-size: 12px; }
+.source-divider { height: 1px; margin: 9px 4px; background: var(--color-border); }
+.source-empty { margin: 8px 10px; color: var(--color-text-muted); font-size: 13px; }
+.create-form { display: flex; gap: 8px; }
+.create-form input {
+  min-width: 0; flex: 1; height: 40px; padding: 0 11px; border: 1px solid var(--color-border);
+  border-radius: 10px; outline: none; color: inherit; background: var(--color-bg); font: inherit;
+}
+.create-form input:focus { border-color: var(--color-text-muted); }
+.create-form button {
+  height: 40px; padding: 0 14px; border: 0; border-radius: 10px; color: var(--color-bg);
+  background: var(--color-text); cursor: pointer;
+}
+.create-form button:disabled { cursor: default; opacity: .35; }
+.create-error { margin: 7px 3px 0; color: var(--color-danger); font-size: 12px; }
+:global(html.dark) .source-trigger:not(:disabled):hover { background: rgb(255 255 255 / 8%); }
 </style>

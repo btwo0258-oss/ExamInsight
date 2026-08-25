@@ -65,6 +65,10 @@ public class ChatV2ApplicationService {
             String conversationId,
             SendMessageRequest request,
             String idempotencyKey) {
+        if (request.content().isBlank() && request.sourceAssetIds().isEmpty()) {
+            throw new ChatV2ApiException(HttpStatus.BAD_REQUEST,
+                    "EMPTY_MESSAGE", "请输入消息或添加附件。");
+        }
         long userId = UserContext.requireSession().userId();
         PreparedRun prepared = repository.prepareRun(
                 userId, requireExternalId(conversationId), request.content(), request.sourceAssetIds(), idempotencyKey);

@@ -4,29 +4,50 @@ import { useRoute, useRouter } from 'vue-router'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
 import {
-  ArrowUp, FileText, Image, LoaderCircle, Network, Presentation,
-  RotateCcw, Square, Volume2,
+  ArrowUp, FileImage, FileText, Image, LoaderCircle, Network, Paperclip,
+  Plus, Presentation, RotateCcw, Square, Volume2,
 } from 'lucide-vue-next'
 
 import ChatArtifactCard from '@/components/artifact/ChatArtifactCard.vue'
+import ChatAttachmentList from '@/components/chat/ChatAttachmentList.vue'
 import ChatSourceSelector from '@/components/chat/input/ChatSourceSelector.vue'
 import VoiceRecorder from '@/components/capture/VoiceRecorder.vue'
 import StudentShell from '@/components/layout/StudentShell.vue'
+import { getAsset, uploadAsset } from '@/api/assetLibraryV2'
 import { synthesizeSpeech } from '@/api/chatV2'
+import { useAssetLibraryV2Store } from '@/stores/assetLibraryV2'
 import { useAuthStore } from '@/stores/auth'
 import { useChatV2Store } from '@/stores/chatV2'
 import type { Artifact, ChatMessage } from '@/types/contracts/chatV2'
+import type { LibraryAsset } from '@/types/contracts/assetLibraryV2'
+
+type DraftAttachmentStatus = 'uploading' | 'processing' | 'ready' | 'failed'
+type DraftAttachment = {
+  key: string
+  assetId?: string
+  name: string
+  mimeType: string
+  sizeBytes: number
+  status: DraftAttachmentStatus
+  progress: number
+  error?: string
+  previewUrl?: string
+}
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const chatStore = useChatV2Store()
+const assetLibraryStore = useAssetLibraryV2Store()
 
 const prompt = ref('')
 const selectedKnowledgeBaseId = ref<string | null>(null)
-const selectedAssetIds = ref<string[]>([])
+const draftAttachments = ref<DraftAttachment[]>([])
 const scrollContainer = ref<HTMLElement | null>(null)
 const composer = ref<HTMLTextAreaElement | null>(null)
+const generalFileInput = ref<HTMLInputElement | null>(null)
+const imageFileInput = ref<HTMLInputElement | null>(null)
+const mobileAttachmentMenuOpen = ref(false)
 const artifactBusyId = ref('')
 const voiceError = ref('')
 const speechLoadingMessageId = ref('')
@@ -34,10 +55,22 @@ const speechPlayingMessageId = ref('')
 let speechAbortController: AbortController | null = null
 let speechAudio: HTMLAudioElement | null = null
 let speechObjectUrl = ''
+let destroyed = false
+
+const MAX_ATTACHMENTS = 20
+const MAX_FILE_BYTES = 100 * 1024 * 1024
 
 const routeConversationId = computed(() => typeof route.params.id === 'string' ? route.params.id : '')
 const hasMessages = computed(() => chatStore.messages.some(message => ['USER', 'ASSISTANT'].includes(message.role)))
-const canSend = computed(() => prompt.value.trim().length > 0 && !chatStore.sending)
+const readyAttachments = computed(() => draftAttachments.value.filter(item => item.status === 'ready' && item.assetId))
+const hasBusyAttachments = computed(() => draftAttachments.value.some(item => ['uploading', 'processing'].includes(item.status)))
+const hasFailedAttachments = computed(() => draftAttachments.value.some(item => item.status === 'failed'))
+const canSend = computed(() => (
+  !chatStore.sending
+  && !hasBusyAttachments.value
+  && !hasFailedAttachments.value
+  && (prompt.value.trim().length > 0 || readyAttachments.value.length > 0)
+))
 
 const quickActions = [
   { icon: FileText, title: '生成文档', description: '生成可编辑文档，确认后存入资料库', prompt: '请根据以下要求生成一份可编辑文档：' },
@@ -45,6 +78,159 @@ const quickActions = [
   { icon: Presentation, title: '生成 PPT', description: '生成可调整的大纲与演示文稿', prompt: '请根据以下要求生成一份 PPT：' },
   { icon: Image, title: '生成图片', description: '描述画面、比例与使用场景', prompt: '请生成一张图片，画面要求如下：' },
 ]
+
+function assetStatus(asset: LibraryAsset): DraftAttachmentStatus {
+  const status = asset.version?.status || asset.status
+  if (status === 'READY') return 'ready'
+  if (status === 'FAILED') return 'failed'
+  return 'processing'
+}
+
+function draftFromAsset(asset: LibraryAsset): DraftAttachment {
+  return {
+    key: asset.assetId,
+    assetId: asset.assetId,
+    name: asset.name,
+    mimeType: asset.version?.mimeType || 'application/octet-stream',
+    sizeBytes: asset.version?.sizeBytes || 0,
+    status: assetStatus(asset),
+    progress: asset.version?.status === 'READY' ? 100 : 0,
+  }
+}
+
+function revokeDraftPreview(item: DraftAttachment) {
+  if (item.previewUrl?.startsWith('blob:')) URL.revokeObjectURL(item.previewUrl)
+}
+
+function removeDraftAttachment(key: string) {
+  const item = draftAttachments.value.find(candidate => candidate.key === key)
+  if (item) revokeDraftPreview(item)
+  draftAttachments.value = draftAttachments.value.filter(candidate => candidate.key !== key)
+}
+
+function clearDraftAttachments(items: DraftAttachment[] = draftAttachments.value) {
+  items.forEach(revokeDraftPreview)
+  if (items === draftAttachments.value) draftAttachments.value = []
+}
+
+function attachmentItemsForMessage(message: ChatMessage) {
+  return (message.attachments ?? []).map(item => ({
+    key: item.assetVersionId || item.assetId,
+    assetId: item.assetId,
+    name: item.name,
+    mimeType: item.mimeType,
+    sizeBytes: item.sizeBytes,
+    status: 'ready' as const,
+  }))
+}
+
+async function waitUntilAssetSettled(assetId: string, key: string) {
+  for (let attempt = 0; attempt < 75 && !destroyed; attempt += 1) {
+    const detail = await getAsset(assetId)
+    const current = draftAttachments.value.find(item => item.key === key)
+    if (!current) return
+    current.mimeType = detail.asset.version?.mimeType || current.mimeType
+    current.sizeBytes = detail.asset.version?.sizeBytes || current.sizeBytes
+    const status = assetStatus(detail.asset)
+    current.status = status
+    if (status === 'ready') {
+      current.progress = 100
+      assetLibraryStore.upsertUploadedAsset(detail.asset)
+      return
+    }
+    if (status === 'failed') {
+      current.error = '文件处理失败，请移除后重试。'
+      return
+    }
+    await new Promise(resolve => window.setTimeout(resolve, 1200))
+  }
+  const current = draftAttachments.value.find(item => item.key === key)
+  if (current && current.status === 'processing') {
+    current.status = 'failed'
+    current.error = '文件处理超时，请移除后重试。'
+  }
+}
+
+async function uploadOne(file: File) {
+  const key = crypto.randomUUID()
+  const item: DraftAttachment = {
+    key,
+    name: file.name,
+    mimeType: file.type || 'application/octet-stream',
+    sizeBytes: file.size,
+    status: 'uploading',
+    progress: 0,
+    previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
+  }
+  draftAttachments.value.push(item)
+  try {
+    const result = await uploadAsset(file, selectedKnowledgeBaseId.value, progress => {
+      const current = draftAttachments.value.find(candidate => candidate.key === key)
+      if (current) current.progress = progress.percentage
+    })
+    const current = draftAttachments.value.find(candidate => candidate.key === key)
+    if (!current) return
+    current.assetId = result.completion.asset.assetId
+    current.mimeType = result.completion.version.mimeType || current.mimeType
+    current.sizeBytes = result.completion.version.sizeBytes
+    current.status = result.completion.version.status === 'READY' ? 'ready' : 'processing'
+    current.progress = 100
+    if (result.associationWarning) {
+      current.status = 'failed'
+      current.error = result.associationWarning
+      return
+    }
+    if (current.status === 'processing') {
+      await waitUntilAssetSettled(current.assetId, key)
+    } else {
+      const detail = await getAsset(current.assetId)
+      assetLibraryStore.upsertUploadedAsset(detail.asset)
+    }
+  } catch (error) {
+    const current = draftAttachments.value.find(candidate => candidate.key === key)
+    if (current) {
+      current.status = 'failed'
+      current.error = error instanceof Error ? error.message : '上传失败，请重试。'
+    }
+  }
+}
+
+async function handleFiles(files: FileList | null) {
+  mobileAttachmentMenuOpen.value = false
+  if (!files?.length) return
+  if (!authStore.isAuthed) {
+    authStore.openAuthModal(route.fullPath)
+    return
+  }
+  const remaining = MAX_ATTACHMENTS - draftAttachments.value.length
+  const accepted = Array.from(files).slice(0, Math.max(remaining, 0))
+  const oversized = accepted.filter(file => file.size > MAX_FILE_BYTES)
+  const uploadable = accepted.filter(file => file.size <= MAX_FILE_BYTES)
+  oversized.forEach(file => {
+    draftAttachments.value.push({
+      key: crypto.randomUUID(),
+      name: file.name,
+      mimeType: file.type || 'application/octet-stream',
+      sizeBytes: file.size,
+      status: 'failed',
+      progress: 0,
+      error: '单个文件不能超过 100 MB。',
+    })
+  })
+  await Promise.all(uploadable.map(uploadOne))
+  if (generalFileInput.value) generalFileInput.value.value = ''
+  if (imageFileInput.value) imageFileInput.value.value = ''
+}
+
+function openGeneralFilePicker() {
+  mobileAttachmentMenuOpen.value = false
+  generalFileInput.value?.click()
+}
+
+function openImageFilePicker() {
+  mobileAttachmentMenuOpen.value = false
+  imageFileInput.value?.click()
+}
 
 function artifactsFor(message: ChatMessage) {
   if (!message.runId) return []
@@ -128,13 +314,18 @@ async function scrollToBottom(behavior: ScrollBehavior = 'smooth') {
   scrollContainer.value?.scrollTo({ top: scrollContainer.value.scrollHeight, behavior })
 }
 
-function applyRouteSources() {
+async function applyRouteSources() {
   const knowledgeBaseId = typeof route.query.knowledgeBaseId === 'string' ? route.query.knowledgeBaseId : null
   const sourceAssetIds = typeof route.query.sourceAssetIds === 'string'
     ? route.query.sourceAssetIds.split(',').map(value => value.trim()).filter(Boolean).slice(0, 20)
     : []
   if (knowledgeBaseId) selectedKnowledgeBaseId.value = knowledgeBaseId
-  if (sourceAssetIds.length) selectedAssetIds.value = sourceAssetIds
+  if (!sourceAssetIds.length) return
+  const existingIds = new Set(draftAttachments.value.map(item => item.assetId).filter(Boolean))
+  const hydrated = await Promise.all(sourceAssetIds
+    .filter(assetId => !existingIds.has(assetId))
+    .map(assetId => getAsset(assetId).then(detail => draftFromAsset(detail.asset)).catch(() => null)))
+  draftAttachments.value.push(...hydrated.filter((item): item is DraftAttachment => item !== null))
 }
 
 async function loadConversation(conversationId: string) {
@@ -147,19 +338,22 @@ async function loadConversation(conversationId: string) {
 
 async function submit() {
   const content = prompt.value.trim()
-  if (!content || chatStore.sending) return
+  if (!canSend.value) return
   if (!authStore.isAuthed) {
     authStore.openAuthModal(route.fullPath)
     return
   }
 
+  const submittedDrafts = [...readyAttachments.value]
+  const sourceAssetIds = submittedDrafts.flatMap(item => item.assetId ? [item.assetId] : [])
   prompt.value = ''
+  draftAttachments.value = draftAttachments.value.filter(item => !submittedDrafts.includes(item))
   resizeComposer()
   try {
     let conversation = chatStore.activeConversation
     if (!conversation || (routeConversationId.value && routeConversationId.value !== conversation.id)) {
       conversation = await chatStore.create({
-        title: content.slice(0, 36),
+        title: '新对话',
         knowledgeBaseId: selectedKnowledgeBaseId.value,
       })
       await router.replace({ name: 'chat-detail', params: { id: conversation.id } })
@@ -167,10 +361,12 @@ async function submit() {
       await chatStore.setKnowledgeBase(selectedKnowledgeBaseId.value)
     }
     await scrollToBottom()
-    await chatStore.send(content, selectedAssetIds.value)
+    await chatStore.send(content, sourceAssetIds)
+    clearDraftAttachments(submittedDrafts)
     await scrollToBottom()
   } catch {
     prompt.value = content
+    draftAttachments.value = [...submittedDrafts, ...draftAttachments.value]
     resizeComposer()
   }
 }
@@ -206,14 +402,18 @@ function handleComposerKeydown(event: KeyboardEvent) {
 
 onMounted(async () => {
   await authStore.init()
-  applyRouteSources()
+  await applyRouteSources()
   if (authStore.isAuthed) {
     await chatStore.loadList().catch(() => undefined)
     if (routeConversationId.value) await loadConversation(routeConversationId.value)
   }
 })
 
-onBeforeUnmount(stopSpeech)
+onBeforeUnmount(() => {
+  destroyed = true
+  stopSpeech()
+  clearDraftAttachments()
+})
 
 watch(routeConversationId, async (conversationId) => {
   if (conversationId) await loadConversation(conversationId)
@@ -256,9 +456,23 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
         <section v-else class="message-list" aria-live="polite">
           <template v-for="message in chatStore.messages" :key="message.id">
             <article v-if="message.role === 'USER'" class="message-row user-row">
-              <div class="user-message">{{ message.content }}</div>
+              <div v-if="message.content" class="user-message">{{ message.content }}</div>
+              <ChatAttachmentList
+                v-if="message.attachments?.length"
+                class="message-attachments user-attachments"
+                :items="attachmentItemsForMessage(message)"
+                compact
+                @open="openAsset"
+              />
             </article>
             <article v-else-if="message.role === 'ASSISTANT'" class="message-row assistant-row">
+              <ChatAttachmentList
+                v-if="message.attachments?.length"
+                class="message-attachments"
+                :items="attachmentItemsForMessage(message)"
+                compact
+                @open="openAsset"
+              />
               <div class="assistant-message markdown-body" v-html="renderMarkdown(message.content)" />
               <div v-if="message.citations.length" class="citations">
                 <span>参考来源</span>
@@ -310,32 +524,80 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
       </div>
 
       <div class="composer-dock">
-        <div class="composer-box">
-          <textarea
-            ref="composer"
-            v-model="prompt"
-            rows="1"
-            placeholder="输入消息"
-            aria-label="输入消息"
-            @input="resizeComposer"
-            @keydown="handleComposerKeydown"
+        <div class="composer-context-shell">
+          <ChatSourceSelector
+            v-model:knowledge-base-id="selectedKnowledgeBaseId"
+            :disabled="chatStore.sending"
           />
-          <p v-if="voiceError" class="voice-error" role="alert">{{ voiceError }}</p>
-          <div class="composer-toolbar">
-            <ChatSourceSelector
-              v-model:knowledge-base-id="selectedKnowledgeBaseId"
-              v-model:asset-ids="selectedAssetIds"
-              :disabled="chatStore.sending"
+          <div class="composer-box">
+            <ChatAttachmentList
+              v-if="draftAttachments.length"
+              class="draft-attachments"
+              :items="draftAttachments"
+              removable
+              compact
+              @remove="removeDraftAttachment"
+              @open="openAsset"
             />
-            <div class="composer-actions">
-              <VoiceRecorder
-                chat-v2
-                :disabled="chatStore.sending"
-                @transcribed="handleTranscribed"
-                @error="voiceError = $event"
-              />
-              <button v-if="chatStore.sending" type="button" class="send-button" title="停止生成" @click="chatStore.cancel"><Square :size="15" fill="currentColor" /></button>
-              <button v-else type="button" class="send-button" :disabled="!canSend" title="发送" @click="submit"><ArrowUp :size="20" /></button>
+            <textarea
+              ref="composer"
+              v-model="prompt"
+              rows="1"
+              placeholder="输入消息"
+              aria-label="输入消息"
+              @input="resizeComposer"
+              @keydown="handleComposerKeydown"
+            />
+            <p v-if="voiceError" class="voice-error" role="alert">{{ voiceError }}</p>
+            <div class="composer-toolbar">
+              <div class="attachment-entry">
+                <button
+                  type="button"
+                  class="attachment-button desktop-attachment"
+                  :disabled="chatStore.sending || draftAttachments.length >= MAX_ATTACHMENTS"
+                  title="上传附件"
+                  aria-label="上传附件"
+                  @click="openGeneralFilePicker"
+                ><Paperclip :size="20" /></button>
+                <button
+                  type="button"
+                  class="attachment-button mobile-attachment"
+                  :disabled="chatStore.sending || draftAttachments.length >= MAX_ATTACHMENTS"
+                  title="添加附件"
+                  aria-label="添加附件"
+                  :aria-expanded="mobileAttachmentMenuOpen"
+                  @click="mobileAttachmentMenuOpen = !mobileAttachmentMenuOpen"
+                ><Plus :size="21" /></button>
+                <div v-if="mobileAttachmentMenuOpen" class="mobile-attachment-menu">
+                  <button type="button" @click="openGeneralFilePicker"><Paperclip :size="18" />上传文件</button>
+                  <button type="button" @click="openImageFilePicker"><FileImage :size="18" />上传图片</button>
+                </div>
+                <input
+                  ref="generalFileInput"
+                  class="file-input"
+                  type="file"
+                  multiple
+                  @change="handleFiles(($event.target as HTMLInputElement).files)"
+                />
+                <input
+                  ref="imageFileInput"
+                  class="file-input"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  @change="handleFiles(($event.target as HTMLInputElement).files)"
+                />
+              </div>
+              <div class="composer-actions">
+                <VoiceRecorder
+                  chat-v2
+                  :disabled="chatStore.sending"
+                  @transcribed="handleTranscribed"
+                  @error="voiceError = $event"
+                />
+                <button v-if="chatStore.sending" type="button" class="send-button" title="停止生成" @click="chatStore.cancel"><Square :size="15" fill="currentColor" /></button>
+                <button v-else type="button" class="send-button" :disabled="!canSend" title="发送" @click="submit"><ArrowUp :size="20" /></button>
+              </div>
             </div>
           </div>
         </div>
@@ -347,7 +609,7 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
 
 <style scoped>
 .chat-page { position: relative; height: 100%; min-height: 0; overflow: hidden; background: var(--color-bg); }
-.chat-scroll { height: 100%; overflow: auto; padding: 36px 28px 190px; }
+.chat-scroll { height: 100%; overflow: auto; padding: 36px 28px 250px; }
 .center-state { display: flex; align-items: center; justify-content: center; gap: 10px; height: 60vh; color: var(--color-text-muted); }
 .chat-home { display: grid; gap: 34px; width: min(900px, 100%); margin: min(18vh, 150px) auto 0; }
 .home-heading { text-align: center; }
@@ -362,8 +624,10 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
 .message-list { width: min(820px, 100%); margin: 0 auto; }
 .message-row { display: grid; margin: 0 0 30px; }
 .user-row { justify-items: end; }
-.user-message { max-width: min(72%, 620px); padding: 11px 16px; border-radius: 20px; background: var(--color-surface); line-height: 1.65; white-space: pre-wrap; }
+.user-message { max-width: min(72%, 620px); padding: 11px 16px; border-radius: 20px; color: var(--color-bg); background: var(--color-text); line-height: 1.65; white-space: pre-wrap; }
 .assistant-row { justify-items: start; }
+.message-attachments { margin-top: 8px; }
+.user-attachments { justify-self: end; }
 .assistant-message { width: 100%; min-height: 24px; line-height: 1.75; }
 .assistant-message:empty::after { content: ' '; display: inline-block; width: 7px; height: 18px; border-radius: 2px; background: var(--color-text); animation: blink 1s infinite; }
 .citations { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
@@ -379,10 +643,28 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
 .chat-error { display: flex; justify-content: space-between; gap: 12px; padding: 12px 14px; border-radius: 12px; color: #b42318; background: #fef3f2; }
 .chat-error button { display: inline-flex; align-items: center; gap: 5px; border: 0; color: inherit; background: transparent; cursor: pointer; }
 .composer-dock { position: absolute; right: 0; bottom: 0; left: 0; padding: 18px 24px 14px; background: linear-gradient(transparent, var(--color-bg) 25%); }
-.composer-box { width: min(820px, 100%); margin: 0 auto; padding: 10px 12px 9px; border: 1px solid var(--color-border); border-radius: 25px; background: var(--color-bg); box-shadow: 0 8px 30px rgb(0 0 0 / 8%); }
+.composer-context-shell {
+  width: min(820px, 100%); margin: 0 auto; padding: 9px 10px 0; border-radius: 28px;
+  background: var(--color-surface); box-shadow: 0 8px 30px rgb(0 0 0 / 8%);
+}
+.composer-box { margin: 5px -10px 0; padding: 10px 12px 9px; border: 1px solid var(--color-border); border-radius: 25px; background: var(--color-bg); }
+.draft-attachments { max-height: 170px; margin: 0 8px 6px; overflow: auto; }
 .composer-box textarea { display: block; width: 100%; min-height: 48px; max-height: 180px; resize: none; padding: 9px 8px; border: 0; outline: 0; color: inherit; background: transparent; font: 15px/1.55 inherit; }
 .voice-error { margin: 0 8px 8px; color: var(--color-danger); font-size: 12px; }
 .composer-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.attachment-entry { position: relative; }
+.attachment-button { display: grid; width: 36px; height: 36px; padding: 0; place-items: center; border: 0; border-radius: 50%; color: var(--color-text-muted); background: transparent; cursor: pointer; }
+.attachment-button:not(:disabled):hover { color: var(--color-text); background: var(--color-surface); }
+.attachment-button:disabled { cursor: default; opacity: .32; }
+.mobile-attachment { display: none; }
+.mobile-attachment-menu {
+  position: absolute; bottom: 44px; left: 0; z-index: 48; display: grid; width: 156px; gap: 3px;
+  padding: 7px; border: 1px solid var(--color-border); border-radius: 15px; background: var(--color-bg);
+  box-shadow: 0 14px 38px rgb(0 0 0 / 16%);
+}
+.mobile-attachment-menu button { display: flex; align-items: center; gap: 9px; min-height: 40px; padding: 0 10px; border: 0; border-radius: 10px; color: inherit; background: transparent; font: inherit; cursor: pointer; }
+.mobile-attachment-menu button:hover { background: var(--color-surface); }
+.file-input { display: none; }
 .composer-actions { display: flex; gap: 7px; }
 .send-button { display: grid; width: 36px; height: 36px; padding: 0; place-items: center; border: 0; border-radius: 50%; cursor: pointer; }
 .send-button { color: var(--color-bg); background: var(--color-text); }
@@ -401,5 +683,7 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
   .chat-home { margin-top: 40px; }
   .user-message { max-width: 88%; }
   .composer-dock { padding-right: 10px; padding-left: 10px; }
+  .desktop-attachment { display: none; }
+  .mobile-attachment { display: grid; }
 }
 </style>

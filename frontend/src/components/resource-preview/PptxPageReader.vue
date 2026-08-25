@@ -25,7 +25,8 @@ async function render() {
   const target = container.value;
   if (!target) return;
   try {
-    const value = init(target, { width: 960, height: 540, mode: "list" });
+    const width = Math.max(320, Math.min(960, target.clientWidth || 960));
+    const value = init(target, { width, height: Math.round(width * 9 / 16), mode: "list" });
     previewer = value;
     await value.preview(props.data.slice(0));
   } catch (error) {
@@ -71,7 +72,7 @@ onBeforeUnmount(() => {
 }
 .pptx-pages {
   width: 100%;
-  overflow: hidden;
+  overflow: visible;
 }
 .pptx-pages :deep(.pptx-preview-wrapper),
 .pptx-pages :deep(.pptx-wrapper) {
@@ -80,6 +81,8 @@ onBeforeUnmount(() => {
 }
 .pptx-pages :deep(svg),
 .pptx-pages :deep(.slide) {
+  width: 100% !important;
+  height: auto !important;
   max-width: 100%;
 }
 </style>

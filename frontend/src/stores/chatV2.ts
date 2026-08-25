@@ -100,6 +100,7 @@ export const useChatV2Store = defineStore('chatV2', () => {
         sequence: messages.value.length + 1,
         content: '',
         runId,
+        attachments: [],
         citations: [],
         createdAt: new Date().toISOString(),
         finalizedAt: null,

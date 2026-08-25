@@ -10,12 +10,14 @@ import com.example.llm.chatv2.api.ChatV2Dtos.ConversationDetail;
 import com.example.llm.chatv2.api.ChatV2Dtos.ConversationPage;
 import com.example.llm.chatv2.api.ChatV2Dtos.ConversationSummary;
 import com.example.llm.chatv2.api.ChatV2Dtos.MessageView;
+import com.example.llm.chatv2.api.ChatV2Dtos.MessageAttachmentView;
 import com.example.llm.integration.ai.AiCallResult;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
@@ -110,6 +112,7 @@ public class ChatV2Repository {
     public ConversationDetail getConversation(long userId, String conversationExternalId) {
         ConversationSummary summary = requireConversationSummary(userId, conversationExternalId);
         Map<String, List<CitationView>> citations = loadCitations(userId, conversationExternalId);
+        Map<String, List<MessageAttachmentView>> attachments = loadMessageAttachments(userId, conversationExternalId);
         List<MessageView> messages = jdbc.query("""
                 SELECT m.external_id, b.external_id AS branch_external_id,
                        parent.external_id AS parent_external_id,
@@ -132,6 +135,7 @@ public class ChatV2Repository {
                         rs.getLong("sequence_no"),
                         rs.getString("plain_text"),
                         rs.getString("run_external_id"),
+                        attachments.getOrDefault(rs.getString("external_id"), List.of()),
                         citations.getOrDefault(rs.getString("external_id"), List.of()),
                         instant(rs.getTimestamp("created_at")),
                         instant(rs.getTimestamp("finalized_at"))),
@@ -214,7 +218,7 @@ public class ChatV2Repository {
                         role, status, sequence_no, plain_text, generated_by_ai, finalized_at
                     ) VALUES (?, ?, ?, ?, 'USER', 'FINALIZED', ?, ?, FALSE, CURRENT_TIMESTAMP(3))
                     """, userMessageExternalId, conversation.id(), branch.id(), cursor.messageId(),
-                    cursor.sequence() + 1, content.trim());
+                    cursor.sequence() + 1, content == null ? "" : content.trim());
 
             long responseGroupId = insertAndReturnId("""
                     INSERT INTO assistant_response_group (
@@ -293,7 +297,7 @@ public class ChatV2Repository {
 
             String title = conversation.title();
             if (DEFAULT_TITLE.equals(title)) {
-                title = titleFromMessage(content);
+                title = titleFromMessage(content, directSources);
             }
             jdbc.update("""
                     UPDATE conversation
@@ -338,7 +342,7 @@ public class ChatV2Repository {
                         rs.getLong("conversation_id"), rs.getString("conversation_external_id"),
                         rs.getLong("branch_id"), rs.getString("branch_external_id"),
                         rs.getLong("request_message_id"), rs.getString("request_external_id"),
-                        rs.getString("request_text"), rs.getLong("response_message_id"),
+                        requestText(rs.getString("request_text")), rs.getLong("response_message_id"),
                         rs.getString("response_external_id"), rs.getString("knowledge_base_external_id"),
                         loadContextVersionExternalIds(rs.getLong("id")),
                         rs.getLong("model_policy_version_id"), rs.getLong("prompt_version_id"),
@@ -739,6 +743,37 @@ public class ChatV2Repository {
         return result;
     }
 
+    private Map<String, List<MessageAttachmentView>> loadMessageAttachments(
+            long userId, String conversationExternalId) {
+        Map<String, List<MessageAttachmentView>> result = new LinkedHashMap<>();
+        jdbc.query("""
+                SELECT m.external_id AS message_external_id,
+                       a.external_id AS asset_external_id,
+                       av.external_id AS version_external_id,
+                       COALESCE(attachment.display_name, a.name) AS display_name,
+                       av.mime_type, av.size_bytes, a.asset_type
+                  FROM message_attachment attachment
+                  JOIN message m ON m.id = attachment.message_id
+                  JOIN conversation c ON c.id = m.conversation_id
+                  JOIN asset_version av ON av.id = attachment.asset_version_id
+                  JOIN asset a ON a.id = av.asset_id
+                 WHERE c.external_id = ? AND c.user_id = ?
+                   AND m.branch_id = c.active_branch_id
+                 ORDER BY m.sequence_no ASC, attachment.id ASC
+                """, (RowCallbackHandler) rs -> result.computeIfAbsent(
+                        rs.getString("message_external_id"), ignored -> new ArrayList<>()).add(
+                                new MessageAttachmentView(
+                                        rs.getString("asset_external_id"),
+                                        rs.getString("version_external_id"),
+                                        rs.getString("display_name"),
+                                        rs.getString("mime_type"),
+                                        rs.getLong("size_bytes"),
+                                        rs.getString("asset_type"))),
+                conversationExternalId, userId);
+        result.replaceAll((key, value) -> List.copyOf(value));
+        return result;
+    }
+
     private List<HistoryMessage> loadHistory(long branchId, long throughMessageId) {
         List<HistoryMessage> history = jdbc.query("""
                 SELECT role, plain_text
@@ -1034,9 +1069,22 @@ public class ChatV2Repository {
         return title;
     }
 
-    private String titleFromMessage(String content) {
-        String oneLine = content.trim().replaceAll("\\s+", " ");
+    private String titleFromMessage(String content, List<LockedAssetVersion> directSources) {
+        String oneLine = content == null ? "" : content.trim().replaceAll("\\s+", " ");
+        if (oneLine.isBlank()) {
+            if (directSources.size() == 1) {
+                oneLine = "关于" + directSources.get(0).assetName();
+            } else if (!directSources.isEmpty()) {
+                oneLine = "分析已上传的 " + directSources.size() + " 份资料";
+            } else {
+                oneLine = DEFAULT_TITLE;
+            }
+        }
         return oneLine.length() <= 40 ? oneLine : oneLine.substring(0, 40);
+    }
+
+    private String requestText(String value) {
+        return value == null || value.isBlank() ? "请分析我上传的附件。" : value;
     }
 
     private String normalizeIdempotencyKey(String value) {

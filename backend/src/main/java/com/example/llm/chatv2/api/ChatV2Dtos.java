@@ -1,6 +1,5 @@
 package com.example.llm.chatv2.api;
 
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
 import java.time.Instant;
@@ -22,9 +21,10 @@ public final class ChatV2Dtos {
     }
 
     public record SendMessageRequest(
-            @NotBlank @Size(max = 50000) String content,
+            @Size(max = 50000) String content,
             @Size(max = 20) List<@Size(max = 26) String> sourceAssetIds) {
         public SendMessageRequest {
+            content = content == null ? "" : content;
             sourceAssetIds = sourceAssetIds == null ? List.of() : List.copyOf(sourceAssetIds);
         }
     }
@@ -66,12 +66,23 @@ public final class ChatV2Dtos {
             long sequence,
             String content,
             String runId,
+            List<MessageAttachmentView> attachments,
             List<CitationView> citations,
             Instant createdAt,
             Instant finalizedAt) {
         public MessageView {
+            attachments = attachments == null ? List.of() : List.copyOf(attachments);
             citations = citations == null ? List.of() : List.copyOf(citations);
         }
+    }
+
+    public record MessageAttachmentView(
+            String assetId,
+            String assetVersionId,
+            String name,
+            String mimeType,
+            long sizeBytes,
+            String assetType) {
     }
 
     public record CitationView(

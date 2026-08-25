@@ -28,6 +28,15 @@ export type Citation = {
   score: number | null
 }
 
+export type MessageAttachment = {
+  assetId: string
+  assetVersionId: string
+  name: string
+  mimeType: string
+  sizeBytes: number
+  assetType: string
+}
+
 export type ChatMessage = {
   id: string
   branchId: string
@@ -37,6 +46,7 @@ export type ChatMessage = {
   sequence: number
   content: string
   runId: string | null
+  attachments: MessageAttachment[]
   citations: Citation[]
   createdAt: string
   finalizedAt: string | null
@@ -123,4 +133,3 @@ export type ChatStreamEvent = {
   event: StreamEventName | string
   data: Record<string, unknown>
 }
-
