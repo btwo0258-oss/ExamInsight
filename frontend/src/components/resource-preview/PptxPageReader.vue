@@ -10,6 +10,25 @@ const errorMessage = ref("");
 let previewer: PPTXPreviewer | null = null;
 let renderSequence = 0;
 
+function decorateSlides(target: HTMLElement) {
+  const slides = Array.from(
+    target.querySelectorAll<HTMLElement>(".pptx-preview-slide-wrapper"),
+  );
+
+  slides.forEach((slide, index) => {
+    const frame = document.createElement("article");
+    frame.className = "pptx-page-frame";
+    frame.setAttribute("aria-label", `第 ${index + 1} 页`);
+
+    const label = document.createElement("div");
+    label.className = "pptx-page-label";
+    label.textContent = `第 ${index + 1} 页`;
+
+    slide.before(frame);
+    frame.append(label, slide);
+  });
+}
+
 function destroy() {
   previewer?.destroy();
   previewer = null;
@@ -26,9 +45,12 @@ async function render() {
   if (!target) return;
   try {
     const width = Math.max(320, Math.min(960, target.clientWidth || 960));
-    const value = init(target, { width, height: Math.round(width * 9 / 16), mode: "list" });
+    // 列表模式必须交给外层阅读区滚动。传入固定 height 会让依赖创建
+    // 一个内部滚动窗口，导致首尾幻灯片被截断并在页面下方留下空白。
+    const value = init(target, { width, mode: "list" });
     previewer = value;
     await value.preview(props.data.slice(0));
+    if (sequence === renderSequence) decorateSlides(target);
   } catch (error) {
     destroy();
     if (sequence === renderSequence) {
@@ -57,13 +79,19 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .pptx-reader {
-  width: min(1080px, 100%);
+  width: 100%;
   margin: 0 auto;
+  padding: 4px 0 28px;
 }
 .reader-state {
-  min-height: 360px;
+  width: min(960px, 100%);
+  min-height: 420px;
+  margin: 0 auto;
   display: grid;
   place-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface);
   color: var(--color-text-muted);
   font-size: 13px;
 }
@@ -72,17 +100,51 @@ onBeforeUnmount(() => {
 }
 .pptx-pages {
   width: 100%;
-  overflow: visible;
 }
-.pptx-pages :deep(.pptx-preview-wrapper),
-.pptx-pages :deep(.pptx-wrapper) {
-  width: 100% !important;
-  background: transparent !important;
-}
-.pptx-pages :deep(svg),
-.pptx-pages :deep(.slide) {
+.pptx-pages :deep(.pptx-preview-wrapper) {
   width: 100% !important;
   height: auto !important;
+  overflow: visible !important;
+  background: transparent !important;
+}
+.pptx-pages :deep(.pptx-page-frame) {
+  width: min(960px, 100%);
+  margin: 0 auto 28px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+}
+.pptx-pages :deep(.pptx-page-label) {
+  height: 38px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.pptx-pages :deep(.pptx-preview-slide-wrapper) {
   max-width: 100%;
+  margin: 0 auto !important;
+  box-shadow: none;
+}
+
+@media (max-width: 720px) {
+  .pptx-reader {
+    padding-bottom: 16px;
+  }
+
+  .pptx-pages :deep(.pptx-page-frame) {
+    margin-bottom: 16px;
+    border-radius: 10px;
+  }
+
+  .pptx-pages :deep(.pptx-page-label) {
+    height: 34px;
+    padding: 0 12px;
+  }
 }
 </style>

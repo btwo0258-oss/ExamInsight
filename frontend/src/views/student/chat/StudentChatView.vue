@@ -644,10 +644,11 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
 .chat-error button { display: inline-flex; align-items: center; gap: 5px; border: 0; color: inherit; background: transparent; cursor: pointer; }
 .composer-dock { position: absolute; right: 0; bottom: 0; left: 0; padding: 18px 24px 14px; background: linear-gradient(transparent, var(--color-bg) 25%); }
 .composer-context-shell {
-  width: min(820px, 100%); margin: 0 auto; padding: 9px 10px 0; border-radius: 28px;
-  background: var(--color-surface); box-shadow: 0 8px 30px rgb(0 0 0 / 8%);
+  width: min(820px, 100%); margin: 0 auto; padding: 4px 8px 0; border-radius: 26px;
+  background: color-mix(in srgb, var(--color-text) 9%, var(--color-bg));
+  box-shadow: 0 8px 30px rgb(0 0 0 / 8%);
 }
-.composer-box { margin: 5px -10px 0; padding: 10px 12px 9px; border: 1px solid var(--color-border); border-radius: 25px; background: var(--color-bg); }
+.composer-box { margin: 3px -8px 0; padding: 10px 12px 9px; border: 1px solid var(--color-border); border-radius: 25px; background: var(--color-bg); }
 .draft-attachments { max-height: 170px; margin: 0 8px 6px; overflow: auto; }
 .composer-box textarea { display: block; width: 100%; min-height: 48px; max-height: 180px; resize: none; padding: 9px 8px; border: 0; outline: 0; color: inherit; background: transparent; font: 15px/1.55 inherit; }
 .voice-error { margin: 0 8px 8px; color: var(--color-danger); font-size: 12px; }

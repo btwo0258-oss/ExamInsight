@@ -87,9 +87,9 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', handleDocument
       :aria-expanded="open"
       @click="toggle"
     >
-      <Folder :size="16" />
+      <Folder :size="12" />
       <span>{{ triggerLabel }}</span>
-      <ChevronDown :size="14" :class="{ rotated: open }" />
+      <ChevronDown :size="11" :class="{ rotated: open }" />
     </button>
 
     <div v-if="open" class="source-panel">
@@ -148,11 +148,16 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', handleDocument
 </template>
 
 <style scoped>
-.chat-source-selector { position: relative; min-width: 0; }
+.chat-source-selector { position: relative; min-width: 0; margin-left: 10px; }
 .source-trigger {
-  display: inline-flex; max-width: min(360px, 70vw); height: 34px; align-items: center; gap: 7px;
-  padding: 0 10px; border: 0; border-radius: 10px; color: var(--color-text);
-  background: transparent; font: inherit; cursor: pointer;
+  display: inline-flex; max-width: min(360px, 70vw); height: 22px; align-items: center; gap: 4px;
+  padding: 0 4px; border: 0; border-radius: 6px;
+  color: color-mix(in srgb, var(--color-text) 64%, transparent);
+  background: transparent;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
 }
 .source-trigger span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .source-trigger svg:last-child { flex: 0 0 auto; transition: transform .16s ease; }

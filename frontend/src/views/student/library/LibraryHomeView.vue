@@ -1240,7 +1240,7 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer));
 .tabs button:hover,
 .tabs button.active { background: var(--color-hover); color: var(--color-text); }
 .bulk-actions button { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--color-border); color: var(--color-text); }
-.bulk-actions .primary-action { border-color: var(--color-text); background: var(--color-text); color: var(--color-background); }
+.bulk-actions .primary-action { border-color: #303030; background: #303030; color: #fff; }
 .bulk-actions .danger-outline { color: var(--color-danger); border-color: color-mix(in srgb, var(--color-danger) 30%, var(--color-border)); }
 .bulk-actions button:disabled { opacity: .4; cursor: not-allowed; }
 .view-tools > span { color: var(--color-text-muted); font-size: 13px; }

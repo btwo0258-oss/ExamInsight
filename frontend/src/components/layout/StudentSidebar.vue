@@ -5,7 +5,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  FolderOpen,
+  Folder,
   LogIn,
   LogOut,
   Menu,
@@ -172,7 +172,7 @@ onBeforeUnmount(stopResize)
         to="/library"
         :class="{ active: String(route.name).startsWith('library') || route.name === 'resource-preview' }"
       >
-        <FolderOpen :size="19" />
+        <Folder :size="19" />
         <span v-if="!collapsed">资料库</span>
       </RouterLink>
     </nav>
@@ -280,7 +280,7 @@ onBeforeUnmount(stopResize)
 }
 
 .student-sidebar--resizing { transition: none; }
-.student-sidebar--collapsed { padding: 14px 10px 12px; border-radius: 0 12px 12px 0; }
+.student-sidebar--collapsed { padding: 14px 0 12px; border-radius: 0 12px 12px 0; }
 
 .sidebar-resize-handle {
   position: absolute;
@@ -320,13 +320,43 @@ onBeforeUnmount(stopResize)
 .brand strong { overflow: hidden; font-size: 20px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
 .collapse-button, .compact-action { display: grid; width: 34px; height: 34px; flex: 0 0 auto; padding: 0; place-items: center; border: 0; border-radius: 9px; color: var(--color-text-muted); background: transparent; cursor: pointer; }
 .collapse-button:hover, .compact-action:hover { color: var(--color-text); background: var(--ui-hover-strong-bg, var(--color-hover)); }
-.student-sidebar--collapsed .sidebar-header { display: grid; height: auto; justify-items: center; gap: 8px; padding: 0; }
-.student-sidebar--collapsed .brand { padding: 4px; }
+.student-sidebar--collapsed .sidebar-header {
+  display: grid;
+  width: 100%;
+  height: auto;
+  grid-template-columns: 40px;
+  align-content: start;
+  justify-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 0;
+}
+.student-sidebar--collapsed .brand,
+.student-sidebar--collapsed .collapse-button,
+.student-sidebar--collapsed .compact-action,
+.student-sidebar--collapsed .account-button {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  margin-inline: auto;
+  padding: 0;
+  place-items: center;
+}
+.student-sidebar--collapsed .brand-logo { width: 32px; height: 32px; }
 
 .primary-nav { display: grid; gap: 6px; margin-top: 14px; }
 .primary-nav button, .primary-nav a { display: flex; width: 100%; min-height: 40px; box-sizing: border-box; align-items: center; gap: 11px; padding: 0 16px; border: 0; border-radius: 9px; color: inherit; background: transparent; font: inherit; font-size: 14px; font-weight: 700; text-decoration: none; cursor: pointer; }
 .primary-nav button:hover, .primary-nav a:hover, .primary-nav .active { background: var(--ui-hover-bg, var(--color-hover)); }
-.student-sidebar--collapsed .primary-nav button, .student-sidebar--collapsed .primary-nav a { justify-content: center; padding: 0; }
+.student-sidebar--collapsed .primary-nav { width: 100%; justify-items: center; }
+.student-sidebar--collapsed .primary-nav button,
+.student-sidebar--collapsed .primary-nav a {
+  display: grid;
+  width: 40px;
+  min-height: 40px;
+  padding: 0;
+  place-items: center;
+}
 
 .conversation-section { min-height: 0; flex: 1; margin-top: 22px; overflow: hidden; }
 .section-title { display: flex; width: 100%; height: 30px; align-items: center; justify-content: space-between; padding: 0 8px; border: 0; color: var(--color-text-muted); background: transparent; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
@@ -362,8 +392,7 @@ onBeforeUnmount(stopResize)
 .account-copy strong { font-size: 14px; }
 .account-copy small { color: var(--color-text-muted); font-size: 11px; font-weight: 400; }
 .account-menu { right: 0; bottom: 54px; left: 0; }
-.student-sidebar--collapsed .sidebar-footer { justify-items: center; gap: 8px; }
-.student-sidebar--collapsed .account-button { width: 42px; justify-content: center; padding: 5px; }
+.student-sidebar--collapsed .sidebar-footer { width: 100%; justify-items: center; gap: 8px; }
 .student-sidebar--collapsed .account-menu { right: auto; bottom: 0; left: 48px; }
 
 @media (prefers-reduced-motion: reduce) {
