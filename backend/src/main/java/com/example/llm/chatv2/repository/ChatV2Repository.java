@@ -11,6 +11,8 @@ import com.example.llm.chatv2.api.ChatV2Dtos.ConversationPage;
 import com.example.llm.chatv2.api.ChatV2Dtos.ConversationSummary;
 import com.example.llm.chatv2.api.ChatV2Dtos.MessageView;
 import com.example.llm.chatv2.api.ChatV2Dtos.MessageAttachmentView;
+import com.example.llm.chatv2.api.ChatV2Dtos.MessageVersionGroup;
+import com.example.llm.chatv2.api.ChatV2Dtos.MessageVersionView;
 import com.example.llm.integration.ai.AiCallResult;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,7 +32,9 @@ import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -59,10 +63,21 @@ public class ChatV2Repository {
     }
 
     public ConversationSummary createConversation(
-            long userId, String requestedTitle, String knowledgeBaseExternalId) {
+            long userId,
+            String requestedExternalId,
+            String requestedTitle,
+            String knowledgeBaseExternalId) {
         return transactions.execute(status -> {
             Long knowledgeBaseId = resolveKnowledgeBaseId(userId, knowledgeBaseExternalId, false);
-            String conversationExternalId = crypto.newExternalId();
+            String conversationExternalId = requestedExternalId == null
+                    ? crypto.newExternalId()
+                    : requestedExternalId;
+            if (requestedExternalId != null) {
+                Optional<ConversationSummary> existing = findConversationSummary(userId, conversationExternalId);
+                if (existing.isPresent()) {
+                    return existing.get();
+                }
+            }
             long conversationId = insertAndReturnId("""
                     INSERT INTO conversation (
                         external_id, user_id, conversation_type, knowledge_base_id,
@@ -113,34 +128,16 @@ public class ChatV2Repository {
         ConversationSummary summary = requireConversationSummary(userId, conversationExternalId);
         Map<String, List<CitationView>> citations = loadCitations(userId, conversationExternalId);
         Map<String, List<MessageAttachmentView>> attachments = loadMessageAttachments(userId, conversationExternalId);
-        List<MessageView> messages = jdbc.query("""
-                SELECT m.external_id, b.external_id AS branch_external_id,
-                       parent.external_id AS parent_external_id,
-                       m.role, m.status, m.sequence_no, m.plain_text,
-                       run.external_id AS run_external_id,
-                       m.created_at, m.finalized_at
-                  FROM message m
-                  JOIN conversation c ON c.id = m.conversation_id
-                  JOIN conversation_branch b ON b.id = m.branch_id
-                  LEFT JOIN message parent ON parent.id = m.parent_message_id
-                  LEFT JOIN ai_run run ON run.id = m.ai_run_id
-                 WHERE c.external_id = ? AND c.user_id = ? AND m.branch_id = c.active_branch_id
-                 ORDER BY m.sequence_no ASC
-                """, (rs, rowNum) -> new MessageView(
-                        rs.getString("external_id"),
-                        rs.getString("branch_external_id"),
-                        rs.getString("parent_external_id"),
-                        rs.getString("role"),
-                        rs.getString("status"),
-                        rs.getLong("sequence_no"),
-                        rs.getString("plain_text"),
-                        rs.getString("run_external_id"),
-                        attachments.getOrDefault(rs.getString("external_id"), List.of()),
-                        citations.getOrDefault(rs.getString("external_id"), List.of()),
-                        instant(rs.getTimestamp("created_at")),
-                        instant(rs.getTimestamp("finalized_at"))),
-                conversationExternalId, userId);
-        return new ConversationDetail(summary, messages);
+        List<MessageView> messages = loadVisibleMessages(
+                userId, conversationExternalId, summary.activeBranchId()).stream()
+                .map(row -> new MessageView(
+                        row.externalId(), row.branchExternalId(), row.versionGroupExternalId(),
+                        row.parentExternalId(), row.role(), row.status(), row.sequence(),
+                        row.content() == null ? "" : row.content(),
+                        row.runExternalId(), attachments.getOrDefault(row.externalId(), List.of()),
+                        citations.getOrDefault(row.externalId(), List.of()), row.createdAt(), row.finalizedAt()))
+                .toList();
+        return new ConversationDetail(summary, messages, loadVersionGroups(userId, conversationExternalId));
     }
 
     public ConversationSummary updateConversation(
@@ -192,128 +189,315 @@ public class ChatV2Repository {
         return transactions.execute(status -> {
             String idempotencyKey = normalizeIdempotencyKey(requestedIdempotencyKey);
             Optional<PreparedRun> replay = findIdempotentRun(userId, conversationExternalId, idempotencyKey);
-            if (replay.isPresent()) {
-                return replay.get();
-            }
-
+            if (replay.isPresent()) return replay.get();
             ConversationRow conversation = requireConversationForUpdate(userId, conversationExternalId);
-            if (!"ACTIVE".equals(conversation.status())) {
-                throw notFound("CONVERSATION_NOT_FOUND", "对话不存在或不可用。");
-            }
-            if (conversation.activeRunId() != null) {
-                throw conflict("RUN_ALREADY_ACTIVE", "当前对话仍在生成回答，请等待完成或先取消。");
-            }
-
+            validateConversationCanGenerate(conversation);
             List<LockedAssetVersion> directSources = resolveDirectSources(userId, requestedAssetIds);
             validateKnowledgeBaseReadiness(userId, conversation.knowledgeBaseId());
             List<LockedAssetVersion> knowledgeBaseSources = resolveKnowledgeBaseSources(
                     userId, conversation.knowledgeBaseId());
-
             BranchRow branch = requireActiveBranchForUpdate(conversation.id(), conversation.activeBranchId());
             MessageCursor cursor = lastMessageCursor(branch.id());
             String userMessageExternalId = crypto.newExternalId();
+            String normalizedContent = content == null ? "" : content.trim();
             long userMessageId = insertAndReturnId("""
                     INSERT INTO message (
                         external_id, conversation_id, branch_id, parent_message_id,
                         role, status, sequence_no, plain_text, generated_by_ai, finalized_at
                     ) VALUES (?, ?, ?, ?, 'USER', 'FINALIZED', ?, ?, FALSE, CURRENT_TIMESTAMP(3))
                     """, userMessageExternalId, conversation.id(), branch.id(), cursor.messageId(),
-                    cursor.sequence() + 1, content == null ? "" : content.trim());
+                    cursor.sequence() + 1, normalizedContent.isBlank() ? null : normalizedContent);
+            for (LockedAssetVersion source : directSources) {
+                attachSource(userMessageId, source);
+            }
+            return createPreparedRun(
+                    userId, conversation, branch, userMessageId, userMessageExternalId,
+                    cursor.sequence() + 1, cursor.sequence() + 2, userMessageId,
+                    null, directSources, knowledgeBaseSources, idempotencyKey, true);
+        });
+    }
 
-            long responseGroupId = insertAndReturnId("""
+    public PreparedRun prepareEditedRun(
+            long userId,
+            String conversationExternalId,
+            String messageExternalId,
+            String content,
+            String requestedIdempotencyKey) {
+        return transactions.execute(status -> {
+            String idempotencyKey = normalizeIdempotencyKey(requestedIdempotencyKey);
+            Optional<PreparedRun> replay = findIdempotentRun(userId, conversationExternalId, idempotencyKey);
+            if (replay.isPresent()) return replay.get();
+            ConversationRow conversation = requireConversationForUpdate(userId, conversationExternalId);
+            validateConversationCanGenerate(conversation);
+            ForkMessage source = requireVisibleForkMessage(conversation, messageExternalId, "USER");
+            BranchRow branch = createForkBranch(userId, conversation, source);
+            String editedExternalId = crypto.newExternalId();
+            long editedId = insertAndReturnId("""
+                    INSERT INTO message (
+                        external_id, conversation_id, branch_id, role, status, sequence_no,
+                        plain_text, edited_from_message_id, generated_by_ai, finalized_at
+                    ) VALUES (?, ?, ?, 'USER', 'FINALIZED', ?, ?, ?, FALSE, CURRENT_TIMESTAMP(3))
+                    """, editedExternalId, conversation.id(), branch.id(), source.sequence(),
+                    content.trim(), source.originMessageId());
+            copyAttachments(source.id(), editedId);
+            List<LockedAssetVersion> directSources = loadDirectSourcesForMessage(userId, source.id());
+            validateKnowledgeBaseReadiness(userId, conversation.knowledgeBaseId());
+            List<LockedAssetVersion> knowledgeBaseSources = resolveKnowledgeBaseSources(
+                    userId, conversation.knowledgeBaseId());
+            return createPreparedRun(
+                    userId, conversation, branch, editedId, editedExternalId,
+                    source.sequence(), source.sequence() + 1, editedId,
+                    null, directSources, knowledgeBaseSources, idempotencyKey, false);
+        });
+    }
+
+    public PreparedRun prepareRegeneratedRun(
+            long userId,
+            String conversationExternalId,
+            String messageExternalId,
+            String requestedIdempotencyKey) {
+        return transactions.execute(status -> {
+            String idempotencyKey = normalizeIdempotencyKey(requestedIdempotencyKey);
+            Optional<PreparedRun> replay = findIdempotentRun(userId, conversationExternalId, idempotencyKey);
+            if (replay.isPresent()) return replay.get();
+            ConversationRow conversation = requireConversationForUpdate(userId, conversationExternalId);
+            validateConversationCanGenerate(conversation);
+            ForkMessage source = requireVisibleForkMessage(conversation, messageExternalId, "ASSISTANT");
+            if (source.requestMessageId() == null) {
+                throw conflict("MESSAGE_BRANCH_INVALID", "该回答缺少原始问题，无法重新生成。");
+            }
+            RequestMessage request = requireRequestMessage(source.requestMessageId());
+            BranchRow branch = createForkBranch(userId, conversation, source);
+            List<LockedAssetVersion> directSources = loadDirectSourcesForMessage(userId, request.id());
+            validateKnowledgeBaseReadiness(userId, conversation.knowledgeBaseId());
+            List<LockedAssetVersion> knowledgeBaseSources = resolveKnowledgeBaseSources(
+                    userId, conversation.knowledgeBaseId());
+            return createPreparedRun(
+                    userId, conversation, branch, request.id(), request.externalId(),
+                    request.sequence(), source.sequence(), null,
+                    source.originMessageId(), directSources, knowledgeBaseSources, idempotencyKey, false);
+        });
+    }
+
+    public void activateBranch(long userId, String conversationExternalId, String branchExternalId) {
+        transactions.executeWithoutResult(status -> {
+            ConversationRow conversation = requireConversationForUpdate(userId, conversationExternalId);
+            validateConversationCanGenerate(conversation);
+            List<Long> branchIds = jdbc.query("""
+                    SELECT id FROM conversation_branch
+                     WHERE external_id = ? AND conversation_id = ? AND status = 'ACTIVE'
+                     FOR UPDATE
+                    """, (rs, rowNum) -> rs.getLong(1), branchExternalId, conversation.id());
+            if (branchIds.isEmpty()) throw notFound("BRANCH_NOT_FOUND", "消息版本不存在或不可用。");
+            jdbc.update("""
+                    UPDATE conversation SET active_branch_id = ?, row_version = row_version + 1 WHERE id = ?
+                    """, branchIds.get(0), conversation.id());
+        });
+    }
+
+    private PreparedRun createPreparedRun(
+            long userId,
+            ConversationRow conversation,
+            BranchRow branch,
+            long requestMessageId,
+            String requestMessageExternalId,
+            long requestSequence,
+            long responseSequence,
+            Long responseParentMessageId,
+            Long responseEditedFromMessageId,
+            List<LockedAssetVersion> directSources,
+            List<LockedAssetVersion> knowledgeBaseSources,
+            String idempotencyKey,
+            boolean updateDefaultTitle) {
+        Long responseGroupId = null;
+        if (responseParentMessageId != null) {
+            responseGroupId = insertAndReturnId("""
                     INSERT INTO assistant_response_group (
                         external_id, conversation_id, branch_id, user_message_id
                     ) VALUES (?, ?, ?, ?)
-                    """, crypto.newExternalId(), conversation.id(), branch.id(), userMessageId);
+                    """, crypto.newExternalId(), conversation.id(), branch.id(), requestMessageId);
+        }
 
-            RuntimeDefinition runtime = requireRuntimeDefinition();
-            String jobExternalId = crypto.newExternalId();
-            String runExternalId = crypto.newExternalId();
-            String payloadJson = json(Map.of(
-                    "conversationId", conversationExternalId,
-                    "requestMessageId", userMessageExternalId,
-                    "sourceAssetIds", directSources.stream().map(LockedAssetVersion::assetExternalId).toList()));
-            long jobId = insertAndReturnId("""
-                    INSERT INTO async_job (
-                        external_id, user_id, job_type, aggregate_type, aggregate_external_id,
-                        status, stage_key, progress_current, progress_total,
-                        idempotency_scope, idempotency_key, cancellable, payload_json, max_attempts
-                    ) VALUES (?, ?, 'GENERAL_CHAT_RESPONSE', 'CONVERSATION', ?,
-                              'QUEUED', 'queued', 0, 4, ?, ?, TRUE, CAST(? AS JSON), 1)
-                    """, jobExternalId, userId, conversationExternalId,
-                    idempotencyScope(conversationExternalId), idempotencyKey, payloadJson);
+        RuntimeDefinition runtime = requireRuntimeDefinition();
+        String jobExternalId = crypto.newExternalId();
+        String runExternalId = crypto.newExternalId();
+        String payloadJson = json(Map.of(
+                "conversationId", conversation.externalId(),
+                "requestMessageId", requestMessageExternalId,
+                "sourceAssetIds", directSources.stream().map(LockedAssetVersion::assetExternalId).toList()));
+        long jobId = insertAndReturnId("""
+                INSERT INTO async_job (
+                    external_id, user_id, job_type, aggregate_type, aggregate_external_id,
+                    status, stage_key, progress_current, progress_total,
+                    idempotency_scope, idempotency_key, cancellable, payload_json, max_attempts
+                ) VALUES (?, ?, 'GENERAL_CHAT_RESPONSE', 'CONVERSATION', ?,
+                          'QUEUED', 'queued', 0, 4, ?, ?, TRUE, CAST(? AS JSON), 1)
+                """, jobExternalId, userId, conversation.externalId(),
+                idempotencyScope(conversation.externalId()), idempotencyKey, payloadJson);
 
-            long runId = insertAndReturnId("""
-                    INSERT INTO ai_run (
-                        external_id, user_id, async_job_id, conversation_id, branch_id,
-                        request_message_id, capability_id, model_policy_version_id,
-                        prompt_version_id, mode, intent_key, side_effect_level
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'GENERAL_CHAT', 'general.chat', 'NONE')
-                    """, runExternalId, userId, jobId, conversation.id(), branch.id(), userMessageId,
-                    runtime.capabilityId(), runtime.modelPolicyVersionId(), runtime.promptVersionId());
+        long runId = insertAndReturnId("""
+                INSERT INTO ai_run (
+                    external_id, user_id, async_job_id, conversation_id, branch_id,
+                    request_message_id, capability_id, model_policy_version_id,
+                    prompt_version_id, mode, intent_key, side_effect_level
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'GENERAL_CHAT', 'general.chat', 'NONE')
+                """, runExternalId, userId, jobId, conversation.id(), branch.id(), requestMessageId,
+                runtime.capabilityId(), runtime.modelPolicyVersionId(), runtime.promptVersionId());
 
-            String assistantMessageExternalId = crypto.newExternalId();
-            long assistantMessageId = insertAndReturnId("""
-                    INSERT INTO message (
-                        external_id, conversation_id, branch_id, parent_message_id,
-                        role, status, sequence_no, response_group_id, generated_by_ai,
-                        ai_run_id, generation_label
-                    ) VALUES (?, ?, ?, ?, 'ASSISTANT', 'STREAMING', ?, ?, TRUE, ?, 'general-chat-v1')
-                    """, assistantMessageExternalId, conversation.id(), branch.id(), userMessageId,
-                    cursor.sequence() + 2, responseGroupId, runId);
-            jdbc.update("UPDATE ai_run SET response_message_id = ? WHERE id = ?", assistantMessageId, runId);
+        String assistantMessageExternalId = crypto.newExternalId();
+        long assistantMessageId = insertAndReturnId("""
+                INSERT INTO message (
+                    external_id, conversation_id, branch_id, parent_message_id,
+                    role, status, sequence_no, edited_from_message_id, response_group_id,
+                    generated_by_ai, ai_run_id, generation_label
+                ) VALUES (?, ?, ?, ?, 'ASSISTANT', 'STREAMING', ?, ?, ?, TRUE, ?, 'general-chat-v2')
+                """, assistantMessageExternalId, conversation.id(), branch.id(), responseParentMessageId,
+                responseSequence, responseEditedFromMessageId, responseGroupId, runId);
+        jdbc.update("UPDATE ai_run SET response_message_id = ? WHERE id = ?", assistantMessageId, runId);
+        if (responseGroupId != null) {
             jdbc.update("UPDATE assistant_response_group SET selected_message_id = ? WHERE id = ?",
                     assistantMessageId, responseGroupId);
-            jdbc.update("UPDATE conversation_branch SET active_run_id = ?, row_version = row_version + 1 WHERE id = ?",
-                    runId, branch.id());
+        }
+        jdbc.update("UPDATE conversation_branch SET active_run_id = ?, row_version = row_version + 1 WHERE id = ?",
+                runId, branch.id());
 
-            for (LockedAssetVersion source : directSources) {
-                jdbc.update("""
-                        INSERT INTO message_attachment (
-                            message_id, asset_version_id, attachment_role, display_name
-                        ) VALUES (?, ?, 'CONTEXT', ?)
-                        """, userMessageId, source.assetVersionId(), source.assetName());
-            }
+        List<LockedAssetVersion> frozenSources = mergeFrozenSources(directSources, knowledgeBaseSources);
+        Map<String, Object> manifest = new LinkedHashMap<>();
+        manifest.put("conversationId", conversation.externalId());
+        manifest.put("knowledgeBaseId", conversation.knowledgeBaseExternalId());
+        manifest.put("sourceVersions", frozenSources.stream().map(source -> Map.of(
+                "assetId", source.assetExternalId(),
+                "versionId", source.versionExternalId(),
+                "name", source.assetName())).toList());
+        manifest.put("messageSequence", requestSequence);
+        String manifestJson = json(manifest);
+        long contextSnapshotId = insertAndReturnId("""
+                INSERT INTO ai_context_snapshot (
+                    external_id, ai_run_id, context_schema_version,
+                    context_manifest_json, context_hash
+                ) VALUES (?, ?, 2, CAST(? AS JSON), ?)
+                """, crypto.newExternalId(), runId, manifestJson,
+                sha256(manifestJson.getBytes(StandardCharsets.UTF_8)));
+        persistFrozenSources(
+                contextSnapshotId, conversation.knowledgeBaseId(), directSources, knowledgeBaseSources);
 
-            List<LockedAssetVersion> frozenSources = mergeFrozenSources(directSources, knowledgeBaseSources);
-            Map<String, Object> manifest = new LinkedHashMap<>();
-            manifest.put("conversationId", conversationExternalId);
-            manifest.put("knowledgeBaseId", conversation.knowledgeBaseExternalId());
-            manifest.put("sourceVersions", frozenSources.stream().map(source -> Map.of(
-                    "assetId", source.assetExternalId(),
-                    "versionId", source.versionExternalId(),
-                    "name", source.assetName())).toList());
-            manifest.put("messageSequence", cursor.sequence() + 1);
-            String manifestJson = json(manifest);
-            long contextSnapshotId = insertAndReturnId("""
-                    INSERT INTO ai_context_snapshot (
-                        external_id, ai_run_id, context_schema_version,
-                        context_manifest_json, context_hash
-                    ) VALUES (?, ?, 2, CAST(? AS JSON), ?)
-                    """, crypto.newExternalId(), runId, manifestJson,
-                    sha256(manifestJson.getBytes(StandardCharsets.UTF_8)));
-            persistFrozenSources(
-                    contextSnapshotId, conversation.knowledgeBaseId(), directSources, knowledgeBaseSources);
+        String title = conversation.title();
+        if (updateDefaultTitle && DEFAULT_TITLE.equals(title)) {
+            title = titleFromMessage(requireRequestMessage(requestMessageId).content(), directSources);
+        }
+        jdbc.update("""
+                UPDATE conversation
+                   SET title = ?, active_branch_id = ?, last_message_at = CURRENT_TIMESTAMP(3),
+                       row_version = row_version + 1
+                 WHERE id = ?
+                """, title, branch.id(), conversation.id());
 
-            String title = conversation.title();
-            if (DEFAULT_TITLE.equals(title)) {
-                title = titleFromMessage(content, directSources);
-            }
-            jdbc.update("""
-                    UPDATE conversation
-                       SET title = ?, last_message_at = CURRENT_TIMESTAMP(3), row_version = row_version + 1
-                     WHERE id = ?
-                    """, title, conversation.id());
+        return new PreparedRun(
+                runId, runExternalId, jobId, jobExternalId, userId,
+                conversation.id(), conversation.externalId(), branch.id(), branch.externalId(),
+                requestMessageId, requestMessageExternalId,
+                assistantMessageId, assistantMessageExternalId,
+                conversation.knowledgeBaseExternalId(),
+                frozenSources.stream().map(LockedAssetVersion::versionExternalId).toList(),
+                runtime, false);
+    }
 
-            return new PreparedRun(
-                    runId, runExternalId, jobId, jobExternalId, userId,
-                    conversation.id(), conversationExternalId, branch.id(), branch.externalId(),
-                    userMessageId, userMessageExternalId,
-                    assistantMessageId, assistantMessageExternalId,
-                    conversation.knowledgeBaseExternalId(),
-                    frozenSources.stream().map(LockedAssetVersion::versionExternalId).toList(),
-                    runtime, false);
-        });
+    private BranchRow createForkBranch(long userId, ConversationRow conversation, ForkMessage source) {
+        String branchExternalId = crypto.newExternalId();
+        long branchId = insertAndReturnId("""
+                INSERT INTO conversation_branch (
+                    external_id, conversation_id, parent_branch_id, forked_from_message_id,
+                    status, created_by_user_id
+                ) VALUES (?, ?, ?, ?, 'ACTIVE', ?)
+                """, branchExternalId, conversation.id(), source.branchId(), source.id(), userId);
+        jdbc.update("UPDATE conversation SET active_branch_id = ?, row_version = row_version + 1 WHERE id = ?",
+                branchId, conversation.id());
+        return new BranchRow(branchId, branchExternalId);
+    }
+
+    private ForkMessage requireVisibleForkMessage(
+            ConversationRow conversation, String messageExternalId, String expectedRole) {
+        List<ForkMessage> rows = jdbc.query("""
+                SELECT m.id, m.external_id, m.branch_id, branch.external_id AS branch_external_id,
+                       m.role, m.status, m.sequence_no, m.plain_text,
+                       COALESCE(m.edited_from_message_id, m.id) AS origin_message_id,
+                       COALESCE(m.parent_message_id, run.request_message_id) AS request_message_id
+                  FROM message m
+                  JOIN conversation_branch branch ON branch.id = m.branch_id
+                  LEFT JOIN ai_run run ON run.id = m.ai_run_id
+                 WHERE m.external_id = ? AND m.conversation_id = ?
+                 FOR UPDATE
+                """, (rs, rowNum) -> new ForkMessage(
+                        rs.getLong("id"), rs.getString("external_id"), rs.getLong("branch_id"),
+                        rs.getString("branch_external_id"), rs.getString("role"), rs.getString("status"),
+                        rs.getLong("sequence_no"), rs.getString("plain_text"),
+                        rs.getLong("origin_message_id"), nullableLong(rs, "request_message_id")),
+                messageExternalId, conversation.id());
+        if (rows.isEmpty()) throw notFound("MESSAGE_NOT_FOUND", "消息不存在或不可用。");
+        ForkMessage message = rows.get(0);
+        boolean visible = loadVisibleMessages(conversation.id(), conversation.activeBranchId()).stream()
+                .anyMatch(candidate -> candidate.id() == message.id());
+        if (!visible || !expectedRole.equals(message.role())) {
+            throw conflict("MESSAGE_BRANCH_INVALID", "该消息不在当前对话版本中。");
+        }
+        if ("USER".equals(expectedRole) && !"FINALIZED".equals(message.status())) {
+            throw conflict("MESSAGE_NOT_EDITABLE", "该消息当前不能编辑。");
+        }
+        if ("ASSISTANT".equals(expectedRole) && "STREAMING".equals(message.status())) {
+            throw conflict("MESSAGE_NOT_REGENERATABLE", "回答生成完成或停止后才能重新生成。");
+        }
+        return message;
+    }
+
+    private RequestMessage requireRequestMessage(long messageId) {
+        List<RequestMessage> rows = jdbc.query("""
+                SELECT id, external_id, sequence_no, plain_text FROM message
+                 WHERE id = ? AND role = 'USER'
+                """, (rs, rowNum) -> new RequestMessage(
+                        rs.getLong("id"), rs.getString("external_id"),
+                        rs.getLong("sequence_no"), rs.getString("plain_text")), messageId);
+        if (rows.isEmpty()) throw conflict("REQUEST_MESSAGE_MISSING", "原始问题不存在或不可用。");
+        return rows.get(0);
+    }
+
+    private void attachSource(long messageId, LockedAssetVersion source) {
+        jdbc.update("""
+                INSERT INTO message_attachment (
+                    message_id, asset_version_id, attachment_role, display_name
+                ) VALUES (?, ?, 'CONTEXT', ?)
+                """, messageId, source.assetVersionId(), source.assetName());
+    }
+
+    private void copyAttachments(long sourceMessageId, long targetMessageId) {
+        jdbc.update("""
+                INSERT INTO message_attachment (
+                    message_id, asset_version_id, attachment_role, display_name
+                ) SELECT ?, asset_version_id, attachment_role, display_name
+                    FROM message_attachment WHERE message_id = ?
+                """, targetMessageId, sourceMessageId);
+    }
+
+    private List<LockedAssetVersion> loadDirectSourcesForMessage(long userId, long messageId) {
+        return jdbc.query("""
+                SELECT a.id AS asset_id, a.external_id AS asset_external_id, a.name,
+                       av.id AS version_id, av.external_id AS version_external_id
+                  FROM message_attachment attachment
+                  JOIN asset_version av ON av.id = attachment.asset_version_id
+                  JOIN asset a ON a.id = av.asset_id
+                 WHERE attachment.message_id = ? AND a.user_id = ? AND attachment.attachment_role = 'CONTEXT'
+                 ORDER BY attachment.id ASC
+                """, (rs, rowNum) -> new LockedAssetVersion(
+                        rs.getLong("asset_id"), rs.getString("asset_external_id"), rs.getString("name"),
+                        rs.getLong("version_id"), rs.getString("version_external_id")), messageId, userId);
+    }
+
+    private void validateConversationCanGenerate(ConversationRow conversation) {
+        if (!"ACTIVE".equals(conversation.status())) {
+            throw notFound("CONVERSATION_NOT_FOUND", "对话不存在或不可用。");
+        }
+        if (conversation.activeRunId() != null) {
+            throw conflict("RUN_ALREADY_ACTIVE", "当前对话仍在生成回答，请等待完成或先取消。");
+        }
     }
 
     public RunExecutionContext loadRunExecutionContext(long userId, String runExternalId) {
@@ -731,7 +915,7 @@ public class ChatV2Repository {
                 SELECT m.external_id
                   FROM message m
                   JOIN conversation c ON c.id = m.conversation_id
-                 WHERE c.external_id = ? AND c.user_id = ? AND m.branch_id = c.active_branch_id
+                 WHERE c.external_id = ? AND c.user_id = ?
                 """, (rs, rowNum) -> rs.getString(1), conversationExternalId, userId);
         Map<String, List<CitationView>> result = new LinkedHashMap<>();
         for (String messageId : messageIds) {
@@ -758,7 +942,6 @@ public class ChatV2Repository {
                   JOIN asset_version av ON av.id = attachment.asset_version_id
                   JOIN asset a ON a.id = av.asset_id
                  WHERE c.external_id = ? AND c.user_id = ?
-                   AND m.branch_id = c.active_branch_id
                  ORDER BY m.sequence_no ASC, attachment.id ASC
                 """, (RowCallbackHandler) rs -> result.computeIfAbsent(
                         rs.getString("message_external_id"), ignored -> new ArrayList<>()).add(
@@ -775,17 +958,118 @@ public class ChatV2Repository {
     }
 
     private List<HistoryMessage> loadHistory(long branchId, long throughMessageId) {
-        List<HistoryMessage> history = jdbc.query("""
-                SELECT role, plain_text
-                  FROM message
-                 WHERE branch_id = ? AND id <= ? AND status = 'FINALIZED' AND plain_text IS NOT NULL
-                 ORDER BY sequence_no DESC
-                 LIMIT 20
-                """, (rs, rowNum) -> new HistoryMessage(
-                        rs.getString("role").toLowerCase(), rs.getString("plain_text")),
-                branchId, throughMessageId);
-        Collections.reverse(history);
-        return List.copyOf(history);
+        List<MessagePoint> points = jdbc.query("""
+                SELECT conversation_id, sequence_no FROM message WHERE id = ?
+                """, (rs, rowNum) -> new MessagePoint(
+                        rs.getLong("conversation_id"), rs.getLong("sequence_no")), throughMessageId);
+        if (points.isEmpty()) return List.of();
+        MessagePoint through = points.get(0);
+        List<MessageData> visible = loadVisibleMessages(through.conversationId(), branchId);
+        List<HistoryMessage> history = visible.stream()
+                .filter(message -> message.sequence() <= through.sequence())
+                .filter(message -> "FINALIZED".equals(message.status()) && message.content() != null)
+                .map(message -> new HistoryMessage(message.role().toLowerCase(), message.content()))
+                .toList();
+        int from = Math.max(0, history.size() - 20);
+        return List.copyOf(history.subList(from, history.size()));
+    }
+
+    private List<MessageData> loadVisibleMessages(
+            long userId, String conversationExternalId, String activeBranchExternalId) {
+        List<ConversationIdentity> conversations = jdbc.query("""
+                SELECT c.id, c.active_branch_id
+                  FROM conversation c
+                  JOIN conversation_branch b ON b.id = c.active_branch_id
+                 WHERE c.external_id = ? AND c.user_id = ? AND b.external_id = ?
+                """, (rs, rowNum) -> new ConversationIdentity(
+                        rs.getLong("id"), rs.getLong("active_branch_id")),
+                conversationExternalId, userId, activeBranchExternalId);
+        if (conversations.isEmpty()) return List.of();
+        ConversationIdentity conversation = conversations.get(0);
+        return loadVisibleMessages(conversation.id(), conversation.activeBranchId());
+    }
+
+    private List<MessageData> loadVisibleMessages(long conversationId, long activeBranchId) {
+        List<BranchTopology> branches = jdbc.query("""
+                SELECT branch.id, branch.external_id, branch.parent_branch_id,
+                       fork.sequence_no AS fork_sequence
+                  FROM conversation_branch branch
+                  LEFT JOIN message fork ON fork.id = branch.forked_from_message_id
+                 WHERE branch.conversation_id = ? AND branch.status = 'ACTIVE'
+                """, (rs, rowNum) -> new BranchTopology(
+                        rs.getLong("id"), rs.getString("external_id"),
+                        nullableLong(rs, "parent_branch_id"), nullableLong(rs, "fork_sequence")),
+                conversationId);
+        Map<Long, BranchTopology> byId = new HashMap<>();
+        branches.forEach(branch -> byId.put(branch.id(), branch));
+        List<BranchSlice> slices = new ArrayList<>();
+        BranchTopology current = byId.get(activeBranchId);
+        Long upperBound = null;
+        while (current != null) {
+            slices.add(new BranchSlice(current.id(), upperBound));
+            upperBound = current.forkSequence();
+            current = current.parentBranchId() == null ? null : byId.get(current.parentBranchId());
+        }
+        Collections.reverse(slices);
+
+        List<MessageData> messages = new ArrayList<>();
+        for (BranchSlice slice : slices) {
+            String sequencePredicate = slice.upperSequenceExclusive() == null ? "" : " AND m.sequence_no < ?";
+            List<Object> args = new ArrayList<>();
+            args.add(slice.branchId());
+            if (slice.upperSequenceExclusive() != null) args.add(slice.upperSequenceExclusive());
+            messages.addAll(jdbc.query("""
+                    SELECT m.id, m.external_id, branch.external_id AS branch_external_id,
+                           COALESCE(origin.external_id, m.external_id) AS version_group_external_id,
+                           parent.external_id AS parent_external_id,
+                           m.role, m.status, m.sequence_no, m.plain_text,
+                           run.external_id AS run_external_id, m.created_at, m.finalized_at
+                      FROM message m
+                      JOIN conversation_branch branch ON branch.id = m.branch_id
+                      LEFT JOIN message origin ON origin.id = m.edited_from_message_id
+                      LEFT JOIN message parent ON parent.id = m.parent_message_id
+                      LEFT JOIN ai_run run ON run.id = m.ai_run_id
+                     WHERE m.branch_id = ?
+                    """ + sequencePredicate + " ORDER BY m.sequence_no ASC",
+                    (rs, rowNum) -> new MessageData(
+                            rs.getLong("id"), rs.getString("external_id"),
+                            rs.getString("branch_external_id"), rs.getString("version_group_external_id"),
+                            rs.getString("parent_external_id"), rs.getString("role"), rs.getString("status"),
+                            rs.getLong("sequence_no"), rs.getString("plain_text"),
+                            rs.getString("run_external_id"), instant(rs.getTimestamp("created_at")),
+                            instant(rs.getTimestamp("finalized_at"))), args.toArray()));
+        }
+        messages.sort(Comparator.comparingLong(MessageData::sequence));
+        return List.copyOf(messages);
+    }
+
+    private List<MessageVersionGroup> loadVersionGroups(long userId, String conversationExternalId) {
+        List<VersionEntry> entries = jdbc.query("""
+                SELECT COALESCE(origin.external_id, m.external_id) AS group_external_id,
+                       m.external_id AS message_external_id, branch.external_id AS branch_external_id,
+                       m.role, m.created_at
+                  FROM message m
+                  JOIN conversation c ON c.id = m.conversation_id
+                  JOIN conversation_branch branch ON branch.id = m.branch_id
+                  LEFT JOIN message origin ON origin.id = m.edited_from_message_id
+                 WHERE c.external_id = ? AND c.user_id = ?
+                   AND (m.edited_from_message_id IS NOT NULL OR EXISTS (
+                       SELECT 1 FROM message variant WHERE variant.edited_from_message_id = m.id
+                   ))
+                 ORDER BY m.created_at ASC, m.id ASC
+                """, (rs, rowNum) -> new VersionEntry(
+                        rs.getString("group_external_id"), rs.getString("message_external_id"),
+                        rs.getString("branch_external_id"), rs.getString("role"),
+                        instant(rs.getTimestamp("created_at"))), conversationExternalId, userId);
+        Map<String, List<VersionEntry>> grouped = new LinkedHashMap<>();
+        entries.forEach(entry -> grouped.computeIfAbsent(entry.groupExternalId(), ignored -> new ArrayList<>()).add(entry));
+        return grouped.entrySet().stream()
+                .filter(entry -> entry.getValue().size() > 1)
+                .map(entry -> new MessageVersionGroup(
+                        entry.getKey(), entry.getValue().get(0).role(),
+                        entry.getValue().stream().map(version -> new MessageVersionView(
+                                version.messageExternalId(), version.branchExternalId(), version.createdAt())).toList()))
+                .toList();
     }
 
     private List<String> loadContextVersionExternalIds(long runId) {
@@ -1014,6 +1298,11 @@ public class ChatV2Repository {
     }
 
     private ConversationSummary requireConversationSummary(long userId, String externalId) {
+        return findConversationSummary(userId, externalId)
+                .orElseThrow(() -> notFound("CONVERSATION_NOT_FOUND", "对话不存在或不可用。"));
+    }
+
+    private Optional<ConversationSummary> findConversationSummary(long userId, String externalId) {
         List<ConversationSummary> rows = jdbc.query("""
                 SELECT c.external_id, c.title, c.conversation_type, c.status,
                        kb.external_id AS knowledge_base_external_id,
@@ -1025,11 +1314,8 @@ public class ChatV2Repository {
                   LEFT JOIN conversation_branch branch ON branch.id = c.active_branch_id
                  WHERE c.external_id = ? AND c.user_id = ?
                    AND c.conversation_type = 'GENERAL' AND c.status <> 'PURGED'
-                """, (rs, rowNum) -> mapConversationSummary(rs), externalId, userId);
-        if (rows.isEmpty()) {
-            throw notFound("CONVERSATION_NOT_FOUND", "对话不存在或不可用。");
-        }
-        return rows.get(0);
+                 """, (rs, rowNum) -> mapConversationSummary(rs), externalId, userId);
+        return rows.stream().findFirst();
     }
 
     private ConversationSummary mapConversationSummary(java.sql.ResultSet rs) throws java.sql.SQLException {
@@ -1267,6 +1553,61 @@ public class ChatV2Repository {
     }
 
     private record MessageCursor(Long messageId, long sequence) {
+    }
+
+    private record ConversationIdentity(long id, long activeBranchId) {
+    }
+
+    private record BranchTopology(
+            long id,
+            String externalId,
+            Long parentBranchId,
+            Long forkSequence) {
+    }
+
+    private record BranchSlice(long branchId, Long upperSequenceExclusive) {
+    }
+
+    private record MessageData(
+            long id,
+            String externalId,
+            String branchExternalId,
+            String versionGroupExternalId,
+            String parentExternalId,
+            String role,
+            String status,
+            long sequence,
+            String content,
+            String runExternalId,
+            Instant createdAt,
+            Instant finalizedAt) {
+    }
+
+    private record VersionEntry(
+            String groupExternalId,
+            String messageExternalId,
+            String branchExternalId,
+            String role,
+            Instant createdAt) {
+    }
+
+    private record MessagePoint(long conversationId, long sequence) {
+    }
+
+    private record ForkMessage(
+            long id,
+            String externalId,
+            long branchId,
+            String branchExternalId,
+            String role,
+            String status,
+            long sequence,
+            String content,
+            long originMessageId,
+            Long requestMessageId) {
+    }
+
+    private record RequestMessage(long id, String externalId, long sequence, String content) {
     }
 
     private record LockedAssetVersion(

@@ -6,6 +6,7 @@ import com.example.llm.chatv2.api.ChatV2Dtos.ConversationDetail;
 import com.example.llm.chatv2.api.ChatV2Dtos.ConversationPage;
 import com.example.llm.chatv2.api.ChatV2Dtos.ConversationSummary;
 import com.example.llm.chatv2.api.ChatV2Dtos.CreateConversationRequest;
+import com.example.llm.chatv2.api.ChatV2Dtos.EditMessageRequest;
 import com.example.llm.chatv2.api.ChatV2Dtos.SendMessageAccepted;
 import com.example.llm.chatv2.api.ChatV2Dtos.SendMessageRequest;
 import com.example.llm.chatv2.api.ChatV2Dtos.UpdateConversationRequest;
@@ -34,7 +35,11 @@ public class ChatV2ApplicationService {
 
     public ConversationSummary create(CreateConversationRequest request) {
         long userId = UserContext.requireSession().userId();
-        return repository.createConversation(userId, request.title(), normalizeExternalId(request.knowledgeBaseId()));
+        return repository.createConversation(
+                userId,
+                normalizeExternalId(request.conversationId()),
+                request.title(),
+                normalizeExternalId(request.knowledgeBaseId()));
     }
 
     public ConversationPage list(String cursor, int limit) {
@@ -75,6 +80,46 @@ public class ChatV2ApplicationService {
         if (!prepared.replayed()) {
             runExecutor.execute(prepared);
         }
+        return new SendMessageAccepted(
+                prepared.requestMessageExternalId(), prepared.responseMessageExternalId(),
+                prepared.runExternalId(), eventUrl(prepared.runExternalId()));
+    }
+
+    public SendMessageAccepted edit(
+            String conversationId,
+            String messageId,
+            EditMessageRequest request,
+            String idempotencyKey) {
+        if (request.content().isBlank()) {
+            throw new ChatV2ApiException(HttpStatus.BAD_REQUEST,
+                    "EMPTY_MESSAGE", "编辑后的消息不能为空。");
+        }
+        PreparedRun prepared = repository.prepareEditedRun(
+                UserContext.requireSession().userId(), requireExternalId(conversationId),
+                requireExternalId(messageId), request.content(), idempotencyKey);
+        if (!prepared.replayed()) runExecutor.execute(prepared);
+        return accepted(prepared);
+    }
+
+    public SendMessageAccepted regenerate(
+            String conversationId,
+            String messageId,
+            String idempotencyKey) {
+        PreparedRun prepared = repository.prepareRegeneratedRun(
+                UserContext.requireSession().userId(), requireExternalId(conversationId),
+                requireExternalId(messageId), idempotencyKey);
+        if (!prepared.replayed()) runExecutor.execute(prepared);
+        return accepted(prepared);
+    }
+
+    public ConversationDetail activateBranch(String conversationId, String branchId) {
+        long userId = UserContext.requireSession().userId();
+        String normalizedConversationId = requireExternalId(conversationId);
+        repository.activateBranch(userId, normalizedConversationId, requireExternalId(branchId));
+        return repository.getConversation(userId, normalizedConversationId);
+    }
+
+    private SendMessageAccepted accepted(PreparedRun prepared) {
         return new SendMessageAccepted(
                 prepared.requestMessageExternalId(), prepared.responseMessageExternalId(),
                 prepared.runExternalId(), eventUrl(prepared.runExternalId()));

@@ -7,6 +7,7 @@ import type {
   Artifact,
   ArtifactContent,
   ChatStreamEvent,
+  CreateConversationPayload,
   ConversationDetail,
   ConversationPage,
   ConversationSummary,
@@ -50,7 +51,7 @@ async function call<T>(operation: () => Promise<{ data: T }>, fallback: string) 
   }
 }
 
-export function createConversation(payload: { title?: string; knowledgeBaseId?: string | null }) {
+export function createConversation(payload: CreateConversationPayload) {
   return call(
     () => request.post<ConversationSummary>('/api/v2/conversations', payload),
     '创建对话失败。',
@@ -103,6 +104,46 @@ export function sendMessage(
       { headers: { 'Idempotency-Key': idempotencyKey }, timeout: 60_000 },
     ),
     '发送消息失败。',
+  )
+}
+
+export function editMessage(
+  conversationId: string,
+  messageId: string,
+  content: string,
+  idempotencyKey: string,
+) {
+  return call(
+    () => request.post<SendMessageAccepted>(
+      `/api/v2/conversations/${conversationId}/messages/${messageId}/edit`,
+      { content },
+      { headers: { 'Idempotency-Key': idempotencyKey }, timeout: 60_000 },
+    ),
+    '编辑消息失败。',
+  )
+}
+
+export function regenerateMessage(
+  conversationId: string,
+  messageId: string,
+  idempotencyKey: string,
+) {
+  return call(
+    () => request.post<SendMessageAccepted>(
+      `/api/v2/conversations/${conversationId}/messages/${messageId}/regenerate`,
+      undefined,
+      { headers: { 'Idempotency-Key': idempotencyKey }, timeout: 60_000 },
+    ),
+    '重新生成失败。',
+  )
+}
+
+export function activateBranch(conversationId: string, branchId: string) {
+  return call(
+    () => request.put<ConversationDetail>(
+      `/api/v2/conversations/${conversationId}/branches/${branchId}/active`,
+    ),
+    '切换消息版本失败。',
   )
 }
 

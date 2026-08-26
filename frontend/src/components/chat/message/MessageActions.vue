@@ -1,110 +1,68 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
-import type { ChatMessage } from "@/stores/message";
-import AppIcon from "@/components/common/AppIcon.vue";
+import { ref } from 'vue'
+import { Check, Copy, LoaderCircle, Pencil, RefreshCw, Square, Volume2 } from 'lucide-vue-next'
 
-type Props = {
-  message: ChatMessage;
-  isRegenerateDisabled?: boolean;
-};
+import { copyText } from '@/utils/clipboard'
 
-const props = withDefaults(defineProps<Props>(), { isRegenerateDisabled: false });
+const props = withDefaults(defineProps<{
+  role: string
+  content: string
+  disabled?: boolean
+  speechLoading?: boolean
+  speechPlaying?: boolean
+}>(), {
+  disabled: false,
+  speechLoading: false,
+  speechPlaying: false,
+})
+
 const emit = defineEmits<{
-  copy: [text: string];
-  edit: [messageId: string];
-  regenerate: [messageId: string];
-}>();
+  edit: []
+  regenerate: []
+  speak: []
+}>()
+const copied = ref(false)
 
-const isUser = computed(() => props.message.role === "user");
-const copied = ref(false);
-
-function handleCopy() {
-  emit("copy", props.message.kind === "learning-document" ? props.message.learningData?.content || "" : props.message.content);
-  copied.value = true;
-  setTimeout(() => {
-    copied.value = false;
-  }, 1500);
+async function copy() {
+  await copyText(props.content)
+  copied.value = true
+  window.setTimeout(() => { copied.value = false }, 1200)
 }
-
-function handleEdit() {
-  emit("edit", props.message.id);
-}
-
-function handleRegenerate() {
-  if (props.isRegenerateDisabled) return;
-  emit("regenerate", props.message.id);
-}
-
 </script>
 
 <template>
-  <div class="message-actions" :class="{ 'message-actions--user': isUser }">
-    <button class="action-btn" title="复制" @click="handleCopy">
-      <AppIcon :name="copied ? 'check' : 'copy'" :size="16" :class="{ 'anim-pop': copied }" />
+  <div class="message-actions" :class="{ 'is-user': role === 'USER' }">
+    <button type="button" :title="copied ? '已复制' : '复制'" :disabled="!content" @click="copy">
+      <Check v-if="copied" :size="16" />
+      <Copy v-else :size="16" />
     </button>
-
-    <template v-if="isUser">
-      <button class="action-btn" title="编辑" @click="handleEdit">
-        <AppIcon name="edit" :size="16" />
-      </button>
-    </template>
-
+    <button v-if="role === 'USER'" type="button" title="编辑" :disabled="disabled" @click="emit('edit')">
+      <Pencil :size="16" />
+    </button>
     <template v-else>
       <button
-        class="action-btn"
-        title="重新生成"
-        :disabled="isRegenerateDisabled"
-        @click="handleRegenerate"
+        type="button"
+        :title="speechPlaying ? '停止朗读' : '朗读回答'"
+        :disabled="speechLoading || !content"
+        @click="emit('speak')"
       >
-        <AppIcon name="refresh-single" :size="16" />
+        <LoaderCircle v-if="speechLoading" class="spin" :size="16" />
+        <Square v-else-if="speechPlaying" :size="13" fill="currentColor" />
+        <Volume2 v-else :size="16" />
+      </button>
+      <button type="button" title="重新生成" :disabled="disabled" @click="emit('regenerate')">
+        <RefreshCw :size="16" />
       </button>
     </template>
   </div>
 </template>
 
 <style scoped>
-.message-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.action-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 4px;
-  background: transparent;
-  border: none;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  transition: color 0.2s ease;
-  padding: 0;
-}
-
-.action-btn:hover:not(:disabled) {
-  color: var(--color-text);
-}
-
-.action-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.anim-pop {
-  animation: pop 0.2s ease-out;
-}
-
-@keyframes pop {
-  0% {
-    transform: scale(0.8);
-    opacity: 0.5;
-  }
-  100% {
-    transform: scale(1);
-    opacity: 1;
-  }
-}
+.message-actions { display: flex; align-items: center; gap: 2px; margin-top: 7px; color: var(--color-text-muted); }
+.message-actions.is-user { justify-content: flex-end; }
+button { display: grid; width: 30px; height: 30px; padding: 0; place-items: center; border: 0; border-radius: 8px; color: inherit; background: transparent; cursor: pointer; }
+button:hover:not(:disabled) { color: var(--color-text); background: var(--color-surface); }
+button:disabled { opacity: .4; cursor: not-allowed; }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 </style>

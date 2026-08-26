@@ -7,10 +7,60 @@ import type {
   Artifact,
   ChatMessage,
   ChatStreamEvent,
+  CreateConversationPayload,
   ConversationSummary,
+  MessageAttachment,
+  MessageVersionGroup,
+  SendMessageAccepted,
 } from '@/types/contracts/chatV2'
 
 const TERMINAL_EVENTS = new Set(['run.completed', 'run.failed', 'run.cancelled'])
+const TERMINAL_RUN_STATUSES = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED'])
+const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+
+type PendingTurn = {
+  conversationId: string
+  content: string
+  sourceAssetIds: string[]
+  idempotencyKey: string
+  userMessageId: string
+  assistantMessageId: string
+}
+
+function newExternalId() {
+  const bytes = new Uint8Array(16)
+  let timestamp = Date.now()
+  for (let index = 5; index >= 0; index -= 1) {
+    bytes[index] = timestamp & 0xff
+    timestamp = Math.floor(timestamp / 256)
+  }
+  crypto.getRandomValues(bytes.subarray(6))
+  let value = 0n
+  for (const byte of bytes) value = (value << 8n) | BigInt(byte)
+  let result = ''
+  for (let index = 0; index < 26; index += 1) {
+    result = CROCKFORD[Number(value & 31n)] + result
+    value >>= 5n
+  }
+  return result
+}
+
+function sameSources(left: string[], right: string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index])
+}
+
+function wait(ms: number, signal: AbortSignal) {
+  return new Promise<void>((resolve) => {
+    if (signal.aborted) return resolve()
+    const timer = window.setTimeout(done, ms)
+    signal.addEventListener('abort', done, { once: true })
+    function done() {
+      window.clearTimeout(timer)
+      signal.removeEventListener('abort', done)
+      resolve()
+    }
+  })
+}
 
 function upsert<T>(items: T[], item: T, id: (value: T) => string) {
   const index = items.findIndex(existing => id(existing) === id(item))
@@ -26,6 +76,8 @@ function stageLabel(stage: string) {
     'retrieval-completed': '资料检索完成',
     generating: '正在生成回答',
     persisting: '正在保存结果',
+    reconnecting: '正在恢复实时连接',
+    cancelling: '正在停止生成',
   }
   return labels[stage] ?? '正在处理'
 }
@@ -35,6 +87,7 @@ export const useChatV2Store = defineStore('chatV2', () => {
   const nextCursor = ref<string | null>(null)
   const activeConversation = ref<ConversationSummary | null>(null)
   const messages = ref<ChatMessage[]>([])
+  const versionGroups = ref<MessageVersionGroup[]>([])
   const artifacts = ref<Artifact[]>([])
   const activeRun = ref<AiRun | null>(null)
   const activeRunId = ref<string | null>(null)
@@ -46,6 +99,8 @@ export const useChatV2Store = defineStore('chatV2', () => {
   const error = ref('')
   const lastEventId = ref<string | null>(null)
   let streamController: AbortController | null = null
+  let pendingTurn: PendingTurn | null = null
+  let cancelRequested = false
 
   async function loadList(append = false) {
     const page = await api.listConversations(append ? nextCursor.value : null)
@@ -54,13 +109,122 @@ export const useChatV2Store = defineStore('chatV2', () => {
     return page
   }
 
-  async function create(payload: { title?: string; knowledgeBaseId?: string | null } = {}) {
-    const conversation = await api.createConversation(payload)
-    upsert(conversations.value, conversation, value => value.id)
+  function beginConversation(payload: { title?: string; knowledgeBaseId?: string | null } = {}) {
+    const now = new Date().toISOString()
+    const conversation: ConversationSummary = {
+      id: newExternalId(),
+      title: payload.title?.trim() || '新对话',
+      type: 'GENERAL',
+      status: 'ACTIVE',
+      knowledgeBaseId: payload.knowledgeBaseId ?? null,
+      activeBranchId: '',
+      messageCount: 0,
+      version: 0,
+      lastMessageAt: null,
+      createdAt: now,
+      updatedAt: now,
+    }
     activeConversation.value = conversation
     messages.value = []
+    versionGroups.value = []
     artifacts.value = []
+    upsert(conversations.value, conversation, value => value.id)
     return conversation
+  }
+
+  async function create(payload: CreateConversationPayload = {}) {
+    const conversation = await api.createConversation(payload)
+    const preserveOptimisticMessages = activeConversation.value?.id === conversation.id
+    upsert(conversations.value, conversation, value => value.id)
+    activeConversation.value = conversation
+    if (preserveOptimisticMessages) {
+      messages.value.forEach((message) => {
+        if (!message.branchId) message.branchId = conversation.activeBranchId
+      })
+    } else {
+      messages.value = []
+      versionGroups.value = []
+      artifacts.value = []
+    }
+    return conversation
+  }
+
+  function beginOptimisticTurn(
+    content: string,
+    sourceAssetIds: string[],
+    attachments: MessageAttachment[] = [],
+  ) {
+    const conversation = activeConversation.value
+    if (!conversation) throw new Error('请先创建对话。')
+    const normalizedContent = content.trim()
+    if (pendingTurn
+      && pendingTurn.conversationId === conversation.id
+      && pendingTurn.content === normalizedContent
+      && sameSources(pendingTurn.sourceAssetIds, sourceAssetIds)) {
+      const assistant = messages.value.find(message => message.id === pendingTurn?.assistantMessageId)
+      if (assistant) {
+        assistant.content = ''
+        assistant.status = 'STREAMING'
+        assistant.finalizedAt = null
+      }
+      error.value = ''
+      stage.value = cancelRequested ? 'cancelling' : 'queued'
+      sending.value = true
+      return pendingTurn
+    }
+
+    const now = new Date().toISOString()
+    const lastMessage = messages.value.at(-1)
+    const userMessageId = `optimistic-user-${crypto.randomUUID()}`
+    const assistantMessageId = `optimistic-assistant-${crypto.randomUUID()}`
+    const sequence = (lastMessage?.sequence ?? 0) + 1
+    messages.value.push({
+      id: userMessageId,
+      branchId: conversation.activeBranchId,
+      versionGroupId: userMessageId,
+      parentMessageId: lastMessage?.id ?? null,
+      role: 'USER',
+      status: 'FINALIZED',
+      sequence,
+      content: normalizedContent,
+      runId: null,
+      attachments,
+      citations: [],
+      createdAt: now,
+      finalizedAt: now,
+    }, {
+      id: assistantMessageId,
+      branchId: conversation.activeBranchId,
+      versionGroupId: assistantMessageId,
+      parentMessageId: userMessageId,
+      role: 'ASSISTANT',
+      status: 'STREAMING',
+      sequence: sequence + 1,
+      content: '',
+      runId: null,
+      attachments: [],
+      citations: [],
+      createdAt: now,
+      finalizedAt: null,
+    })
+    pendingTurn = {
+      conversationId: conversation.id,
+      content: normalizedContent,
+      sourceAssetIds: [...sourceAssetIds],
+      idempotencyKey: crypto.randomUUID(),
+      userMessageId,
+      assistantMessageId,
+    }
+    error.value = ''
+    stage.value = 'queued'
+    sending.value = true
+    cancelRequested = false
+    return pendingTurn
+  }
+
+  function discardConversation(conversationId: string) {
+    conversations.value = conversations.value.filter(item => item.id !== conversationId)
+    if (activeConversation.value?.id === conversationId) clearActive()
   }
 
   async function load(conversationId: string) {
@@ -73,6 +237,7 @@ export const useChatV2Store = defineStore('chatV2', () => {
       ])
       activeConversation.value = detail.conversation
       messages.value = detail.messages
+      versionGroups.value = detail.versionGroups
       artifacts.value = artifactItems
       upsert(conversations.value, detail.conversation, value => value.id)
       const running = [...detail.messages].reverse().find(message =>
@@ -94,6 +259,7 @@ export const useChatV2Store = defineStore('chatV2', () => {
       message = {
         id: messageId,
         branchId: activeConversation.value?.activeBranchId ?? '',
+        versionGroupId: messageId,
         parentMessageId: null,
         role: 'ASSISTANT',
         status: 'STREAMING',
@@ -123,23 +289,47 @@ export const useChatV2Store = defineStore('chatV2', () => {
   }
 
   async function finishStream(runId: string) {
-    const run = await api.getRun(runId)
-    activeRun.value = run
-    if (activeConversation.value) {
-      const [detail, artifactItems] = await Promise.all([
-        api.getConversation(activeConversation.value.id),
-        api.listArtifacts(activeConversation.value.id),
-      ])
-      activeConversation.value = detail.conversation
-      messages.value = detail.messages
-      artifacts.value = artifactItems
-      upsert(conversations.value, detail.conversation, value => value.id)
+    const run = await api.getRun(runId).catch(() => null)
+    if (run) activeRun.value = run
+    try {
+      if (activeConversation.value) {
+        const [detail, artifactItems] = await Promise.all([
+          api.getConversation(activeConversation.value.id),
+          api.listArtifacts(activeConversation.value.id),
+        ])
+        activeConversation.value = detail.conversation
+        messages.value = detail.messages
+        versionGroups.value = detail.versionGroups
+        artifacts.value = artifactItems
+        upsert(conversations.value, detail.conversation, value => value.id)
+      }
+    } catch (cause) {
+      error.value = api.chatError(cause, '回答已经结束，但最新消息同步失败，请重新进入对话。').message
     }
-    if (run.status === 'FAILED') error.value = run.safeErrorMessage || '生成失败，请重试。'
+    if (run?.status === 'FAILED') error.value = run.safeErrorMessage || '生成失败，请重试。'
+    else if (run?.status === 'CANCELLED') error.value = ''
+    pendingTurn = null
     activeRunId.value = null
     assistantMessageId.value = null
     stage.value = ''
     sending.value = false
+    cancelRequested = false
+  }
+
+  async function pollUntilTerminal(runId: string, signal: AbortSignal) {
+    let requestFailures = 0
+    while (!signal.aborted) {
+      const run = await api.getRun(runId).catch(() => null)
+      if (run) {
+        activeRun.value = run
+        requestFailures = 0
+        if (TERMINAL_RUN_STATUSES.has(run.status)) return true
+      } else if (++requestFailures >= 6) {
+        return false
+      }
+      await wait(2_000, signal)
+    }
+    return false
   }
 
   async function connectStream(runId: string, responseMessageId: string) {
@@ -151,65 +341,163 @@ export const useChatV2Store = defineStore('chatV2', () => {
     ensureAssistantMessage(responseMessageId, runId)
     let reconnects = 0
     let terminal = false
-    while (!terminal && reconnects <= 3 && !streamController.signal.aborted) {
+    while (!terminal && !streamController.signal.aborted) {
       try {
+        let receivedEvent = false
         await api.streamRunEvents(runId, {
           signal: streamController.signal,
           lastEventId: lastEventId.value,
           onEvent(event) {
+            receivedEvent = true
             handleEvent(event)
             if (TERMINAL_EVENTS.has(event.event)) terminal = true
           },
         })
         const status = await api.getRun(runId)
         activeRun.value = status
-        terminal = ['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(status.status)
-        if (!terminal) reconnects += 1
+        terminal = TERMINAL_RUN_STATUSES.has(status.status)
+        reconnects = receivedEvent ? 0 : reconnects + 1
       } catch (cause) {
         if (streamController.signal.aborted) return
         const status = await api.getRun(runId).catch(() => null)
-        if (status && ['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(status.status)) {
+        if (status && TERMINAL_RUN_STATUSES.has(status.status)) {
           terminal = true
         } else {
           reconnects += 1
-          await new Promise(resolve => window.setTimeout(resolve, 500 * (2 ** reconnects)))
         }
+      }
+      if (!terminal && reconnects >= 4) {
+        stage.value = 'reconnecting'
+        terminal = await pollUntilTerminal(runId, streamController.signal)
+        if (!terminal && !streamController.signal.aborted) {
+          error.value = '生成仍在后台继续，但实时连接已中断。重新进入该对话可恢复进度。'
+          sending.value = true
+          return
+        }
+      } else if (!terminal) {
+        await wait(Math.min(4_000, 500 * (2 ** reconnects)), streamController.signal)
       }
     }
     if (!streamController.signal.aborted) await finishStream(runId)
   }
 
-  async function send(content: string, sourceAssetIds: string[]) {
+  async function send(
+    content: string,
+    sourceAssetIds: string[],
+    attachments: MessageAttachment[] = [],
+  ) {
     const conversation = activeConversation.value
     if (!conversation) throw new Error('请先创建对话。')
-    error.value = ''
-    sending.value = true
+    const optimistic = beginOptimisticTurn(content, sourceAssetIds, attachments)
     lastEventId.value = null
-    const accepted = await api.sendMessage(
-      conversation.id,
-      { content: content.trim(), sourceAssetIds },
-      crypto.randomUUID(),
-    )
-    const detail = await api.getConversation(conversation.id)
-    activeConversation.value = detail.conversation
-    messages.value = detail.messages
-    upsert(conversations.value, detail.conversation, value => value.id)
-    await connectStream(accepted.runId, accepted.assistantMessageId)
-    return accepted
+    try {
+      const accepted = await api.sendMessage(
+        conversation.id,
+        { content: content.trim(), sourceAssetIds },
+        optimistic.idempotencyKey,
+      )
+      const userMessage = messages.value.find(message => message.id === optimistic.userMessageId)
+      const assistantMessage = messages.value.find(message => message.id === optimistic.assistantMessageId)
+      if (userMessage) userMessage.id = accepted.userMessageId
+      if (assistantMessage) {
+        assistantMessage.id = accepted.assistantMessageId
+        assistantMessage.parentMessageId = accepted.userMessageId
+        assistantMessage.runId = accepted.runId
+      }
+      optimistic.userMessageId = accepted.userMessageId
+      optimistic.assistantMessageId = accepted.assistantMessageId
+      if (cancelRequested) await api.cancelRun(accepted.runId)
+      await connectStream(accepted.runId, accepted.assistantMessageId)
+      return accepted
+    } catch (cause) {
+      const assistantMessage = messages.value.find(message => message.id === optimistic.assistantMessageId)
+      if (assistantMessage && !assistantMessage.runId) {
+        assistantMessage.status = 'FAILED'
+        assistantMessage.finalizedAt = new Date().toISOString()
+        cancelRequested = false
+      }
+      error.value = api.chatError(cause, '发送消息失败。').message
+      stage.value = ''
+      sending.value = false
+      throw cause
+    }
   }
 
   async function resume(runId: string, responseMessageId: string) {
     const run = await api.getRun(runId)
     activeRun.value = run
-    if (!['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(run.status)) {
+    if (!TERMINAL_RUN_STATUSES.has(run.status)) {
       lastEventId.value = null
       void connectStream(runId, responseMessageId)
     }
   }
 
   async function cancel() {
+    cancelRequested = true
+    stage.value = 'cancelling'
     if (!activeRunId.value) return
     await api.cancelRun(activeRunId.value)
+  }
+
+  async function beginBranchRun(
+    operation: () => Promise<SendMessageAccepted>,
+  ) {
+    const conversation = activeConversation.value
+    if (!conversation) throw new Error('请先创建对话。')
+    streamController?.abort()
+    lastEventId.value = null
+    sending.value = true
+    stage.value = 'queued'
+    error.value = ''
+    try {
+      const accepted = await operation()
+      const detail = await api.getConversation(conversation.id)
+      activeConversation.value = detail.conversation
+      messages.value = detail.messages
+      versionGroups.value = detail.versionGroups
+      upsert(conversations.value, detail.conversation, value => value.id)
+      await connectStream(accepted.runId, accepted.assistantMessageId)
+      return accepted
+    } catch (cause) {
+      error.value = api.chatError(cause, '操作失败，请重试。').message
+      sending.value = false
+      stage.value = ''
+      throw cause
+    }
+  }
+
+  async function editMessage(messageId: string, content: string) {
+    const conversationId = activeConversation.value?.id
+    if (!conversationId) throw new Error('请先创建对话。')
+    const idempotencyKey = crypto.randomUUID()
+    return beginBranchRun(() => api.editMessage(conversationId, messageId, content.trim(), idempotencyKey))
+  }
+
+  async function regenerateMessage(messageId: string) {
+    const conversationId = activeConversation.value?.id
+    if (!conversationId) throw new Error('请先创建对话。')
+    const idempotencyKey = crypto.randomUUID()
+    return beginBranchRun(() => api.regenerateMessage(conversationId, messageId, idempotencyKey))
+  }
+
+  async function activateMessageBranch(branchId: string) {
+    const conversation = activeConversation.value
+    if (!conversation || conversation.activeBranchId === branchId) return
+    if (sending.value) throw new Error('回答生成完成或停止后才能切换版本。')
+    loading.value = true
+    error.value = ''
+    try {
+      const detail = await api.activateBranch(conversation.id, branchId)
+      activeConversation.value = detail.conversation
+      messages.value = detail.messages
+      versionGroups.value = detail.versionGroups
+      upsert(conversations.value, detail.conversation, value => value.id)
+    } catch (cause) {
+      error.value = api.chatError(cause, '切换消息版本失败。').message
+      throw cause
+    } finally {
+      loading.value = false
+    }
   }
 
   async function remove(conversationId: string) {
@@ -257,11 +545,14 @@ export const useChatV2Store = defineStore('chatV2', () => {
     streamController = null
     activeConversation.value = null
     messages.value = []
+    versionGroups.value = []
     artifacts.value = []
     activeRun.value = null
     activeRunId.value = null
     assistantMessageId.value = null
     lastEventId.value = null
+    pendingTurn = null
+    cancelRequested = false
     stage.value = ''
     sending.value = false
     error.value = ''
@@ -278,6 +569,7 @@ export const useChatV2Store = defineStore('chatV2', () => {
     nextCursor,
     activeConversation,
     messages,
+    versionGroups,
     artifacts,
     activeRun,
     activeRunId,
@@ -287,10 +579,16 @@ export const useChatV2Store = defineStore('chatV2', () => {
     sending,
     error,
     loadList,
+    beginConversation,
     create,
+    beginOptimisticTurn,
+    discardConversation,
     load,
     send,
     cancel,
+    editMessage,
+    regenerateMessage,
+    activateMessageBranch,
     remove,
     rename,
     setKnowledgeBase,

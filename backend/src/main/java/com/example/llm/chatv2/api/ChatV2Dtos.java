@@ -1,6 +1,7 @@
 package com.example.llm.chatv2.api;
 
 import jakarta.validation.constraints.Size;
+import jakarta.validation.constraints.Pattern;
 
 import java.time.Instant;
 import java.util.List;
@@ -10,6 +11,7 @@ public final class ChatV2Dtos {
     }
 
     public record CreateConversationRequest(
+            @Pattern(regexp = "[0-7][0-9A-HJKMNP-TV-Z]{25}") String conversationId,
             @Size(max = 160) String title,
             @Size(max = 26) String knowledgeBaseId) {
     }
@@ -26,6 +28,12 @@ public final class ChatV2Dtos {
         public SendMessageRequest {
             content = content == null ? "" : content;
             sourceAssetIds = sourceAssetIds == null ? List.of() : List.copyOf(sourceAssetIds);
+        }
+    }
+
+    public record EditMessageRequest(@Size(max = 50000) String content) {
+        public EditMessageRequest {
+            content = content == null ? "" : content;
         }
     }
 
@@ -51,15 +59,18 @@ public final class ChatV2Dtos {
 
     public record ConversationDetail(
             ConversationSummary conversation,
-            List<MessageView> messages) {
+            List<MessageView> messages,
+            List<MessageVersionGroup> versionGroups) {
         public ConversationDetail {
             messages = messages == null ? List.of() : List.copyOf(messages);
+            versionGroups = versionGroups == null ? List.of() : List.copyOf(versionGroups);
         }
     }
 
     public record MessageView(
             String id,
             String branchId,
+            String versionGroupId,
             String parentMessageId,
             String role,
             String status,
@@ -74,6 +85,21 @@ public final class ChatV2Dtos {
             attachments = attachments == null ? List.of() : List.copyOf(attachments);
             citations = citations == null ? List.of() : List.copyOf(citations);
         }
+    }
+
+    public record MessageVersionGroup(
+            String id,
+            String role,
+            List<MessageVersionView> versions) {
+        public MessageVersionGroup {
+            versions = versions == null ? List.of() : List.copyOf(versions);
+        }
+    }
+
+    public record MessageVersionView(
+            String messageId,
+            String branchId,
+            Instant createdAt) {
     }
 
     public record MessageAttachmentView(

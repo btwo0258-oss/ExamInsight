@@ -1,984 +1,163 @@
 <script setup lang="ts">
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-nocheck
-import { computed, watch, onMounted, onBeforeUnmount, ref } from "vue";
-import { useRoute, useRouter } from 'vue-router'
-import type { ChatMessage } from "@/stores/message";
-import { useMessageStore } from "@/stores/message";
-import { useConversationStore } from '@/stores/conversation'
-import { usePresentationStore } from '@/stores/presentation'
-import { useLibraryResourceStore } from '@/stores/libraryResource'
-import { presentationRepository } from '@/repositories/presentation'
-import { spreadsheetRepository } from '@/repositories/spreadsheet'
-import { useAppState } from "@/stores/appState";
-import MarkdownRenderer from "./MarkdownRenderer.vue";
-import SourceChunks from "./SourceChunks.vue";
-import AppIcon from "@/components/common/AppIcon.vue";
-import ResourceTypeIcon from '@/components/common/ResourceTypeIcon.vue'
-import MessageActions from "./MessageActions.vue";
-import { copyText } from "@/utils/clipboard";
-import LearningProfileCard from "@/components/learning/LearningProfileCard.vue";
-import type { LearningProfileData } from "@/components/learning/LearningProfileCard.vue";
-import LearningPlanDocument from "@/components/learning/LearningPlanDocument.vue";
-import PresentationChatCard from '@/components/presentation/PresentationChatCard.vue'
-import ArtifactCard from '@/components/artifact/ArtifactCard.vue'
-import type { PresentationChatCardDto } from '@/types/contracts/presentation'
-import { presentationRouteQuery, toPresentationChatCard } from '@/utils/presentation'
-import { resourcePreviewRoute } from '@/utils/resourcePreview'
-import { resourceVisualTypeFromFile } from '@/utils/resourceVisual'
-import { isMockDataSource } from '@/config/dataSource'
-import { useLearningStore } from '@/stores/learning'
-import { presentationCardToArtifact, spreadsheetCardToArtifact, upsertArtifact } from '@/utils/artifact'
-import type { ChatArtifactDto } from '@/types/contracts/artifact'
-import type { ConversationId } from '@/types/contracts/conversation'
-import { downloadBlob } from '@/utils/download'
+import { computed, nextTick, ref } from 'vue'
+import { Check, ChevronLeft, ChevronRight, X } from 'lucide-vue-next'
 
-type Props = {
-  message: ChatMessage;
-  isStreaming?: boolean;
-  conversationId?: ConversationId | null;
-};
+import ChatAttachmentList from '@/components/chat/ChatAttachmentList.vue'
+import MarkdownRenderer from './MarkdownRenderer.vue'
+import MessageActions from './MessageActions.vue'
+import type { ChatMessage, MessageVersionGroup } from '@/types/contracts/chatV2'
 
-const props = withDefaults(defineProps<Props>(), { isStreaming: false });
-
-const emit = defineEmits<{
-  copy: [text: string];
-  edit: [messageId: string];
-  regenerate: [messageId: string];
-  confirmLearningProfile: [messageId: string];
-  updateLearningProfile: [messageId: string, profile: LearningProfileData];
-  updateLearningDocument: [messageId: string, content: string];
-  regenerateLearningDocument: [messageId: string];
-}>();
-
-const isUser = computed(() => props.message.role === "user");
-const messageStore = useMessageStore();
-const conversationStore = useConversationStore()
-const presentationStore = usePresentationStore()
-const libraryResourceStore = useLibraryResourceStore()
-const learningStore = useLearningStore()
-const appState = useAppState();
-const route = useRoute()
-const router = useRouter()
-const presentationBusy = ref(false)
-const presentationError = ref('')
-const artifactBusyId = ref('')
-let presentationDraftSyncTimer: number | undefined
-
-const displayArtifacts = computed(() => {
-  let artifacts = [...(props.message.artifacts ?? [])]
-  if (props.message.spreadsheetData) {
-    artifacts = upsertArtifact(artifacts, spreadsheetCardToArtifact(props.message.spreadsheetData))
-  }
-  if (props.message.presentationData) {
-    const artifact = presentationCardToArtifact(props.message.presentationData)
-    if (artifact) artifacts = upsertArtifact(artifacts, artifact)
-  }
-  return artifacts
+const props = withDefaults(defineProps<{
+  message: ChatMessage
+  versionGroup?: MessageVersionGroup
+  busy?: boolean
+  speechLoading?: boolean
+  speechPlaying?: boolean
+}>(), {
+  versionGroup: undefined,
+  busy: false,
+  speechLoading: false,
+  speechPlaying: false,
 })
 
-const showPresentationWorkflow = computed(() => Boolean(
-  props.message.kind === 'presentation'
-  && props.message.presentationData
-  && props.message.presentationData.view === 'proposal',
-))
+const emit = defineEmits<{
+  edit: [messageId: string, content: string]
+  regenerate: [messageId: string]
+  speak: [message: ChatMessage]
+  switchVersion: [branchId: string]
+  openAsset: [assetId: string]
+}>()
 
-const showMarkdown = ref(true);
+const editing = ref(false)
+const draft = ref('')
+const editor = ref<HTMLTextAreaElement | null>(null)
+const isUser = computed(() => props.message.role === 'USER')
+const streaming = computed(() => props.message.status === 'STREAMING')
+const versionIndex = computed(() => props.versionGroup?.versions.findIndex(
+  version => version.messageId === props.message.id,
+) ?? -1)
+const attachmentItems = computed(() => props.message.attachments.map(item => ({
+  key: item.assetVersionId || item.assetId,
+  assetId: item.assetId,
+  name: item.name,
+  mimeType: item.mimeType,
+  sizeBytes: item.sizeBytes,
+  status: 'ready' as const,
+})))
 
-watch(() => props.isStreaming, (newVal, oldVal) => {
-  if (oldVal && !newVal) {
-    showMarkdown.value = false;
-    setTimeout(() => {
-      showMarkdown.value = true;
-    }, 50);
-  }
-});
-
-const isEditing = ref(false);
-const editDraft = ref(props.message.content);
-
-// Version switcher logic
-const versionCount = computed(() => {
-  if (!props.conversationId || !props.message.turnId) return 1;
-  if (isUser.value) {
-    return messageStore.getQVersionCount(props.conversationId, props.message.turnId);
-  } else {
-    const qVersion = props.message.qVersion ?? 0;
-    return messageStore.getAVersionCount(props.conversationId, props.message.turnId, qVersion);
-  }
-});
-
-const currentVersionIndex = computed(() => {
-  if (isUser.value) {
-    return (props.message.qVersion ?? 0) + 1;
-  } else {
-    return (props.message.aVersion ?? 0) + 1;
-  }
-});
-
-function prevVersion() {
-  if (!props.conversationId || !props.message.turnId) return;
-  if (isUser.value) {
-    const newQ = (props.message.qVersion ?? 0) - 1;
-    if (newQ >= 0) messageStore.switchQVersion(props.conversationId, props.message.turnId, newQ);
-  } else {
-    const qVersion = props.message.qVersion ?? 0;
-    const newA = (props.message.aVersion ?? 0) - 1;
-    if (newA >= 0)
-      messageStore.switchAVersion(props.conversationId, props.message.turnId, qVersion, newA);
-  }
+async function beginEdit() {
+  draft.value = props.message.content
+  editing.value = true
+  await nextTick()
+  editor.value?.focus()
+  editor.value?.setSelectionRange(draft.value.length, draft.value.length)
 }
 
-function nextVersion() {
-  if (!props.conversationId || !props.message.turnId) return;
-  if (isUser.value) {
-    const newQ = (props.message.qVersion ?? 0) + 1;
-    if (newQ < versionCount.value)
-      messageStore.switchQVersion(props.conversationId, props.message.turnId, newQ);
-  } else {
-    const qVersion = props.message.qVersion ?? 0;
-    const newA = (props.message.aVersion ?? 0) + 1;
-    if (newA < versionCount.value)
-      messageStore.switchAVersion(props.conversationId, props.message.turnId, qVersion, newA);
-  }
-}
-
-// Regenerate rate limiting
-const isRegenerateDisabled = ref(false);
-
-function reportTelemetry() {
-  if (!isUser.value && !props.isStreaming && props.message.durationMs) {
-    if (typeof window !== "undefined") {
-      const gta = (window as Record<string, unknown>).gta || function () {};
-      if (typeof gta === "function") {
-        gta("event", "response_time", {
-          answerId: props.message.id,
-          durationMs: props.message.durationMs,
-        });
-      }
-    }
-  }
-}
-
-onMounted(() => {
-  reportTelemetry();
-});
-
-watch(
-  () => props.isStreaming,
-  (newVal, oldVal) => {
-    if (oldVal && !newVal) {
-      reportTelemetry();
-    }
-  },
-);
-
-async function onCopy(text: string) {
-  await copyText(text);
-  // Toast can be added here
-}
-
-function onEdit() {
-  isEditing.value = true;
-  editDraft.value = props.message.content;
-}
-
-function cancelEdit() {
-  isEditing.value = false;
-  editDraft.value = props.message.content;
-}
-
-async function submitEdit() {
-  if (!editDraft.value.trim() || !props.conversationId) return;
-  isEditing.value = false;
-
-  const turnId = props.message.turnId || props.message.id;
-  await messageStore.editAndRegenerate(props.conversationId, turnId, editDraft.value);
-}
-
-async function onRegenerate() {
-  if (props.message.kind === "learning-document") {
-    emit("regenerateLearningDocument", props.message.id);
-    return;
-  }
-  if (!props.conversationId || isRegenerateDisabled.value) return;
-
-  // Rate limiting check
-  const now = Date.now();
-  const timestampsStr = sessionStorage.getItem("llm.regenerate_timestamps");
-  let timestamps: number[] = timestampsStr ? JSON.parse(timestampsStr) : [];
-
-  // Clean up old timestamps (> 10s)
-  timestamps = timestamps.filter((t) => now - t < 10000);
-
-  if (timestamps.length >= 3) {
-    isRegenerateDisabled.value = true;
-    alert("请求过于频繁，请稍后再试（10秒内最多3次）");
-    setTimeout(
-      () => {
-        isRegenerateDisabled.value = false;
-      },
-      10000 - (now - timestamps[0]),
-    );
-    return;
-  }
-
-  timestamps.push(now);
-  sessionStorage.setItem("llm.regenerate_timestamps", JSON.stringify(timestamps));
-
-  const turnId = props.message.turnId || props.message.id;
-  await messageStore.regenerate(props.conversationId, turnId);
-}
-
-function patchPresentationCard(data: PresentationChatCardDto) {
-  if (!props.conversationId) return
-  messageStore.updateLocalMessage(props.conversationId, props.message.id, {
-    kind: 'presentation',
-    presentationData: data,
-  })
-}
-
-function updatePresentationCard(data: PresentationChatCardDto) {
-  presentationError.value = ''
-  patchPresentationCard(data)
-  if (props.conversationId && data.config.topic.trim()) {
-    conversationStore.setLocalTitle(props.conversationId, data.config.topic)
-  }
-  window.clearTimeout(presentationDraftSyncTimer)
-  if (!data.presentationId || data.view !== 'proposal') return
-  presentationDraftSyncTimer = window.setTimeout(async () => {
-    try {
-      const updated = await presentationRepository.updateDraft(data.presentationId!, {
-        config: data.config,
-        conversationId: props.conversationId ?? data.conversationId ?? null,
-        sourceMessageId: data.sourceMessageId ?? props.message.id,
-        knowledgeBaseId: data.knowledgeBaseId ?? null,
-        projectId: data.projectId ?? null,
-        learningResourceId: data.learningResourceId ?? null,
-        clientRequestId: globalThis.crypto?.randomUUID?.() ?? `presentation-draft-${Date.now()}`,
-      })
-      patchPresentationCard(toPresentationChatCard(updated))
-    } catch (error) {
-      presentationError.value = error instanceof Error ? error.message : 'PPT 草稿保存失败'
-    }
-  }, 450)
-}
-
-onBeforeUnmount(() => window.clearTimeout(presentationDraftSyncTimer))
-
-async function openPresentationSettings(data = props.message.presentationData) {
-  if (!data) return
-  presentationBusy.value = true
-  presentationError.value = ''
-  try {
-    let nextCard = data
-    if (!data.presentationId) {
-      const draft = await presentationStore.createDraft({
-        ...data.config,
-        topic: data.config.topic.trim(),
-        title: data.config.title.trim() || data.config.topic.trim(),
-        conversationId: props.conversationId ?? data.conversationId ?? null,
-        sourceMessageId: data.sourceMessageId ?? props.message.id,
-        knowledgeBaseId: data.knowledgeBaseId ?? null,
-        projectId: data.projectId ?? null,
-        learningResourceId: data.learningResourceId ?? null,
-      })
-      nextCard = toPresentationChatCard(draft)
-      patchPresentationCard(nextCard)
-    } else {
-      patchPresentationCard(data)
-    }
-    await router.push({
-      path: `/presentations/${nextCard.presentationId}`,
-      query: presentationRouteQuery(nextCard, route.fullPath),
-    })
-  } catch (error) {
-    presentationError.value = error instanceof Error ? error.message : 'PPT 配置打开失败'
-  } finally {
-    presentationBusy.value = false
-  }
-}
-
-async function openPresentation(data = props.message.presentationData) {
-  if (!data) return
-  if (data.view === 'result' && data.status === 'ready' && data.resourceId) {
-    await router.push(resourcePreviewRoute(data.resourceId, route.fullPath, 'chat'))
+function submitEdit() {
+  const content = draft.value.trim()
+  if (!content || content === props.message.content.trim()) {
+    editing.value = false
     return
   }
-  await openPresentationSettings(data)
+  editing.value = false
+  emit('edit', props.message.id, content)
 }
 
-async function cancelPresentationCard() {
-  if (!props.conversationId) return
-  window.clearTimeout(presentationDraftSyncTimer)
-  const presentationId = props.message.presentationData?.presentationId
-  if (presentationId) {
-    presentationBusy.value = true
-    presentationError.value = ''
-    try {
-      await presentationRepository.cancelDraft(
-        presentationId,
-        globalThis.crypto?.randomUUID?.() ?? `presentation-cancel-${Date.now()}`,
-      )
-    } catch (error) {
-      presentationError.value = error instanceof Error ? error.message : '取消 PPT 创建失败'
-      presentationBusy.value = false
-      return
-    }
-    presentationBusy.value = false
-  }
-  messageStore.updateLocalMessage(props.conversationId, props.message.id, {
-    kind: undefined,
-    presentationData: undefined,
-    content: '已取消本次 PPT 创建。',
-  })
-}
-
-async function generatePresentationOutline() {
-  const card = props.message.presentationData
-  if (!card || !card.config.topic.trim() || presentationBusy.value) return
-  presentationBusy.value = true
-  presentationError.value = ''
-  try {
-    window.clearTimeout(presentationDraftSyncTimer)
-    const input = {
-      config: {
-        ...card.config,
-        topic: card.config.topic.trim(),
-        title: card.config.title.trim() || card.config.topic.trim(),
-      },
-      conversationId: props.conversationId ?? card.conversationId ?? null,
-      sourceMessageId: card.sourceMessageId ?? props.message.id,
-      knowledgeBaseId: card.knowledgeBaseId ?? null,
-      projectId: card.projectId ?? null,
-      learningResourceId: card.learningResourceId ?? null,
-    }
-    let presentation
-    if (card.presentationId) {
-      await presentationStore.load(card.presentationId)
-      await presentationStore.updateDraft(input)
-      presentation = await presentationStore.generateOutline()
-    } else {
-      const { config, ...context } = input
-      presentation = await presentationStore.createAndGenerateOutline({ ...config, ...context })
-    }
-    const nextCard = toPresentationChatCard(presentation)
-    patchPresentationCard(nextCard)
-    await router.push({
-      path: `/presentations/${presentation.id}`,
-      query: presentationRouteQuery(nextCard, route.fullPath),
-    })
-  } catch (error) {
-    presentationError.value = error instanceof Error ? error.message : 'PPT 大纲生成失败'
-  } finally {
-    presentationBusy.value = false
-  }
-}
-
-async function downloadPresentation() {
-  const card = props.message.presentationData
-  if (!card?.presentationId || presentationBusy.value) return
-  presentationBusy.value = true
-  presentationError.value = ''
-  try {
-    const presentation = await presentationStore.load(card.presentationId)
-    const blob = await presentationStore.download()
-    downloadBlob(blob, presentation.fileName || `${presentation.config.title}.pptx`)
-  } catch (error) {
-    presentationError.value = error instanceof Error ? error.message : 'PPT 下载失败'
-  } finally {
-    presentationBusy.value = false
-  }
-}
-
-async function retryPresentation() {
-  const card = props.message.presentationData
-  if (!card?.presentationId || presentationBusy.value) return
-  presentationBusy.value = true
-  presentationError.value = ''
-  try {
-    await presentationStore.load(card.presentationId)
-    const presentation = await presentationStore.retry()
-    let resourceId = presentation.resourceId || ''
-    if (isMockDataSource) {
-      resourceId = libraryResourceStore.addPresentation(
-        presentation.id,
-        presentation.fileName || `${presentation.config.title}.pptx`,
-        presentation.projectId == null ? null : Number(presentation.projectId),
-        presentation.knowledgeBaseId == null ? null : Number(presentation.knowledgeBaseId),
-        presentation.fileSize ?? 0,
-      ).resourceId
-    } else {
-      await libraryResourceStore.fetchList()
-      resourceId ||= libraryResourceStore.resources.find(
-        (resource) => resource.externalKey === `presentation:${presentation.id}`,
-      )?.resourceId || ''
-    }
-    const projectId = Number(presentation.projectId)
-    if (resourceId && Number.isFinite(projectId) && projectId > 0) {
-      await learningStore.attachGeneratedResourceToProject({
-        projectId,
-        learningResourceId: presentation.learningResourceId == null ? null : Number(presentation.learningResourceId),
-        resourceId,
-        artifactId: `presentation:${presentation.id}`,
-        title: presentation.config.title || presentation.config.topic,
-        fileName: presentation.fileName || `${presentation.config.title}.pptx`,
-        fileType: 'presentation',
-        preview: {
-          kind: 'presentation',
-          slides: presentation.previewPages.slice(0, 4).map((slide) => ({ title: slide.title, points: slide.points })),
-        },
-        source: 'ai-conversation',
-      })
-    }
-    patchPresentationCard(toPresentationChatCard(presentation))
-  } catch (error) {
-    presentationError.value = error instanceof Error ? error.message : 'PPT 重试失败'
-  } finally {
-    presentationBusy.value = false
-  }
-}
-
-async function openArtifact(artifact: ChatArtifactDto) {
-  if (!artifact.resourceId) return
-  await router.push(resourcePreviewRoute(artifact.resourceId, route.fullPath, 'chat'))
-}
-
-async function editArtifact(artifact: ChatArtifactDto) {
-  if (artifact.editorRoute?.startsWith('/') && !artifact.editorRoute.startsWith('//')) {
-    await router.push(artifact.editorRoute)
-  } else await openArtifact(artifact)
-}
-
-async function downloadArtifact(artifact: ChatArtifactDto) {
-  if (!artifact.resourceId || artifactBusyId.value) return
-  artifactBusyId.value = artifact.artifactId
-  try {
-    const spreadsheetId = artifact.artifactId.startsWith('spreadsheet:')
-      ? artifact.artifactId.slice('spreadsheet:'.length)
-      : ''
-    const presentationId = artifact.artifactId.startsWith('presentation:')
-      ? artifact.artifactId.slice('presentation:'.length)
-      : ''
-    if (!spreadsheetId && !presentationId) {
-      await libraryResourceStore.download(artifact.resourceId, artifact.fileName)
-      return
-    }
-    const blob = spreadsheetId
-      ? await spreadsheetRepository.download(spreadsheetId)
-      : await presentationRepository.download(presentationId)
-    downloadBlob(blob, artifact.fileName)
-  } finally {
-    artifactBusyId.value = ''
-  }
-}
-
-async function retryArtifact(artifact: ChatArtifactDto) {
-  if (!props.conversationId || artifactBusyId.value) return
-  artifactBusyId.value = artifact.artifactId
-  try {
-    await messageStore.retryArtifact(props.conversationId, props.message.id, artifact.artifactId)
-  } catch {
-    // The store keeps the same card and writes the retry error into it.
-  } finally {
-    artifactBusyId.value = ''
-  }
+function switchRelative(offset: number) {
+  const versions = props.versionGroup?.versions
+  if (!versions?.length) return
+  const target = versions[versionIndex.value + offset]
+  if (target) emit('switchVersion', target.branchId)
 }
 </script>
 
 <template>
-  <div :id="`msg-${message.id}`" class="bubble-wrap" :class="{ 'bubble-wrap--user': isUser }">
-    <div v-if="!isUser" class="avatar avatar--ai">
-      <AppIcon name="robot-black" />
-    </div>
+  <article class="message-row" :class="isUser ? 'is-user' : 'is-assistant'" :data-message-id="message.id">
+    <div class="message-main">
+      <template v-if="isUser">
+        <div v-if="editing" class="edit-card">
+          <textarea ref="editor" v-model="draft" rows="3" @keydown.meta.enter.prevent="submitEdit" @keydown.ctrl.enter.prevent="submitEdit" />
+          <div class="edit-actions">
+            <button type="button" title="取消" @click="editing = false"><X :size="15" /></button>
+            <button type="button" title="保存并重新生成" :disabled="!draft.trim()" @click="submitEdit"><Check :size="15" /></button>
+          </div>
+        </div>
+        <div v-else-if="message.content" class="user-bubble">{{ message.content }}</div>
+      </template>
+      <MarkdownRenderer v-else :content="message.content" :is-streaming="streaming" />
 
-    <div class="bubble-content-wrap">
-      <div v-if="isUser && message.tutorSource" class="tutor-source">
-        来自：{{ message.tutorSource.label }}
-      </div>
-      <!-- Uploaded files display -->
-      <div v-if="isUser && message.files && message.files.length > 0" class="uploaded-files">
-        <div v-for="(file, idx) in message.files" :key="idx" class="file-card">
-          <ResourceTypeIcon :type="resourceVisualTypeFromFile(file.name, file.type)" :size="20" :container-size="36" />
-          <div class="file-info">
-            <div class="file-name">{{ file.name }}</div>
-            <div class="file-meta">
-              {{ file.type ? file.type.toUpperCase().replace("APPLICATION/", "") : "FILE" }}
-              {{ (file.size / 1024).toFixed(2) }} KB
-            </div>
-          </div>
-        </div>
-      </div>
+      <ChatAttachmentList
+        v-if="attachmentItems.length"
+        class="message-attachments"
+        :items="attachmentItems"
+        compact
+        @open="emit('openAsset', $event)"
+      />
 
-      <div class="bubble" :class="isUser ? 'bubble--user' : 'bubble--ai'">
-        <div v-if="isUser" class="content">
-          <div v-if="isEditing" class="edit-mode">
-            <div class="edit-header">
-              <div class="edit-title">编辑问题</div>
-              <div class="edit-desc">修改提交后系统将重新生成回答</div>
-            </div>
-            <textarea v-model="editDraft" class="edit-textarea" rows="3"></textarea>
-            <div class="edit-actions">
-              <button class="btn cancel" @click="cancelEdit">取消</button>
-              <button class="btn submit" @click="submitEdit">保存并重新生成</button>
-            </div>
-          </div>
-          <div v-else>
-            {{ message.content }}
-          </div>
-        </div>
-        <div v-else class="content content--ai">
-          <LearningProfileCard
-            v-if="message.kind === 'learning-profile'"
-            :profile="message.learningData.profile"
-            :loading="message.learningData.loading"
-            :confirmed="message.learningData.confirmed"
-            @confirm="emit('confirmLearningProfile', message.id)"
-            @change="emit('updateLearningProfile', message.id, $event)"
-          />
-          <LearningPlanDocument
-            v-else-if="message.kind === 'learning-document'"
-            :content="message.learningData.content"
-            :loading="message.learningData.loading"
-            @update="(content) => emit('updateLearningDocument', message.id, content)"
-          />
-          <div v-else-if="showPresentationWorkflow && message.presentationData" class="presentation-message">
-            <MarkdownRenderer v-if="message.content && showMarkdown" :content="message.content" :is-streaming="isStreaming" />
-            <PresentationChatCard
-              :data="message.presentationData"
-              :busy="presentationBusy || isStreaming"
-              :error="presentationError"
-              @update="updatePresentationCard"
-              @cancel="cancelPresentationCard"
-              @more-settings="openPresentationSettings()"
-              @generate-outline="generatePresentationOutline"
-              @open="openPresentation()"
-              @download="downloadPresentation"
-              @associate="openPresentationSettings()"
-              @retry="retryPresentation"
-            />
-          </div>
-          <MarkdownRenderer v-else-if="showMarkdown" :content="message.content" :is-streaming="isStreaming" />
-          <div v-if="!showPresentationWorkflow && displayArtifacts.length" class="artifact-list">
-            <ArtifactCard
-              v-for="artifact in displayArtifacts"
-              :key="artifact.artifactId"
-              :artifact="artifact"
-              :busy="artifactBusyId === artifact.artifactId"
-              @open="openArtifact(artifact)"
-              @edit="editArtifact(artifact)"
-              @download="downloadArtifact(artifact)"
-              @retry="retryArtifact(artifact)"
-            />
-          </div>
-          <span v-if="isStreaming" class="cursor" />
-          <!-- @ts-ignore -->
-          <SourceChunks v-if="message.sourceChunks?.length" :chunks="message.sourceChunks" />
-          <div
-            class="response-time"
-            v-if="!isStreaming && message.durationMs"
-            @click="appState.toggleTimeUnit"
-            title="点击切换单位"
-          >
-            响应耗时：{{
-              appState.timeUnit === "s"
-                ? (message.durationMs / 1000).toFixed(3) + " s"
-                : message.durationMs + " ms"
-            }}
-          </div>
-          <div class="response-error" v-else-if="!isStreaming && message.errorMsg">
-            <details>
-              <summary>响应失败</summary>
-              <p>{{ message.errorMsg }}</p>
-            </details>
-          </div>
-        </div>
+      <div v-if="message.citations.length" class="citations">
+        <span>参考来源</span>
+        <button
+          v-for="citation in message.citations"
+          :key="citation.chunkId"
+          type="button"
+          :title="citation.quotedText"
+          @click="emit('openAsset', citation.assetId)"
+        >
+          {{ citation.number }}. {{ citation.assetName }}
+          <small v-if="citation.locator">{{ citation.locator }}</small>
+        </button>
       </div>
 
-      <div
-        class="message-footer"
-        :class="{ 'message-footer--user': isUser }"
-        v-if="(!message.kind || displayArtifacts.length || (message.kind === 'learning-document' && !message.learningData?.loading)) && !isEditing && (!isStreaming || isUser)"
-      >
-        <div v-if="versionCount > 1" class="version-switcher">
-          <button class="version-btn" :disabled="currentVersionIndex <= 1" @click="prevVersion">
-            <AppIcon name="chevron-left" :size="12" />
-          </button>
-          <span class="version-text">{{ currentVersionIndex }} / {{ versionCount }}</span>
-          <button
-            class="version-btn"
-            :disabled="currentVersionIndex >= versionCount"
-            @click="nextVersion"
-          >
-            <AppIcon name="chevron-right" :size="12" />
-          </button>
-        </div>
+      <slot />
 
+      <div v-if="!streaming && !editing" class="message-footer" :class="{ 'is-user': isUser }">
         <MessageActions
-          :message="message"
-          :is-regenerate-disabled="isRegenerateDisabled"
-          @copy="onCopy"
-          @edit="onEdit"
-          @regenerate="onRegenerate"
+          :role="message.role"
+          :content="message.content"
+          :disabled="busy"
+          :speech-loading="speechLoading"
+          :speech-playing="speechPlaying"
+          @edit="beginEdit"
+          @regenerate="emit('regenerate', message.id)"
+          @speak="emit('speak', message)"
         />
+        <div v-if="versionGroup && versionIndex >= 0" class="version-nav" aria-label="消息版本切换">
+          <button type="button" title="上一个版本" :disabled="busy || versionIndex === 0" @click="switchRelative(-1)">
+            <ChevronLeft :size="15" />
+          </button>
+          <span>{{ versionIndex + 1 }} / {{ versionGroup.versions.length }}</span>
+          <button type="button" title="下一个版本" :disabled="busy || versionIndex === versionGroup.versions.length - 1" @click="switchRelative(1)">
+            <ChevronRight :size="15" />
+          </button>
+        </div>
       </div>
     </div>
-
-    <div v-if="isUser" class="avatar avatar--user">
-      <AppIcon name="user" />
-    </div>
-  </div>
+  </article>
 </template>
 
 <style scoped>
-.bubble-wrap {
-  display: flex;
-  gap: 20px;
-  align-items: flex-start;
-  margin-bottom: 16px;
-  width: 100%;
-}
-
-.bubble-wrap--user {
-  justify-content: flex-end;
-}
-
-.avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.avatar--ai {
-  background: var(--color-border);
-  color: var(--color-text);
-  margin-left: 0;
-}
-
-.avatar--user {
-  background: var(--color-text);
-  color: var(--color-surface);
-  margin-right: 0;
-}
-
-.bubble-content-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-width: 774px;
-  width: 100%;
-}
-
-.bubble-wrap--user {
-  justify-content: flex-end;
-}
-
-.bubble-wrap--user .bubble-content-wrap {
-  display: inline-flex !important;
-  flex-direction: column;
-  align-items: flex-end !important;
-  max-width: 70% !important;
-  width: auto !important;
-  min-width: 0 !important;
-}
-
-.bubble-wrap--user .bubble {
-  width: auto !important;
-  max-width: 100% !important;
-  display: inline-block !important;
-  word-wrap: break-word !important;
-  white-space: normal !important;
-  text-align: left !important;
-  min-width: 0 !important;
-  box-sizing: border-box !important;
-  overflow: hidden !important;
-}
-
-.bubble-wrap--user .bubble .content {
-  max-width: 100% !important;
-  overflow: hidden !important;
-}
-
-.bubble-wrap--user .bubble-content-wrap .edit-mode {
-  max-width: 100% !important;
-  width: 100% !important;
-  box-sizing: border-box !important;
-  overflow: hidden !important;
-}
-
-.uploaded-files {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  align-items: flex-end;
-}
-
-.tutor-source {
-  padding: 0 4px;
-  color: var(--color-text-muted);
-  font-size: 12px;
-  line-height: 1.4;
-  text-align: right;
-}
-
-.file-card {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background-color: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  padding: 12px 16px;
-  min-width: 220px;
-  box-shadow: var(--shadow-sm);
-}
-
-.file-info {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  overflow: hidden;
-}
-
-.file-name {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--color-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 200px;
-}
-
-.file-meta {
-  font-size: 12px;
-  color: var(--color-text-muted);
-}
-
-.message-footer {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 4px;
-}
-
-.message-footer--user {
-  justify-content: flex-end;
-}
-
-.version-switcher {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--color-text-muted);
-  user-select: none;
-}
-
-.version-btn {
-  background: transparent;
-  border: none;
-  color: inherit;
-  cursor: pointer;
-  padding: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  transition:
-    background-color 0.2s,
-    color 0.2s;
-}
-
-.version-btn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-
-.version-btn:not(:disabled):hover {
-  color: var(--color-text);
-  background-color: var(--color-hover-strong);
-}
-
-.bubble {
-  padding: 12px 16px;
-  border-radius: 12px;
-  font-size: 14px;
-  line-height: 1.6;
-  display: inline-block;
-  max-width: 100%;
-}
-
-.bubble--user {
-  background: var(--color-primary);
-  color: var(--color-on-primary);
-  border-bottom-right-radius: 4px;
-  text-align: left;
-}
-
-.bubble--ai {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  color: var(--color-text);
-  border-bottom-left-radius: 4px;
-}
-
-.bubble--ai:has(.profile-card),
-.bubble--ai:has(.plan-document),
-.bubble--ai:has(.presentation-message) {
-  width: 100%;
-  padding: 0;
-  overflow: visible;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-
-.cursor {
-  display: inline-block;
-  width: 8px;
-  height: 16px;
-  background-color: currentColor;
-  vertical-align: middle;
-  animation: blink 1s step-end infinite;
-  margin-left: 4px;
-}
-
-@keyframes blink {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0;
-  }
-}
-
-.response-time {
-  font-size: 12px;
-  color: var(--color-text-muted);
-  margin-top: 8px;
-  text-align: right;
-  cursor: pointer;
-  user-select: none;
-  transition: color 0.2s;
-}
-
-.response-time:hover {
-  color: var(--color-text);
-}
-
-.response-error {
-  font-size: 12px;
-  color: var(--color-danger);
-  margin-top: 8px;
-}
-
-.response-error details summary {
-  cursor: pointer;
-  outline: none;
-}
-
-.edit-mode {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: 100%;
-  max-width: 100%;
-  box-sizing: border-box;
-}
-
-.edit-header {
-  margin-bottom: 4px;
-}
-
-.edit-title {
-  font-size: 14px;
-  font-weight: 600;
-  margin-bottom: 4px;
-}
-
-.edit-desc {
-  font-size: 12px;
-  color: var(--color-text-muted);
-  transition: color 0.3s;
-}
-.edit-textarea {
-  width: 100%;
-  padding: 8px 12px;
-  border-radius: 6px;
-  border: none;
-  font-family: inherit;
-  font-size: 14px;
-  resize: vertical;
-  outline: none;
-}
-
-.bubble--user .edit-textarea {
-  background-color: var(--color-surface);
-  color: var(--color-text);
-}
-
-.edit-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-  align-items: center;
-}
-
-.edit-actions .btn {
-  padding: 6px 16px;
-  border-radius: 6px;
-  border: none;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 500;
-  transition: all 0.2s;
-  position: relative;
-  overflow: hidden;
-}
-
-/* Ripple effect */
-.edit-actions .btn::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 100%;
-  height: 100%;
-  background: rgba(255, 255, 255, 0.2);
-  transform: translate(-50%, -50%) scale(0);
-  border-radius: 50%;
-  opacity: 0;
-  transition:
-    transform 0.3s,
-    opacity 0.3s;
-}
-.edit-actions .btn:active::after {
-  transform: translate(-50%, -50%) scale(2);
-  opacity: 1;
-  transition: 0s;
-}
-
-/* Cancel Button */
-.edit-actions .cancel {
-  background-color: var(--color-surface-subtle);
-  color: var(--color-text-muted);
-}
-.edit-actions .cancel:hover {
-  background-color: var(--color-hover-strong);
-}
-
-/* Submit Button (Regenerate) */
-.edit-actions .submit {
-  background-color: transparent;
-  color: var(--color-on-primary);
-}
-.edit-actions .submit:hover {
-  opacity: 0.8;
+.message-row { display: flex; width: 100%; min-width: 0; }
+.message-main { width: 100%; min-width: 0; }
+.is-user { justify-content: flex-end; }
+.is-user .message-main { display: grid; justify-items: end; }
+.user-bubble { max-width: min(72%, 620px); padding: 11px 16px; border-radius: 20px; color: var(--color-bg); background: var(--color-text); line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.edit-card { width: min(72%, 620px); padding: 10px; border: 1px solid var(--color-border); border-radius: 18px; background: var(--color-bg); box-shadow: 0 10px 28px rgb(0 0 0 / 8%); }
+.edit-card textarea { display: block; width: 100%; min-height: 88px; padding: 5px; resize: vertical; border: 0; outline: 0; color: var(--color-text); background: transparent; font: inherit; line-height: 1.6; }
+.edit-actions { display: flex; justify-content: flex-end; gap: 5px; }
+.edit-actions button, .version-nav button { display: grid; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 8px; color: var(--color-text-muted); background: transparent; cursor: pointer; }
+.edit-actions button:hover:not(:disabled), .version-nav button:hover:not(:disabled) { color: var(--color-text); background: var(--color-surface); }
+.edit-actions button:disabled, .version-nav button:disabled { opacity: .35; cursor: not-allowed; }
+.message-attachments { margin-top: 8px; }
+.is-user .message-attachments { justify-self: end; }
+.citations { display: flex; flex-wrap: wrap; gap: 7px; width: 100%; margin-top: 14px; }
+.citations > span { flex-basis: 100%; color: var(--color-text-muted); font-size: 12px; }
+.citations button { display: inline-flex; gap: 5px; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: 10px; color: inherit; background: var(--color-bg); cursor: pointer; }
+.citations button:hover { background: var(--color-surface); }
+.citations small { color: var(--color-text-muted); }
+.message-footer { display: flex; align-items: center; gap: 6px; }
+.message-footer.is-user { justify-content: flex-end; }
+.version-nav { display: flex; align-items: center; gap: 1px; margin-top: 7px; color: var(--color-text-muted); font-size: 12px; }
+@media (max-width: 720px) {
+  .user-bubble, .edit-card { max-width: 88%; }
 }
 </style>

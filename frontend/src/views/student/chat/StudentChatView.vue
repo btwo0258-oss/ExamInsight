@@ -18,13 +18,15 @@ import { synthesizeSpeech } from '@/api/chatV2'
 import { useAssetLibraryV2Store } from '@/stores/assetLibraryV2'
 import { useAuthStore } from '@/stores/auth'
 import { useChatV2Store } from '@/stores/chatV2'
-import type { Artifact, ChatMessage } from '@/types/contracts/chatV2'
+import type { Artifact, ChatMessage, MessageAttachment } from '@/types/contracts/chatV2'
 import type { LibraryAsset } from '@/types/contracts/assetLibraryV2'
 
 type DraftAttachmentStatus = 'uploading' | 'processing' | 'ready' | 'failed'
 type DraftAttachment = {
   key: string
   assetId?: string
+  assetVersionId?: string
+  assetType?: string
   name: string
   mimeType: string
   sizeBytes: number
@@ -67,6 +69,7 @@ const hasBusyAttachments = computed(() => draftAttachments.value.some(item => ['
 const hasFailedAttachments = computed(() => draftAttachments.value.some(item => item.status === 'failed'))
 const canSend = computed(() => (
   !chatStore.sending
+  && !chatStore.loading
   && !hasBusyAttachments.value
   && !hasFailedAttachments.value
   && (prompt.value.trim().length > 0 || readyAttachments.value.length > 0)
@@ -90,6 +93,8 @@ function draftFromAsset(asset: LibraryAsset): DraftAttachment {
   return {
     key: asset.assetId,
     assetId: asset.assetId,
+    assetVersionId: asset.version?.versionId,
+    assetType: asset.assetType,
     name: asset.name,
     mimeType: asset.version?.mimeType || 'application/octet-stream',
     sizeBytes: asset.version?.sizeBytes || 0,
@@ -171,7 +176,9 @@ async function uploadOne(file: File) {
     const current = draftAttachments.value.find(candidate => candidate.key === key)
     if (!current) return
     current.assetId = result.completion.asset.assetId
+    current.assetVersionId = result.completion.version.versionId
     current.mimeType = result.completion.version.mimeType || current.mimeType
+    current.assetType = current.mimeType.startsWith('image/') ? 'IMAGE' : 'FILE'
     current.sizeBytes = result.completion.version.sizeBytes
     current.status = result.completion.version.status === 'READY' ? 'ready' : 'processing'
     current.progress = 100
@@ -346,25 +353,43 @@ async function submit() {
 
   const submittedDrafts = [...readyAttachments.value]
   const sourceAssetIds = submittedDrafts.flatMap(item => item.assetId ? [item.assetId] : [])
+  const submittedAttachments = optimisticAttachments(submittedDrafts)
   prompt.value = ''
   draftAttachments.value = draftAttachments.value.filter(item => !submittedDrafts.includes(item))
   resizeComposer()
+  let optimisticConversationId = ''
+  let conversationPersisted = true
   try {
     let conversation = chatStore.activeConversation
     if (!conversation || (routeConversationId.value && routeConversationId.value !== conversation.id)) {
-      conversation = await chatStore.create({
+      conversationPersisted = false
+      conversation = chatStore.beginConversation({
         title: '新对话',
         knowledgeBaseId: selectedKnowledgeBaseId.value,
       })
+      optimisticConversationId = conversation.id
+      chatStore.beginOptimisticTurn(content, sourceAssetIds, submittedAttachments)
       await router.replace({ name: 'chat-detail', params: { id: conversation.id } })
+      await scrollToBottom('auto')
+      conversation = await chatStore.create({
+        conversationId: conversation.id,
+        title: '新对话',
+        knowledgeBaseId: selectedKnowledgeBaseId.value,
+      })
+      conversationPersisted = true
     } else {
+      chatStore.beginOptimisticTurn(content, sourceAssetIds, submittedAttachments)
+      await scrollToBottom('auto')
       await chatStore.setKnowledgeBase(selectedKnowledgeBaseId.value)
     }
-    await scrollToBottom()
-    await chatStore.send(content, sourceAssetIds)
+    await chatStore.send(content, sourceAssetIds, submittedAttachments)
     clearDraftAttachments(submittedDrafts)
     await scrollToBottom()
   } catch {
+    if (optimisticConversationId && !conversationPersisted) {
+      chatStore.discardConversation(optimisticConversationId)
+      await router.replace({ name: 'chat' })
+    }
     prompt.value = content
     draftAttachments.value = [...submittedDrafts, ...draftAttachments.value]
     resizeComposer()
@@ -398,6 +423,17 @@ function handleComposerKeydown(event: KeyboardEvent) {
     event.preventDefault()
     void submit()
   }
+}
+
+function optimisticAttachments(items: DraftAttachment[]): MessageAttachment[] {
+  return items.flatMap((item) => item.assetId ? [{
+    assetId: item.assetId,
+    assetVersionId: item.assetVersionId || '',
+    name: item.name,
+    mimeType: item.mimeType,
+    sizeBytes: item.sizeBytes,
+    assetType: item.assetType || (item.mimeType.startsWith('image/') ? 'IMAGE' : 'FILE'),
+  }] : [])
 }
 
 onMounted(async () => {

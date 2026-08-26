@@ -1,151 +1,103 @@
 <script setup lang="ts">
-import { onMounted, watch, ref, nextTick } from 'vue'
-import { renderMarkdownToHtml } from '@/utils/markdown'
+import { computed, nextTick, ref, watch } from 'vue'
+
 import { copyText } from '@/utils/clipboard'
+import { renderMarkdownToHtml } from '@/utils/markdown'
 
-type Props = { content: string; isStreaming?: boolean }
-const props = withDefaults(defineProps<Props>(), { isStreaming: false })
+const props = withDefaults(defineProps<{
+  content: string
+  isStreaming?: boolean
+}>(), { isStreaming: false })
 
-const containerRef = ref<HTMLElement | null>(null)
-const htmlContent = ref('')
+const container = ref<HTMLElement | null>(null)
+const html = computed(() => renderMarkdownToHtml(props.content))
 
-function renderMarkdown() {
-  htmlContent.value = renderMarkdownToHtml(props.content)
+const languageNames: Record<string, string> = {
+  js: 'JavaScript', javascript: 'JavaScript',
+  ts: 'TypeScript', typescript: 'TypeScript',
+  py: 'Python', python: 'Python',
+  java: 'Java', json: 'JSON', html: 'HTML', css: 'CSS',
+  bash: 'Shell', shell: 'Shell', sql: 'SQL', vue: 'Vue',
 }
 
-function addCopyButtons() {
-  if (containerRef.value) {
-    const codeBlocks = containerRef.value.querySelectorAll('pre code')
-    codeBlocks.forEach((code) => {
-      const preElement = code.parentElement
-      if (preElement && !preElement.querySelector('.copy-btn')) {
-        let language = code.className.replace('hljs', '').trim() || 'code'
-        language = language.replace(/^language-/, '')
-
-        const languageSpan = document.createElement('span')
-        languageSpan.className = 'language'
-        languageSpan.textContent = language
-
-        const copyBtn = document.createElement('button')
-        copyBtn.className = 'copy-btn'
-        copyBtn.innerHTML = '<svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-        copyBtn.title = '复制代码'
-
-        copyBtn.addEventListener('click', (event) => {
-          event.stopPropagation()
-          const codeText = code.textContent || ''
-          copyText(codeText)
-        })
-
-        preElement.insertBefore(languageSpan, code)
-        preElement.insertBefore(copyBtn, code)
-      }
-    })
-  }
-}
-
-function doRender() {
-  renderMarkdown()
-  nextTick(() => {
-    addCopyButtons()
+function enhanceCodeBlocks() {
+  container.value?.querySelectorAll('pre').forEach((pre) => {
+    if (pre.dataset.enhanced === 'true') return
+    const code = pre.querySelector('code')
+    if (!code) return
+    const languageClass = [...code.classList].find(name => name.startsWith('language-'))
+    const language = languageClass?.slice('language-'.length) || 'code'
+    const toolbar = document.createElement('div')
+    toolbar.className = 'code-toolbar'
+    toolbar.innerHTML = `
+      <span class="code-language">${languageNames[language.toLowerCase()] || language}</span>
+      <span class="code-toolbar-actions">
+        <button type="button" data-code-action="expand" title="展开代码" aria-label="展开代码">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg>
+        </button>
+        <button type="button" data-code-action="copy" title="复制代码" aria-label="复制代码">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </button>
+      </span>`
+    pre.prepend(toolbar)
+    pre.dataset.enhanced = 'true'
   })
 }
 
-onMounted(() => {
-  doRender()
-})
+async function onClick(event: MouseEvent) {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-code-action]')
+  if (!button) return
+  const pre = button.closest('pre')
+  const code = pre?.querySelector('code')
+  if (!pre || !code) return
+  if (button.dataset.codeAction === 'expand') {
+    pre.classList.toggle('code-expanded')
+    button.title = pre.classList.contains('code-expanded') ? '收起代码' : '展开代码'
+    return
+  }
+  await copyText(code.textContent || '')
+  button.classList.add('copied')
+  button.title = '已复制'
+  window.setTimeout(() => {
+    button.classList.remove('copied')
+    button.title = '复制代码'
+  }, 1200)
+}
 
-watch(() => props.content, () => {
-  doRender()
+watch(html, async () => {
+  await nextTick()
+  enhanceCodeBlocks()
 }, { immediate: true })
 </script>
 
 <template>
-  <div ref="containerRef" class="markdown" v-html="htmlContent"></div>
+  <div
+    ref="container"
+    class="markdown"
+    :class="{ 'is-streaming': isStreaming }"
+    @click="onClick"
+    v-html="html"
+  />
 </template>
 
 <style scoped>
-.markdown pre {
-  position: relative;
-  margin: 10px 0;
-  padding: 30px 12px 12px;
-  border-radius: var(--radius-md);
-  background: var(--color-surface-subtle);
-  overflow: auto;
-}
-
-.markdown code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
-}
-
-/* 确保代码块的样式正确 */
-.markdown pre code {
-  display: block;
-  padding: 0;
-  background: none;
-  border: none;
-  color: inherit;
-}
-</style>
-
-<style>
-.markdown .language {
-  position: absolute;
-  top: 8px;
-  left: 12px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
-  font-size: 12px;
-  color: var(--color-text-muted);
-  z-index: 10;
-}
-
-.markdown .copy-btn {
-  position: absolute !important;
-  top: 8px !important;
-  right: 12px !important;
-  background: transparent !important;
-  background-color: transparent !important;
-  border: none !important;
-  cursor: pointer;
-  padding: 4px !important;
-  margin: 0 !important;
-  color: var(--color-text-muted);
-  display: flex !important;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
-  z-index: 10;
-  outline: none !important;
-  box-shadow: none !important;
-  -webkit-appearance: none !important;
-  -moz-appearance: none !important;
-  appearance: none !important;
-  border-radius: 0 !important;
-  width: auto !important;
-  height: auto !important;
-  min-width: 0 !important;
-  min-height: 0 !important;
-}
-
-.markdown .copy-btn .icon {
-  width: 14px !important;
-  height: 14px !important;
-  font-size: 14px !important;
-}
-
-.markdown .copy-btn:hover {
-  color: var(--color-primary);
-}
-
-.markdown .copy-btn:active,
-.markdown .copy-btn:focus,
-.markdown .copy-btn:focus-visible {
-  background: transparent !important;
-  background-color: transparent !important;
-  border: none !important;
-  outline: none !important;
-  box-shadow: none !important;
-}
+.markdown { width: 100%; min-width: 0; color: var(--color-text); font-size: 15px; line-height: 1.75; overflow-wrap: anywhere; }
+.markdown :deep(> :first-child) { margin-top: 0; }
+.markdown :deep(> :last-child) { margin-bottom: 0; }
+.markdown :deep(p), .markdown :deep(ul), .markdown :deep(ol), .markdown :deep(blockquote) { margin: .65em 0; }
+.markdown :deep(h1), .markdown :deep(h2), .markdown :deep(h3) { margin: 1.2em 0 .55em; line-height: 1.35; }
+.markdown :deep(a) { color: var(--color-primary); text-underline-offset: 3px; }
+.markdown :deep(blockquote) { padding-left: 14px; border-left: 3px solid var(--color-border); color: var(--color-text-muted); }
+.markdown :deep(code) { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.markdown :deep(:not(pre) > code) { padding: 2px 5px; border-radius: 5px; background: var(--color-surface); font-size: .9em; }
+.markdown :deep(pre) { position: relative; max-height: 520px; margin: 14px 0; padding: 50px 12px 14px; border: 1px solid var(--color-border); border-radius: 14px; background: color-mix(in srgb, var(--color-text) 5%, var(--color-bg)); overflow: auto; transition: max-height .2s ease; }
+.markdown :deep(pre.code-expanded) { max-height: none; }
+.markdown :deep(pre code) { display: block; padding: 0; border: 0; background: transparent; font-size: 13px; line-height: 1.65; }
+.markdown :deep(.code-toolbar) { position: absolute; inset: 0 0 auto; display: flex; height: 38px; align-items: center; justify-content: space-between; padding: 0 10px 0 12px; border-bottom: 1px solid var(--color-border); color: var(--color-text-muted); background: color-mix(in srgb, var(--color-text) 4%, var(--color-bg)); font-size: 12px; }
+.markdown :deep(.code-toolbar-actions) { display: flex; gap: 2px; }
+.markdown :deep(.code-toolbar button) { display: grid; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 7px; color: inherit; background: transparent; cursor: pointer; }
+.markdown :deep(.code-toolbar button:hover), .markdown :deep(.code-toolbar button.copied) { color: var(--color-text); background: var(--color-surface); }
+.markdown :deep(.code-toolbar svg) { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.markdown.is-streaming:empty::after { content: ''; display: inline-block; width: 7px; height: 18px; border-radius: 2px; background: currentColor; animation: blink 1s infinite; }
+@keyframes blink { 50% { opacity: .25; } }
 </style>

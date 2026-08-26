@@ -40,6 +40,7 @@ export type MessageAttachment = {
 export type ChatMessage = {
   id: string
   branchId: string
+  versionGroupId: string
   parentMessageId: string | null
   role: MessageRole | string
   status: string
@@ -52,15 +53,34 @@ export type ChatMessage = {
   finalizedAt: string | null
 }
 
+export type MessageVersion = {
+  messageId: string
+  branchId: string
+  createdAt: string
+}
+
+export type MessageVersionGroup = {
+  id: string
+  role: string
+  versions: MessageVersion[]
+}
+
 export type ConversationDetail = {
   conversation: ConversationSummary
   messages: ChatMessage[]
+  versionGroups: MessageVersionGroup[]
 }
 
 export type ConversationPage = {
   items: ConversationSummary[]
   nextCursor: string | null
   hasMore: boolean
+}
+
+export type CreateConversationPayload = {
+  conversationId?: string
+  title?: string
+  knowledgeBaseId?: string | null
 }
 
 export type SendMessageAccepted = {
