@@ -192,12 +192,16 @@ public class ChatV2Repository {
             if (replay.isPresent()) return replay.get();
             ConversationRow conversation = requireConversationForUpdate(userId, conversationExternalId);
             validateConversationCanGenerate(conversation);
-            List<LockedAssetVersion> directSources = resolveDirectSources(userId, requestedAssetIds);
+            List<LockedAssetVersion> requestedDirectSources = resolveDirectSources(userId, requestedAssetIds);
             validateKnowledgeBaseReadiness(userId, conversation.knowledgeBaseId());
             List<LockedAssetVersion> knowledgeBaseSources = resolveKnowledgeBaseSources(
                     userId, conversation.knowledgeBaseId());
             BranchRow branch = requireActiveBranchForUpdate(conversation.id(), conversation.activeBranchId());
             MessageCursor cursor = lastMessageCursor(branch.id());
+            List<LockedAssetVersion> directSources = mergeDirectSources(
+                    loadDirectSourcesForVisibleHistory(
+                            userId, conversation.id(), branch.id(), cursor.sequence()),
+                    requestedDirectSources);
             String userMessageExternalId = crypto.newExternalId();
             String normalizedContent = content == null ? "" : content.trim();
             long userMessageId = insertAndReturnId("""
@@ -207,7 +211,7 @@ public class ChatV2Repository {
                     ) VALUES (?, ?, ?, ?, 'USER', 'FINALIZED', ?, ?, FALSE, CURRENT_TIMESTAMP(3))
                     """, userMessageExternalId, conversation.id(), branch.id(), cursor.messageId(),
                     cursor.sequence() + 1, normalizedContent.isBlank() ? null : normalizedContent);
-            for (LockedAssetVersion source : directSources) {
+            for (LockedAssetVersion source : requestedDirectSources) {
                 attachSource(userMessageId, source);
             }
             return createPreparedRun(
@@ -240,7 +244,8 @@ public class ChatV2Repository {
                     """, editedExternalId, conversation.id(), branch.id(), source.sequence(),
                     content.trim(), source.originMessageId());
             copyAttachments(source.id(), editedId);
-            List<LockedAssetVersion> directSources = loadDirectSourcesForMessage(userId, source.id());
+            List<LockedAssetVersion> directSources = loadDirectSourcesForVisibleHistory(
+                    userId, conversation.id(), branch.id(), source.sequence());
             validateKnowledgeBaseReadiness(userId, conversation.knowledgeBaseId());
             List<LockedAssetVersion> knowledgeBaseSources = resolveKnowledgeBaseSources(
                     userId, conversation.knowledgeBaseId());
@@ -268,7 +273,8 @@ public class ChatV2Repository {
             }
             RequestMessage request = requireRequestMessage(source.requestMessageId());
             BranchRow branch = createForkBranch(userId, conversation, source);
-            List<LockedAssetVersion> directSources = loadDirectSourcesForMessage(userId, request.id());
+            List<LockedAssetVersion> directSources = loadDirectSourcesForVisibleHistory(
+                    userId, conversation.id(), branch.id(), request.sequence());
             validateKnowledgeBaseReadiness(userId, conversation.knowledgeBaseId());
             List<LockedAssetVersion> knowledgeBaseSources = resolveKnowledgeBaseSources(
                     userId, conversation.knowledgeBaseId());
@@ -477,18 +483,54 @@ public class ChatV2Repository {
                 """, targetMessageId, sourceMessageId);
     }
 
-    private List<LockedAssetVersion> loadDirectSourcesForMessage(long userId, long messageId) {
-        return jdbc.query("""
+    private List<LockedAssetVersion> loadDirectSourcesForVisibleHistory(
+            long userId,
+            long conversationId,
+            long branchId,
+            long throughSequence) {
+        List<Long> messageIds = loadVisibleMessages(conversationId, branchId).stream()
+                .filter(message -> "USER".equals(message.role()))
+                .filter(message -> message.sequence() <= throughSequence)
+                .map(MessageData::id)
+                .toList();
+        if (messageIds.isEmpty()) {
+            return List.of();
+        }
+        List<Object> args = new ArrayList<>();
+        args.add(userId);
+        args.addAll(messageIds);
+        List<LockedAssetVersion> rows = jdbc.query("""
                 SELECT a.id AS asset_id, a.external_id AS asset_external_id, a.name,
                        av.id AS version_id, av.external_id AS version_external_id
                   FROM message_attachment attachment
+                  JOIN message m ON m.id = attachment.message_id
                   JOIN asset_version av ON av.id = attachment.asset_version_id
                   JOIN asset a ON a.id = av.asset_id
-                 WHERE attachment.message_id = ? AND a.user_id = ? AND attachment.attachment_role = 'CONTEXT'
-                 ORDER BY attachment.id ASC
-                """, (rs, rowNum) -> new LockedAssetVersion(
+                  JOIN asset_parse_result parse_result ON parse_result.id = av.active_parse_result_id
+                 WHERE a.user_id = ? AND a.status = 'ACTIVE'
+                   AND av.status = 'READY' AND parse_result.status = 'READY'
+                   AND attachment.attachment_role = 'CONTEXT'
+                   AND attachment.message_id IN (%s)
+                 ORDER BY m.sequence_no ASC, attachment.id ASC
+                """.formatted(placeholders(messageIds.size())), (rs, rowNum) -> new LockedAssetVersion(
                         rs.getLong("asset_id"), rs.getString("asset_external_id"), rs.getString("name"),
-                        rs.getLong("version_id"), rs.getString("version_external_id")), messageId, userId);
+                        rs.getLong("version_id"), rs.getString("version_external_id")),
+                args.toArray());
+        Map<Long, LockedAssetVersion> latestByAsset = new LinkedHashMap<>();
+        rows.forEach(source -> latestByAsset.put(source.assetId(), source));
+        return List.copyOf(latestByAsset.values());
+    }
+
+    private List<LockedAssetVersion> mergeDirectSources(
+            List<LockedAssetVersion> existing,
+            List<LockedAssetVersion> requested) {
+        Map<Long, LockedAssetVersion> unique = new LinkedHashMap<>();
+        existing.forEach(source -> unique.put(source.assetId(), source));
+        requested.forEach(source -> unique.put(source.assetId(), source));
+        if (unique.size() > 20) {
+            throw badRequest("SOURCE_LIMIT_EXCEEDED", "单个对话最多额外关联 20 个资料。");
+        }
+        return List.copyOf(unique.values());
     }
 
     private void validateConversationCanGenerate(ConversationRow conversation) {
@@ -1145,8 +1187,8 @@ public class ChatV2Repository {
             List<LockedAssetVersion> directSources,
             List<LockedAssetVersion> knowledgeBaseSources) {
         Map<Long, LockedAssetVersion> unique = new LinkedHashMap<>();
-        directSources.forEach(source -> unique.put(source.assetVersionId(), source));
-        knowledgeBaseSources.forEach(source -> unique.putIfAbsent(source.assetVersionId(), source));
+        directSources.forEach(source -> unique.put(source.assetId(), source));
+        knowledgeBaseSources.forEach(source -> unique.putIfAbsent(source.assetId(), source));
         return List.copyOf(unique.values());
     }
 
@@ -1155,14 +1197,14 @@ public class ChatV2Repository {
             Long knowledgeBaseId,
             List<LockedAssetVersion> directSources,
             List<LockedAssetVersion> knowledgeBaseSources) {
-        Set<Long> insertedVersions = new LinkedHashSet<>();
+        Set<Long> insertedAssets = new LinkedHashSet<>();
         int sourceOrder = 0;
         for (LockedAssetVersion source : directSources) {
+            if (!insertedAssets.add(source.assetId())) continue;
             insertContextSource(contextSnapshotId, "DIRECT_ASSET", null, source, sourceOrder++);
-            insertedVersions.add(source.assetVersionId());
         }
         for (LockedAssetVersion source : knowledgeBaseSources) {
-            if (!insertedVersions.add(source.assetVersionId())) continue;
+            if (!insertedAssets.add(source.assetId())) continue;
             insertContextSource(contextSnapshotId, "KNOWLEDGE_BASE", knowledgeBaseId, source, sourceOrder++);
         }
     }

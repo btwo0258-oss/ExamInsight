@@ -327,6 +327,197 @@ public class AssetProcessingRepository {
         });
     }
 
+    /**
+     * Reopens the existing terminal parse/index work instead of inserting a second job. This keeps
+     * the original idempotency key authoritative while preserving the previous attempt audit rows.
+     */
+    public RetryOutcome retryFailedWork(long userId, String assetExternalId, LocalDateTime scheduledAt) {
+        return transactions.execute(status -> {
+            List<RetryVersion> versions = jdbc.query("""
+                    SELECT a.status AS asset_status,
+                           av.id AS version_id, av.external_id AS version_external_id,
+                           av.status AS version_status, av.active_parse_result_id,
+                           av.rag_policy, av.rag_status
+                      FROM asset a
+                      JOIN asset_version av ON av.id = COALESCE(
+                          a.current_version_id,
+                          (SELECT latest.id FROM asset_version latest
+                            WHERE latest.asset_id = a.id
+                            ORDER BY latest.version_no DESC LIMIT 1)
+                      )
+                     WHERE a.user_id = ? AND a.external_id = ? AND a.status <> 'PURGED'
+                     FOR UPDATE
+                    """, (rs, rowNum) -> new RetryVersion(
+                    rs.getString("asset_status"), rs.getLong("version_id"),
+                    rs.getString("version_external_id"), rs.getString("version_status"),
+                    rs.getObject("active_parse_result_id", Long.class),
+                    rs.getString("rag_policy"), rs.getString("rag_status")),
+                    userId, assetExternalId);
+            if (versions.isEmpty()) {
+                return RetryOutcome.NOT_FOUND;
+            }
+            RetryVersion version = versions.get(0);
+            if (!"ACTIVE".equals(version.assetStatus())) {
+                return RetryOutcome.ASSET_NOT_ACTIVE;
+            }
+            if ("FAILED".equals(version.versionStatus())) {
+                return retryParse(version, scheduledAt);
+            }
+            if ("READY".equals(version.versionStatus()) && "AUTO".equals(version.ragPolicy())) {
+                return retryIndex(version, scheduledAt);
+            }
+            if ("QUARANTINED".equals(version.versionStatus())
+                    || "PROCESSING".equals(version.versionStatus())) {
+                return RetryOutcome.ALREADY_PROCESSING;
+            }
+            return RetryOutcome.NOTHING_TO_RETRY;
+        });
+    }
+
+    private RetryOutcome retryParse(RetryVersion version, LocalDateTime scheduledAt) {
+        List<RetryParse> parseResults = jdbc.query("""
+                SELECT id, async_job_id, status
+                  FROM asset_parse_result
+                 WHERE asset_version_id = ?
+                 ORDER BY id DESC
+                 LIMIT 1
+                 FOR UPDATE
+                """, (rs, rowNum) -> new RetryParse(
+                rs.getLong("id"), rs.getLong("async_job_id"), rs.getString("status")),
+                version.versionId());
+        if (parseResults.isEmpty() || !"FAILED".equals(parseResults.get(0).status())) {
+            return RetryOutcome.NOTHING_TO_RETRY;
+        }
+        RetryParse parse = parseResults.get(0);
+        String jobStatus = jdbc.queryForObject(
+                "SELECT status FROM async_job WHERE id = ? FOR UPDATE", String.class, parse.jobId());
+        if (isActiveJob(jobStatus)) {
+            return RetryOutcome.ALREADY_PROCESSING;
+        }
+        if (!"FAILED".equals(jobStatus)) {
+            return RetryOutcome.NOTHING_TO_RETRY;
+        }
+        reopenJob(parse.jobId(), "TEXT_EXTRACTION", scheduledAt);
+        jdbc.update("""
+                UPDATE asset_parse_result
+                   SET status = 'QUEUED', chunk_count = 0, plain_text_sha256 = NULL,
+                       safe_error_code = NULL, completed_at = NULL,
+                       row_version = row_version + 1
+                 WHERE id = ? AND status = 'FAILED'
+                """, parse.id());
+        jdbc.update("""
+                UPDATE asset_version
+                   SET status = 'PROCESSING', active_parse_result_id = NULL,
+                       rag_status = CASE
+                           WHEN rag_policy = 'AUTO' THEN 'PENDING'
+                           WHEN rag_policy = 'DISABLED' THEN 'DISABLED'
+                           ELSE 'NOT_INDEXED'
+                       END,
+                       rag_error_code = NULL, indexed_at = NULL,
+                       row_version = row_version + 1
+                 WHERE id = ? AND status = 'FAILED'
+                """, version.versionId());
+        return RetryOutcome.PARSE_REQUEUED;
+    }
+
+    private RetryOutcome retryIndex(RetryVersion version, LocalDateTime scheduledAt) {
+        if (!"FAILED".equals(version.ragStatus())) {
+            return "PENDING".equals(version.ragStatus()) || "INDEXING".equals(version.ragStatus())
+                    ? RetryOutcome.ALREADY_PROCESSING
+                    : RetryOutcome.NOTHING_TO_RETRY;
+        }
+        List<Long> failedEmbeddingIds = jdbc.query("""
+                SELECT er.id
+                  FROM embedding_record er
+                  JOIN document_chunk chunk ON chunk.id = er.chunk_id
+                  JOIN model_definition model ON model.id = er.model_definition_id
+                 WHERE chunk.parse_result_id = ?
+                   AND er.embedding_version = ?
+                   AND er.index_name = ?
+                   AND model.model_key = ?
+                   AND er.status = 'FAILED'
+                 FOR UPDATE
+                """, (rs, rowNum) -> rs.getLong(1), version.activeParseResultId(),
+                properties.getIndexing().getEmbeddingVersion(),
+                properties.getIndexing().getIndexName(),
+                properties.getIndexing().getModelKey());
+        if (failedEmbeddingIds.isEmpty()) {
+            return RetryOutcome.NOTHING_TO_RETRY;
+        }
+        int activeJobs = jdbc.queryForObject("""
+                SELECT COUNT(*)
+                  FROM async_job job
+                  JOIN document_chunk chunk ON chunk.external_id = job.aggregate_external_id
+                  JOIN embedding_record er ON er.chunk_id = chunk.id
+                 WHERE er.id IN (%s)
+                   AND job.job_type = 'FILE_INDEX'
+                   AND job.status IN ('QUEUED', 'RUNNING', 'RETRY_WAIT')
+                """.formatted(placeholders(failedEmbeddingIds.size())), Integer.class,
+                failedEmbeddingIds.toArray());
+        if (activeJobs > 0) {
+            return RetryOutcome.ALREADY_PROCESSING;
+        }
+        jdbc.update("""
+                UPDATE embedding_record
+                   SET status = 'PENDING', indexed_at = NULL, deleted_at = NULL,
+                       row_version = row_version + 1
+                 WHERE id IN (%s) AND status = 'FAILED'
+                """.formatted(placeholders(failedEmbeddingIds.size())), failedEmbeddingIds.toArray());
+        jdbc.update("""
+                UPDATE async_job job
+                JOIN document_chunk chunk ON chunk.external_id = job.aggregate_external_id
+                JOIN embedding_record er ON er.chunk_id = chunk.id
+                   SET job.status = 'RETRY_WAIT', job.stage_key = 'VECTOR_INDEXING',
+                       job.progress_current = 0, job.progress_total = 1,
+                       job.scheduled_at = ?, job.started_at = NULL, job.heartbeat_at = NULL,
+                       job.finished_at = NULL, job.error_code = NULL,
+                       job.safe_error_message = NULL, job.lease_owner = NULL,
+                       job.lease_expires_at = NULL,
+                       job.max_attempts = GREATEST(job.max_attempts, job.attempt_count + 3),
+                       job.row_version = job.row_version + 1
+                 WHERE er.id IN (%s)
+                   AND job.job_type = 'FILE_INDEX' AND job.status = 'FAILED'
+                """.formatted(placeholders(failedEmbeddingIds.size())),
+                prepend(scheduledAt, failedEmbeddingIds));
+        jdbc.update("""
+                UPDATE asset_version
+                   SET rag_status = 'INDEXING', rag_error_code = NULL, indexed_at = NULL,
+                       row_version = row_version + 1
+                 WHERE id = ? AND status = 'READY' AND rag_policy = 'AUTO'
+                """, version.versionId());
+        return RetryOutcome.INDEX_REQUEUED;
+    }
+
+    private void reopenJob(long jobId, String stageKey, LocalDateTime scheduledAt) {
+        jdbc.update("""
+                UPDATE async_job
+                   SET status = 'RETRY_WAIT', stage_key = ?, progress_current = 0,
+                       progress_total = 1, scheduled_at = ?, started_at = NULL,
+                       heartbeat_at = NULL, finished_at = NULL, error_code = NULL,
+                       safe_error_message = NULL, lease_owner = NULL, lease_expires_at = NULL,
+                       max_attempts = GREATEST(max_attempts, attempt_count + 3),
+                       row_version = row_version + 1
+                 WHERE id = ? AND status = 'FAILED'
+                """, stageKey, scheduledAt, jobId);
+    }
+
+    private boolean isActiveJob(String status) {
+        return "QUEUED".equals(status) || "RUNNING".equals(status) || "RETRY_WAIT".equals(status);
+    }
+
+    private String placeholders(int size) {
+        return String.join(",", java.util.Collections.nCopies(size, "?"));
+    }
+
+    private Object[] prepend(Object first, List<Long> values) {
+        Object[] args = new Object[values.size() + 1];
+        args[0] = first;
+        for (int index = 0; index < values.size(); index++) {
+            args[index + 1] = values.get(index);
+        }
+        return args;
+    }
+
     private Optional<StorageTarget> findStorageForUpdate(String storageExternalId) {
         return jdbc.query("""
                 SELECT id, external_id, status, object_key_ciphertext, mime_type, size_bytes
@@ -406,6 +597,28 @@ public class AssetProcessingRepository {
     }
 
     private record AssetVersionTarget(long id, String externalId, long userId, String status) {
+    }
+
+    private record RetryVersion(
+            String assetStatus,
+            long versionId,
+            String versionExternalId,
+            String versionStatus,
+            Long activeParseResultId,
+            String ragPolicy,
+            String ragStatus) {
+    }
+
+    private record RetryParse(long id, long jobId, String status) {
+    }
+
+    public enum RetryOutcome {
+        PARSE_REQUEUED,
+        INDEX_REQUEUED,
+        ALREADY_PROCESSING,
+        NOTHING_TO_RETRY,
+        ASSET_NOT_ACTIVE,
+        NOT_FOUND
     }
 
     public record ParseTarget(

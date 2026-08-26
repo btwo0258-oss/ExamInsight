@@ -1,7 +1,7 @@
 import DOMPurify from 'dompurify'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github.css'
-import { Marked, type Tokens } from 'marked'
+import { Marked } from 'marked'
 import { markedHighlight } from 'marked-highlight'
 
 function escapeHtml(value: string) {
@@ -38,7 +38,7 @@ const markedInstance = new Marked(
     breaks: true,
     gfm: true,
     renderer: {
-      html(token: Tokens.HTML) {
+      html(token) {
         return escapeHtml(token.text)
       },
     },

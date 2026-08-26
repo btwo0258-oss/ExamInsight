@@ -1,398 +1,52 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
-import { useMessageStore } from '@/stores/message'
-import type { ChatMessage } from '@/stores/message'
-import type { ConversationId } from '@/types/contracts/conversation'
+import { computed } from 'vue'
+import type { ChatMessage } from '@/types/contracts/chatV2'
 
-type Props = { 
-  conversationId: ConversationId | null 
-  containerRef?: HTMLElement | null
-}
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<{
+  messages: ChatMessage[]
+  activeIndex?: number
+}>(), { activeIndex: 0 })
 
-const messageStore = useMessageStore()
-const isHover = ref(false)
-const activeIndex = ref(0)
-const isClicking = ref(false)
-
-const tooltipContent = ref('')
-const tooltipVisible = ref(false)
-const tooltipPos = ref({ top: 0, left: 0 })
-
-let clickTimer: number | null = null
-let tooltipFrame: number | null = null
-let tooltipAnchor: HTMLElement | null = null
-
-function throttle(fn: Function, delay: number) {
-  let lastTime = 0
-  return function(this: any, ...args: any) {
-    const now = Date.now()
-    if (now - lastTime >= delay) {
-      lastTime = now
-      fn.apply(this, args)
-    }
-  }
-}
-
-const segments = computed(() => {
-  if (!props.conversationId) return []
-  const allMessages = messageStore.getMessages(props.conversationId)
-  
-  // 过滤出当前显示的激活版本消息 (逻辑与 MessageArea 保持一致)
-  const visibleMessages = allMessages.filter(m => {
-    if (!m.turnId) return true // 兼容旧消息
-    
-    const activeQ = messageStore.getActiveQVersion(props.conversationId!, m.turnId)
-    
-    if (m.role === 'user') {
-      return m.qVersion === activeQ
-    } else {
-      const activeA = messageStore.getActiveAVersion(props.conversationId!, m.turnId, activeQ)
-      return m.qVersion === activeQ && m.aVersion === activeA
-    }
-  })
-
-  return visibleMessages
-    .filter((m: ChatMessage) => m.role === 'user')
-    .map((m: ChatMessage, index: number) => ({
-      id: m.id,
-      index,
-      preview: m.content.slice(0, 15) + (m.content.length > 15 ? '...' : ''),
-      fullContent: m.content,
-    }))
-})
-
-const isCompact = computed(() => segments.value.length < 10)
-
-function showTooltip(e: MouseEvent, content: string) {
-  tooltipAnchor = e.currentTarget as HTMLElement
-  tooltipContent.value = content
-  tooltipVisible.value = false
-  if (tooltipFrame !== null) cancelAnimationFrame(tooltipFrame)
-  tooltipFrame = requestAnimationFrame(syncTooltipPosition)
-}
-
-function syncTooltipPosition() {
-  if (!tooltipAnchor || !isHover.value) {
-    tooltipFrame = null
-    return
-  }
-
-  const rect = tooltipAnchor.getBoundingClientRect()
-  tooltipPos.value = {
-    top: rect.top + rect.height / 2,
-    left: rect.left - 8,
-  }
-  tooltipVisible.value = true
-  tooltipFrame = requestAnimationFrame(syncTooltipPosition)
-}
-
-function hideTooltip() {
-  tooltipAnchor = null
-  tooltipVisible.value = false
-  if (tooltipFrame !== null) cancelAnimationFrame(tooltipFrame)
-  tooltipFrame = null
-}
-
-function closeOutline() {
-  isHover.value = false
-  hideTooltip()
-}
-
-function scrollTo(id: string, index: number) {
-  activeIndex.value = index
-  isClicking.value = true
-  if (clickTimer) clearTimeout(clickTimer)
-  
-  const targetId = `msg-${id}`
-  const el = document.getElementById(targetId)
-  
-  if (el) {
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    clickTimer = window.setTimeout(() => {
-      isClicking.value = false
-    }, 800)
-  }
-}
-
-function getScrollContainer(): HTMLElement | null {
-  if (props.containerRef) return props.containerRef
-  return document.querySelector('.message-list')
-}
-
-const updateActiveIndex = throttle(() => {
-  if (isClicking.value) return
-  const container = getScrollContainer()
-  if (!container || segments.value.length === 0) return
-
-  const containerRect = container.getBoundingClientRect()
-  const containerCenter = containerRect.top + containerRect.height / 2
-  
-  let closestIndex = 0
-  let minDiff = Infinity
-
-  segments.value.forEach((segment, i) => {
-    const el = document.getElementById(`msg-${segment.id}`)
-    if (el) {
-      const rect = el.getBoundingClientRect()
-      const elementCenter = rect.top + rect.height / 2
-      const diff = Math.abs(elementCenter - containerCenter)
-      if (diff < minDiff) {
-        minDiff = diff
-        closestIndex = i
-      }
-    }
-  })
-  
-  activeIndex.value = closestIndex
-}, 100)
-
-let scrollContainer: HTMLElement | null = null
-
-onMounted(() => {
-  nextTick(() => {
-    scrollContainer = getScrollContainer()
-    if (scrollContainer) {
-      scrollContainer.addEventListener('scroll', updateActiveIndex)
-      updateActiveIndex()
-    }
-  })
-})
-
-watch(
-  () => segments.value.length,
-  (newLen, oldLen) => {
-    if (newLen > oldLen && oldLen > 0) {
-      nextTick(() => {
-        const lastSegment = segments.value[segments.value.length - 1]
-        if (lastSegment) {
-          scrollTo(lastSegment.id, lastSegment.index)
-          activeIndex.value = lastSegment.index
-        }
-      })
-    }
-  }
-)
-
-watch(
-  () => segments.value.map(s => s.id).join(','),
-  () => {
-    nextTick(() => {
-      updateActiveIndex()
-    })
-  }
-)
-
-onUnmounted(() => {
-  if (clickTimer) clearTimeout(clickTimer)
-  hideTooltip()
-  scrollContainer?.removeEventListener('scroll', updateActiveIndex)
-})
+const emit = defineEmits<{ navigate: [messageId: string, index: number] }>()
+const segments = computed(() => props.messages
+  .filter(message => message.role === 'USER')
+  .map((message, index) => ({
+    id: message.id,
+    index,
+    preview: message.content.trim().replace(/\s+/g, ' ') || `第 ${index + 1} 个问题`,
+  })))
 </script>
 
 <template>
-  <div 
-    class="ds-outline-root"
-    :class="{ 'is-hovered': isHover, 'is-compact': isCompact }"
-    @mouseenter="isHover = true"
-    @mouseleave="closeOutline"
-  >
-    <div class="outline-wrapper">
-      <div class="outline-scroll-viewport">
-        <div
-          v-for="(seg, idx) in segments"
-          :key="seg.id"
-          class="outline-row"
-          :class="{ 'is-active': idx === activeIndex }"
-          @click.stop="scrollTo(seg.id, idx)"
-          @mouseenter="showTooltip($event, seg.fullContent)"
-          @mouseleave="hideTooltip"
-        >
-          <span class="row-text">{{ seg.preview }}</span>
-          
-          <div class="row-indicator">
-            <div class="dash-line"></div>
-          </div>
-        </div>
-      </div>
+  <nav v-if="segments.length" class="segment-panel" aria-label="对话问题导航">
+    <div class="segment-list">
+      <button
+        v-for="segment in segments"
+        :key="segment.id"
+        type="button"
+        :class="{ active: segment.index === activeIndex }"
+        :title="segment.preview"
+        @click="emit('navigate', segment.id, segment.index)"
+      >
+        <span>{{ segment.preview }}</span>
+        <i />
+      </button>
     </div>
-  </div>
-
-  <Teleport to="body">
-    <div 
-      v-if="isHover && tooltipVisible" 
-      class="simple-tooltip"
-      :style="{
-        top: tooltipPos.top + 'px',
-        left: tooltipPos.left + 'px'
-      }"
-    >
-      {{ tooltipContent.slice(0, 500) }}{{ tooltipContent.length > 500 ? '...' : '' }}
-    </div>
-  </Teleport>
+  </nav>
 </template>
 
 <style scoped>
-.ds-outline-root {
-  position: fixed;
-  right: 12px;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 1000;
-  width: 36px;
-  transition: width 0.42s cubic-bezier(0.2, 0.8, 0.2, 1);
-  display: flex;
-  justify-content: flex-end;
-}
-
-.ds-outline-root.is-hovered {
-  width: 220px;
-}
-
-.outline-wrapper {
-  width: 36px;
-  height: 360px;
-  background: color-mix(in srgb, var(--color-surface) 62%, transparent);
-  border: 1px solid transparent;
-  border-radius: 12px;
-  box-shadow: none;
-  transform-origin: right center;
-  transition:
-    width 0.42s cubic-bezier(0.2, 0.8, 0.2, 1),
-    background 0.34s ease,
-    border-color 0.34s ease,
-    box-shadow 0.34s ease;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.is-compact .outline-wrapper {
-  height: auto;
-  max-height: 400px;
-}
-
-.is-hovered .outline-wrapper {
-  width: 220px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  box-shadow: var(--shadow-lg);
-}
-
-.outline-scroll-viewport {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 6px 0;
-  scrollbar-width: none;
-  transition: padding 0.34s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.is-hovered .outline-scroll-viewport {
-  padding: 10px 0;
-}
-
-.ds-outline-root:not(.is-compact) .outline-scroll-viewport {
-  height: 340px;
-}
-
-.outline-row {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  height: 22px;
-  padding: 0 7px 0 16px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition:
-    height 0.34s cubic-bezier(0.2, 0.8, 0.2, 1),
-    padding 0.34s cubic-bezier(0.2, 0.8, 0.2, 1),
-    background 0.2s;
-}
-
-.is-hovered .outline-row {
-  justify-content: space-between;
-  height: 32px;
-  padding: 0 8px 0 16px;
-}
-
-.is-hovered .outline-row:hover {
-  background: var(--color-hover-strong);
-}
-
-.row-text {
-  font-size: 13px;
-  color: var(--color-text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin-right: 12px;
-  flex: 1;
-  max-width: 0;
-  opacity: 0;
-  transform: translateX(8px);
-  transition:
-    max-width 0.34s cubic-bezier(0.2, 0.8, 0.2, 1),
-    opacity 0.2s ease 0.18s,
-    transform 0.26s ease 0.14s;
-}
-
-.is-hovered .row-text {
-  max-width: 170px;
-  opacity: 1;
-  transform: translateX(0);
-}
-
-.is-hovered .outline-row:hover .row-text { color: var(--color-text); }
-.is-active .row-text { color: var(--color-text); font-weight: 600; }
-
-.row-indicator {
-  width: 20px;
-  display: flex;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.dash-line {
-  width: 12px;
-  height: 3px;
-  background: color-mix(in srgb, var(--color-text-muted) 50%, transparent);
-  border-radius: 2px;
-  transition: all 0.2s;
-}
-
-.is-hovered .outline-row:hover .dash-line {
-  width: 16px;
-  height: 4px;
-  background: var(--color-text-muted);
-}
-.is-active .dash-line { background: var(--color-text) !important; width: 20px; height: 4px; }
-
-.outline-scroll-viewport::-webkit-scrollbar { width: 0px; }
-</style>
-
-<style>
-/* 简洁圆角矩形 Tooltip，无箭头 */
-.simple-tooltip {
-  position: fixed;
-  z-index: 9999;
-  background: var(--color-tooltip-bg);
-  color: var(--color-tooltip-text);
-  padding: 10px 14px;
-  border-radius: 8px;
-  font-size: 13px;
-  line-height: 1.6;
-  pointer-events: none;
-  box-shadow: var(--shadow-md);
-  
-  /* 定位：向左对齐，垂直居中 */
-  transform: translate(-100%, -50%);
-  
-  /* 文本换行 */
-  max-width: 300px;
-  min-width: 80px;
-  word-break: break-all;
-  overflow-wrap: break-word;
-  white-space: normal;
-}
-
+.segment-panel { position: fixed; top: 50%; right: 12px; z-index: 40; width: 38px; transform: translateY(-50%); transition: width .28s ease; }
+.segment-panel:hover, .segment-panel:focus-within { width: 220px; }
+.segment-list { max-height: min(420px, 62vh); padding: 7px 0; overflow: auto; border: 1px solid transparent; border-radius: 13px; background: color-mix(in srgb, var(--color-surface) 68%, transparent); scrollbar-width: none; transition: background .25s ease, border-color .25s ease, box-shadow .25s ease; }
+.segment-panel:hover .segment-list, .segment-panel:focus-within .segment-list { border-color: var(--color-border); background: var(--color-surface); box-shadow: var(--shadow-lg); }
+button { display: flex; width: 100%; height: 27px; padding: 0 7px 0 14px; align-items: center; justify-content: flex-end; border: 0; color: var(--color-text-muted); background: transparent; cursor: pointer; }
+button:hover { color: var(--color-text); background: var(--color-hover-strong); }
+button span { flex: 1; max-width: 0; margin-right: 10px; overflow: hidden; opacity: 0; text-align: left; text-overflow: ellipsis; white-space: nowrap; transition: max-width .28s ease, opacity .18s ease; }
+.segment-panel:hover button span, .segment-panel:focus-within button span { max-width: 168px; opacity: 1; }
+button i { display: block; width: 12px; height: 3px; flex: 0 0 auto; border-radius: 3px; background: color-mix(in srgb, var(--color-text-muted) 55%, transparent); transition: width .2s ease, height .2s ease, background .2s ease; }
+button.active { color: var(--color-text); font-weight: 600; }
+button.active i { width: 21px; height: 4px; background: var(--color-text); }
+.segment-list::-webkit-scrollbar { display: none; }
+@media (max-width: 900px) { .segment-panel { display: none; } }
 </style>

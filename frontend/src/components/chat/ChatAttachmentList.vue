@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, watch } from 'vue'
-import { AlertCircle, File, LoaderCircle, X } from 'lucide-vue-next'
+import { AlertCircle, File, LoaderCircle, RotateCcw, X } from 'lucide-vue-next'
 
 import { fetchAssetContent } from '@/api/assetLibraryV2'
 
@@ -11,6 +11,7 @@ type AttachmentItem = {
   mimeType: string
   sizeBytes: number
   status?: 'uploading' | 'processing' | 'ready' | 'failed'
+  indexStatus?: string
   progress?: number
   error?: string
   previewUrl?: string
@@ -27,6 +28,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   remove: [key: string]
+  retry: [key: string]
   open: [assetId: string]
 }>()
 
@@ -41,6 +43,17 @@ function formatSize(value: number) {
   if (value < 1024) return `${value} B`
   if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`
   return `${(value / 1024 / 1024).toFixed(value < 10 * 1024 * 1024 ? 1 : 0)} MB`
+}
+
+function indexStatusLabel(item: AttachmentItem) {
+  if (item.indexStatus === 'PROCESSING') return '可使用 · 正在向量化'
+  if (item.indexStatus === 'DEGRADED') return '可使用 · 已降级为关键词检索'
+  if (item.indexStatus === 'KEYWORD_ONLY') return '可使用 · 关键词检索'
+  return formatSize(item.sizeBytes)
+}
+
+function canRetry(item: AttachmentItem) {
+  return Boolean(item.assetId && (item.status === 'failed' || item.indexStatus === 'DEGRADED'))
 }
 
 function previewFor(item: AttachmentItem) {
@@ -98,6 +111,9 @@ onBeforeUnmount(() => {
         <span v-else-if="item.status === 'failed'" class="status-cover failed">
           <AlertCircle :size="20" />
           <small>失败</small>
+          <button v-if="canRetry(item)" type="button" @click.stop="emit('retry', item.key)">
+            <RotateCcw :size="14" />重试
+          </button>
         </span>
         <button
           v-if="removable"
@@ -134,8 +150,15 @@ onBeforeUnmount(() => {
           <small v-if="item.status === 'uploading'">正在上传 · {{ item.progress ?? 0 }}%</small>
           <small v-else-if="item.status === 'processing'">正在处理</small>
           <small v-else-if="item.status === 'failed'">{{ item.error || '处理失败' }}</small>
-          <small v-else>{{ formatSize(item.sizeBytes) }}</small>
+          <small v-else>{{ indexStatusLabel(item) }}</small>
         </span>
+        <button
+          v-if="canRetry(item)"
+          class="retry-button"
+          type="button"
+          :aria-label="`重试处理 ${item.name}`"
+          @click.stop="emit('retry', item.key)"
+        ><RotateCcw :size="14" /></button>
         <button
           v-if="removable"
           class="remove-button"
@@ -163,6 +186,7 @@ onBeforeUnmount(() => {
   color: white; background: rgb(0 0 0 / 48%);
 }
 .status-cover.failed { color: #fff; background: rgb(145 34 28 / 72%); }
+.status-cover button { display: flex; align-items: center; gap: 4px; padding: 4px 8px; border: 0; border-radius: 10px; color: inherit; background: rgb(255 255 255 / 18%); cursor: pointer; }
 .file-grid { display: flex; flex-wrap: wrap; gap: 8px; }
 .file-card {
   position: relative; display: flex; width: min(292px, 100%); min-height: 64px; align-items: center; gap: 10px;
@@ -181,6 +205,11 @@ onBeforeUnmount(() => {
 .remove-button {
   position: absolute; top: 6px; right: 6px; display: grid; width: 24px; height: 24px; padding: 0;
   place-items: center; border: 0; border-radius: 50%; color: white; background: rgb(25 25 25 / 80%); cursor: pointer;
+}
+.retry-button {
+  position: absolute; right: 32px; bottom: 6px; display: grid; width: 24px; height: 24px; padding: 0;
+  place-items: center; border: 0; border-radius: 50%; color: var(--color-text-muted);
+  background: var(--color-surface); cursor: pointer;
 }
 .compact .image-grid { grid-template-columns: repeat(2, minmax(0, 132px)); }
 .compact .image-grid.count-1 { grid-template-columns: minmax(110px, 200px); }

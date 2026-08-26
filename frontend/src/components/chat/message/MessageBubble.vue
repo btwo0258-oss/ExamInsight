@@ -5,7 +5,7 @@ import { Check, ChevronLeft, ChevronRight, X } from 'lucide-vue-next'
 import ChatAttachmentList from '@/components/chat/ChatAttachmentList.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import MessageActions from './MessageActions.vue'
-import type { ChatMessage, MessageVersionGroup } from '@/types/contracts/chatV2'
+import type { ChatMessage, Citation, MessageVersionGroup } from '@/types/contracts/chatV2'
 
 const props = withDefaults(defineProps<{
   message: ChatMessage
@@ -26,6 +26,7 @@ const emit = defineEmits<{
   speak: [message: ChatMessage]
   switchVersion: [branchId: string]
   openAsset: [assetId: string]
+  openCitation: [citation: Citation]
 }>()
 
 const editing = ref(false)
@@ -101,7 +102,7 @@ function switchRelative(offset: number) {
           :key="citation.chunkId"
           type="button"
           :title="citation.quotedText"
-          @click="emit('openAsset', citation.assetId)"
+          @click="emit('openCitation', citation)"
         >
           {{ citation.number }}. {{ citation.assetName }}
           <small v-if="citation.locator">{{ citation.locator }}</small>
@@ -121,7 +122,7 @@ function switchRelative(offset: number) {
           @regenerate="emit('regenerate', message.id)"
           @speak="emit('speak', message)"
         />
-        <div v-if="versionGroup && versionIndex >= 0" class="version-nav" aria-label="消息版本切换">
+        <div v-if="versionGroup && versionGroup.versions.length > 1 && versionIndex >= 0" class="version-nav" aria-label="消息版本切换">
           <button type="button" title="上一个版本" :disabled="busy || versionIndex === 0" @click="switchRelative(-1)">
             <ChevronLeft :size="15" />
           </button>

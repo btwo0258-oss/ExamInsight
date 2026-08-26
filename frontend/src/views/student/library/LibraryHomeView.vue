@@ -14,6 +14,7 @@ import {
   addAssetToKnowledgeBase,
   fetchAssetContent,
   getAssetPurgeJob,
+  retryAssetProcessing,
 } from "@/api/assetLibraryV2";
 import { useAssetLibraryV2Store } from "@/stores/assetLibraryV2";
 import type {
@@ -356,6 +357,23 @@ function assetStatus(asset: V2LibraryAsset) {
   return { label: "向量化中", tone: "pending" };
 }
 
+function canRetryAsset(asset: V2LibraryAsset) {
+  return asset.version?.status === "FAILED" || asset.version?.indexStatus === "DEGRADED";
+}
+
+async function retryProcessing(asset: V2LibraryAsset) {
+  actionError.value = "";
+  notice.value = "";
+  closeFileMenu();
+  try {
+    const detail = await retryAssetProcessing(asset.assetId);
+    store.upsertUploadedAsset(detail.asset);
+    notice.value = "已重新提交处理，可继续浏览资料库。";
+  } catch (error) {
+    actionError.value = error instanceof Error ? error.message : "重新处理资料失败";
+  }
+}
+
 function isReadable(asset: V2LibraryAsset) {
   return ["PROCESSING", "READY", "FAILED"].includes(asset.version?.status ?? "");
 }
@@ -679,7 +697,8 @@ function startRefreshTimer() {
     if (
       store.assets.some(
         (asset) =>
-          !["READY", "FAILED", "REJECTED", "WITHDRAWN"].includes(asset.version?.status || ""),
+          !["READY", "FAILED", "REJECTED", "WITHDRAWN"].includes(asset.version?.status || "") ||
+          asset.version?.indexStatus === "PROCESSING",
       )
     ) {
       void store.loadAssets("library").catch(() => undefined);
@@ -970,6 +989,7 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer));
                   </template>
                   <template v-else>
                     <button class="ui-menu-item" type="button" @click="downloadFiles([asset]); closeFileMenu()"><span class="ui-menu-icon"><AppIcon name="download" :size="16" /></span>下载</button>
+                    <button v-if="canRetryAsset(asset.source.raw)" class="ui-menu-item" type="button" @click="retryProcessing(asset.source.raw)"><span class="ui-menu-icon"><AppIcon name="refresh-cw" :size="16" /></span>重新处理</button>
                     <button class="ui-menu-item" type="button" @click="renameAsset(asset)"><span class="ui-menu-icon"><AppIcon name="edit" :size="16" /></span>重命名</button>
                     <button class="ui-menu-item" type="button" @click="openMoveForAsset(asset)"><span class="ui-menu-icon"><AppIcon name="folder-move" :size="16" /></span>加入知识库</button>
                     <div class="ui-menu-divider" />
@@ -1032,6 +1052,7 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer));
               </template>
               <template v-else>
                 <button class="ui-menu-item" type="button" @click="downloadFiles([asset]); closeFileMenu()"><span class="ui-menu-icon"><AppIcon name="download" :size="16" /></span>下载</button>
+                <button v-if="canRetryAsset(asset.source.raw)" class="ui-menu-item" type="button" @click="retryProcessing(asset.source.raw)"><span class="ui-menu-icon"><AppIcon name="refresh-cw" :size="16" /></span>重新处理</button>
                 <button class="ui-menu-item" type="button" @click="renameAsset(asset)"><span class="ui-menu-icon"><AppIcon name="edit" :size="16" /></span>重命名</button>
                 <button class="ui-menu-item" type="button" @click="openMoveForAsset(asset)"><span class="ui-menu-icon"><AppIcon name="folder-move" :size="16" /></span>加入知识库</button>
                 <div class="ui-menu-divider" />

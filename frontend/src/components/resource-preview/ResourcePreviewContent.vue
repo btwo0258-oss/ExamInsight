@@ -20,6 +20,7 @@ const props = defineProps<{
   presentationData: ArrayBuffer | null;
   wordHtml: string;
   textHtml: string;
+  initialPage?: number;
 }>();
 
 const emit = defineEmits<{
@@ -39,6 +40,7 @@ const learningMindMapTree = computed(
   <PptxPageReader
     v-if="preview.previewKind === 'presentation' && presentationData"
     :data="presentationData"
+    :initial-page="initialPage"
   />
 
   <div
@@ -152,6 +154,7 @@ const learningMindMapTree = computed(
     v-else-if="preview.previewKind === 'image' && preview.previewUrl"
     class="image-document"
     :src="preview.previewUrl"
+    :initial-page="initialPage"
     :alt="resourceName"
   />
   <article

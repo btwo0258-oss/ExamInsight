@@ -237,7 +237,7 @@ export const useChatV2Store = defineStore('chatV2', () => {
       ])
       activeConversation.value = detail.conversation
       messages.value = detail.messages
-      versionGroups.value = detail.versionGroups
+      versionGroups.value = detail.versionGroups ?? []
       artifacts.value = artifactItems
       upsert(conversations.value, detail.conversation, value => value.id)
       const running = [...detail.messages].reverse().find(message =>
@@ -299,7 +299,7 @@ export const useChatV2Store = defineStore('chatV2', () => {
         ])
         activeConversation.value = detail.conversation
         messages.value = detail.messages
-        versionGroups.value = detail.versionGroups
+        versionGroups.value = detail.versionGroups ?? []
         artifacts.value = artifactItems
         upsert(conversations.value, detail.conversation, value => value.id)
       }
@@ -454,7 +454,7 @@ export const useChatV2Store = defineStore('chatV2', () => {
       const detail = await api.getConversation(conversation.id)
       activeConversation.value = detail.conversation
       messages.value = detail.messages
-      versionGroups.value = detail.versionGroups
+      versionGroups.value = detail.versionGroups ?? []
       upsert(conversations.value, detail.conversation, value => value.id)
       await connectStream(accepted.runId, accepted.assistantMessageId)
       return accepted
@@ -490,7 +490,7 @@ export const useChatV2Store = defineStore('chatV2', () => {
       const detail = await api.activateBranch(conversation.id, branchId)
       activeConversation.value = detail.conversation
       messages.value = detail.messages
-      versionGroups.value = detail.versionGroups
+      versionGroups.value = detail.versionGroups ?? []
       upsert(conversations.value, detail.conversation, value => value.id)
     } catch (cause) {
       error.value = api.chatError(cause, '切换消息版本失败。').message

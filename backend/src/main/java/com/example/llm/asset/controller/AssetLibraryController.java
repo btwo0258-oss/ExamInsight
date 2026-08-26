@@ -5,6 +5,7 @@ import com.example.llm.asset.api.AssetApiException;
 import com.example.llm.asset.service.AssetContentService;
 import com.example.llm.asset.service.AssetPreviewService;
 import com.example.llm.asset.service.LibraryApplicationService;
+import com.example.llm.asset.processing.service.AssetProcessingRetryService;
 import com.example.llm.common.UserContext;
 import jakarta.validation.Valid;
 import org.springframework.core.io.InputStreamResource;
@@ -32,14 +33,17 @@ public class AssetLibraryController {
     private final LibraryApplicationService library;
     private final AssetContentService contentService;
     private final AssetPreviewService previewService;
+    private final AssetProcessingRetryService processingRetryService;
 
     public AssetLibraryController(
             LibraryApplicationService library,
             AssetContentService contentService,
-            AssetPreviewService previewService) {
+            AssetPreviewService previewService,
+            AssetProcessingRetryService processingRetryService) {
         this.library = library;
         this.contentService = contentService;
         this.previewService = previewService;
+        this.processingRetryService = processingRetryService;
     }
 
     @GetMapping
@@ -77,6 +81,13 @@ public class AssetLibraryController {
     @PostMapping("/{assetId}/restore")
     public LibraryDtos.AssetItem restore(@PathVariable String assetId) {
         return library.restoreAsset(UserContext.requireSession().userId(), assetId);
+    }
+
+    @PostMapping("/{assetId}/processing/retry")
+    public LibraryDtos.AssetDetail retryProcessing(@PathVariable String assetId) {
+        long userId = UserContext.requireSession().userId();
+        processingRetryService.retry(userId, assetId);
+        return library.getAsset(userId, assetId);
     }
 
     @DeleteMapping("/{assetId}")

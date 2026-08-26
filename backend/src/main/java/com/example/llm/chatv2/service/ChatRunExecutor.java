@@ -182,7 +182,7 @@ public class ChatRunExecutor {
         }
     }
 
-    private List<CitationSource> citedSources(String answer, List<Source> sources) {
+    static List<CitationSource> citedSources(String answer, List<Source> sources) {
         Set<Integer> citedNumbers = new LinkedHashSet<>();
         Matcher matcher = CITATION_PATTERN.matcher(answer);
         while (matcher.find()) {
@@ -202,7 +202,7 @@ public class ChatRunExecutor {
         return List.copyOf(citations);
     }
 
-    private String locator(Source source) {
+    private static String locator(Source source) {
         if (source.pageFrom() != null) {
             return source.pageFrom().equals(source.pageTo())
                     ? "第 " + source.pageFrom() + " 页"

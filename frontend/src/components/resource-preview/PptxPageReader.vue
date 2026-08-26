@@ -3,7 +3,7 @@ import { nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { init } from "pptx-preview";
 import type PPTXPreviewer from "pptx-preview/dist/previewer";
 
-const props = defineProps<{ data: ArrayBuffer }>();
+const props = defineProps<{ data: ArrayBuffer; initialPage?: number }>();
 const container = ref<HTMLElement | null>(null);
 const loading = ref(true);
 const errorMessage = ref("");
@@ -19,6 +19,7 @@ function decorateSlides(target: HTMLElement) {
     const frame = document.createElement("article");
     frame.className = "pptx-page-frame";
     frame.setAttribute("aria-label", `第 ${index + 1} 页`);
+    frame.dataset.pptxPage = String(index + 1);
 
     const label = document.createElement("div");
     label.className = "pptx-page-label";
@@ -26,6 +27,15 @@ function decorateSlides(target: HTMLElement) {
 
     slide.before(frame);
     frame.append(label, slide);
+  });
+}
+
+function locateInitialPage() {
+  if (!props.initialPage) return;
+  window.requestAnimationFrame(() => {
+    container.value
+      ?.querySelector<HTMLElement>(`[data-pptx-page="${props.initialPage}"]`)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
   });
 }
 
@@ -50,7 +60,10 @@ async function render() {
     const value = init(target, { width, mode: "list" });
     previewer = value;
     await value.preview(props.data.slice(0));
-    if (sequence === renderSequence) decorateSlides(target);
+    if (sequence === renderSequence) {
+      decorateSlides(target);
+      locateInitialPage();
+    }
   } catch (error) {
     destroy();
     if (sequence === renderSequence) {
@@ -62,6 +75,7 @@ async function render() {
 }
 
 watch(() => props.data, () => void render(), { immediate: true });
+watch(() => props.initialPage, locateInitialPage);
 
 onBeforeUnmount(() => {
   renderSequence += 1;

@@ -83,14 +83,14 @@ class AssetRetrievalServiceIntegrationTest {
                 new VectorSearchGateway.VectorHit(physics.chunkExternalId(), 0.95),
                 new VectorSearchGateway.VectorHit(math.chunkExternalId(), 0.91),
                 new VectorSearchGateway.VectorHit(duplicateMath.chunkExternalId(), 0.90)));
-        QueryEmbeddingGateway embeddings = query -> java.util.Collections.nCopies(2560, 0.01f);
+        QueryEmbeddingGateway embeddings = query -> java.util.Collections.nCopies(1024, 0.01f);
         AssetRetrievalService service = new AssetRetrievalService(
                 repository, embeddings, vectors, retrieval, new ObjectMapper());
 
         Bundle personal = service.retrieve(
                 owner,
                 new Request("解释函数极限和牛顿第二定律", Scope.personalLibrary(), 6, 3200));
-        assertThat(personal.mode()).isEqualTo(Mode.SEMANTIC);
+        assertThat(personal.mode()).isEqualTo(Mode.HYBRID);
         assertThat(personal.sources())
                 .extracting(RetrievalModels.Source::assetExternalId)
                 .contains(math.assetExternalId(), physics.assetExternalId())
@@ -104,6 +104,7 @@ class AssetRetrievalServiceIntegrationTest {
         Bundle knowledgeBase = service.retrieve(
                 owner,
                 new Request("解释函数极限", Scope.knowledgeBase(knowledgeBaseExternalId), 6, 3200));
+        assertThat(knowledgeBase.mode()).isEqualTo(Mode.HYBRID);
         assertThat(knowledgeBase.sources())
                 .extracting(RetrievalModels.Source::assetExternalId)
                 .containsExactly(math.assetExternalId());
@@ -218,14 +219,14 @@ class AssetRetrievalServiceIntegrationTest {
 
         if (indexed) {
             long modelId = jdbc.queryForObject(
-                    "SELECT id FROM model_definition WHERE model_key = 'xfyun-llm-embedding-2560'",
+                    "SELECT id FROM model_definition WHERE model_key = 'dashscope-qwen3.7-text-embedding-1024'",
                     Long.class);
             jdbc.update("""
                     INSERT INTO embedding_record (
                         external_id, chunk_id, model_definition_id, embedding_version,
                         index_name, index_document_id, content_sha256, status, indexed_at
-                    ) VALUES (?, ?, ?, 'xfyun-llm-embedding-2560-v1',
-                              'examinsight-v2-chunks-xfyun-2560-v1', ?, ?,
+                    ) VALUES (?, ?, ?, 'dashscope-qwen3.7-text-embedding-1024-v1',
+                              'examinsight-v2-chunks-qwen3.7-embedding-1024-v1', ?, ?,
                               'INDEXED', CURRENT_TIMESTAMP(3))
                     """, externalId(), chunkId, modelId, externalId(), contentHash);
         }

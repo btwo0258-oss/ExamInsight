@@ -1,24 +1,24 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import DOMPurify from 'dompurify'
-import { marked } from 'marked'
 import {
   ArrowUp, FileImage, FileText, Image, LoaderCircle, Network, Paperclip,
-  Plus, Presentation, RotateCcw, Square, Volume2,
+  Plus, Presentation, RotateCcw, Square,
 } from 'lucide-vue-next'
 
 import ChatArtifactCard from '@/components/artifact/ChatArtifactCard.vue'
 import ChatAttachmentList from '@/components/chat/ChatAttachmentList.vue'
 import ChatSourceSelector from '@/components/chat/input/ChatSourceSelector.vue'
+import MessageList from '@/components/chat/message/MessageList.vue'
+import SegmentPanel from '@/components/chat/SegmentPanel.vue'
 import VoiceRecorder from '@/components/capture/VoiceRecorder.vue'
 import StudentShell from '@/components/layout/StudentShell.vue'
-import { getAsset, uploadAsset } from '@/api/assetLibraryV2'
+import { getAsset, retryAssetProcessing, uploadAsset } from '@/api/assetLibraryV2'
 import { synthesizeSpeech } from '@/api/chatV2'
 import { useAssetLibraryV2Store } from '@/stores/assetLibraryV2'
 import { useAuthStore } from '@/stores/auth'
 import { useChatV2Store } from '@/stores/chatV2'
-import type { Artifact, ChatMessage, MessageAttachment } from '@/types/contracts/chatV2'
+import type { Artifact, ChatMessage, Citation, MessageAttachment } from '@/types/contracts/chatV2'
 import type { LibraryAsset } from '@/types/contracts/assetLibraryV2'
 
 type DraftAttachmentStatus = 'uploading' | 'processing' | 'ready' | 'failed'
@@ -31,6 +31,7 @@ type DraftAttachment = {
   mimeType: string
   sizeBytes: number
   status: DraftAttachmentStatus
+  indexStatus?: string
   progress: number
   error?: string
   previewUrl?: string
@@ -46,6 +47,9 @@ const prompt = ref('')
 const selectedKnowledgeBaseId = ref<string | null>(null)
 const draftAttachments = ref<DraftAttachment[]>([])
 const scrollContainer = ref<HTMLElement | null>(null)
+const messageList = ref<InstanceType<typeof MessageList> | null>(null)
+const activeSegmentIndex = ref(0)
+const autoFollowLatest = ref(true)
 const composer = ref<HTMLTextAreaElement | null>(null)
 const generalFileInput = ref<HTMLInputElement | null>(null)
 const imageFileInput = ref<HTMLInputElement | null>(null)
@@ -99,6 +103,7 @@ function draftFromAsset(asset: LibraryAsset): DraftAttachment {
     mimeType: asset.version?.mimeType || 'application/octet-stream',
     sizeBytes: asset.version?.sizeBytes || 0,
     status: assetStatus(asset),
+    indexStatus: asset.version?.indexStatus,
     progress: asset.version?.status === 'READY' ? 100 : 0,
   }
 }
@@ -118,17 +123,6 @@ function clearDraftAttachments(items: DraftAttachment[] = draftAttachments.value
   if (items === draftAttachments.value) draftAttachments.value = []
 }
 
-function attachmentItemsForMessage(message: ChatMessage) {
-  return (message.attachments ?? []).map(item => ({
-    key: item.assetVersionId || item.assetId,
-    assetId: item.assetId,
-    name: item.name,
-    mimeType: item.mimeType,
-    sizeBytes: item.sizeBytes,
-    status: 'ready' as const,
-  }))
-}
-
 async function waitUntilAssetSettled(assetId: string, key: string) {
   for (let attempt = 0; attempt < 75 && !destroyed; attempt += 1) {
     const detail = await getAsset(assetId)
@@ -136,15 +130,16 @@ async function waitUntilAssetSettled(assetId: string, key: string) {
     if (!current) return
     current.mimeType = detail.asset.version?.mimeType || current.mimeType
     current.sizeBytes = detail.asset.version?.sizeBytes || current.sizeBytes
+    current.indexStatus = detail.asset.version?.indexStatus
     const status = assetStatus(detail.asset)
     current.status = status
     if (status === 'ready') {
       current.progress = 100
       assetLibraryStore.upsertUploadedAsset(detail.asset)
-      return
+      if (current.indexStatus !== 'PROCESSING') return
     }
     if (status === 'failed') {
-      current.error = '文件处理失败，请移除后重试。'
+      current.error = '文件处理失败，可以重试。'
       return
     }
     await new Promise(resolve => window.setTimeout(resolve, 1200))
@@ -152,7 +147,25 @@ async function waitUntilAssetSettled(assetId: string, key: string) {
   const current = draftAttachments.value.find(item => item.key === key)
   if (current && current.status === 'processing') {
     current.status = 'failed'
-    current.error = '文件处理超时，请移除后重试。'
+    current.error = '文件处理超时，可以重试。'
+  }
+}
+
+async function retryDraftAttachment(key: string) {
+  const current = draftAttachments.value.find(item => item.key === key)
+  if (!current?.assetId || current.status === 'uploading' || current.status === 'processing') return
+  current.status = 'processing'
+  current.error = undefined
+  current.indexStatus = 'PROCESSING'
+  try {
+    const detail = await retryAssetProcessing(current.assetId)
+    current.status = assetStatus(detail.asset)
+    current.indexStatus = detail.asset.version?.indexStatus
+    assetLibraryStore.upsertUploadedAsset(detail.asset)
+    await waitUntilAssetSettled(current.assetId, key)
+  } catch (error) {
+    current.status = 'failed'
+    current.error = error instanceof Error ? error.message : '重新处理失败。'
   }
 }
 
@@ -244,11 +257,6 @@ function artifactsFor(message: ChatMessage) {
   return chatStore.artifacts.filter(artifact => artifact.runId === message.runId)
 }
 
-function renderMarkdown(content: string) {
-  const html = marked.parse(content || '', { async: false }) as string
-  return DOMPurify.sanitize(html, { USE_PROFILES: { html: true } })
-}
-
 function applyQuickAction(value: string) {
   prompt.value = value
   nextTick(() => {
@@ -316,9 +324,36 @@ async function toggleSpeech(message: ChatMessage) {
   }
 }
 
+async function editMessage(messageId: string, content: string) {
+  stopSpeech()
+  await chatStore.editMessage(messageId, content)
+  await scrollToBottom('smooth')
+}
+
+async function regenerateMessage(messageId: string) {
+  stopSpeech()
+  await chatStore.regenerateMessage(messageId)
+  await scrollToBottom('smooth')
+}
+
+async function switchMessageVersion(branchId: string) {
+  stopSpeech()
+  await chatStore.activateMessageBranch(branchId)
+}
+
+function navigateSegment(messageId: string) {
+  void messageList.value?.scrollToMessage(messageId)
+}
+
 async function scrollToBottom(behavior: ScrollBehavior = 'smooth') {
   await nextTick()
   scrollContainer.value?.scrollTo({ top: scrollContainer.value.scrollHeight, behavior })
+}
+
+function updateAutoFollowLatest() {
+  const element = scrollContainer.value
+  if (!element) return
+  autoFollowLatest.value = element.scrollHeight - element.scrollTop - element.clientHeight < 160
 }
 
 async function applyRouteSources() {
@@ -414,8 +449,17 @@ function openAsset(assetId: string) {
   void router.push({ name: 'resource-preview', params: { resourceId: assetId } })
 }
 
-function openCitation(assetId: string) {
-  openAsset(assetId)
+function openCitation(citation: Citation) {
+  const pageMatch = citation.locator?.match(/第\s*(\d+)\s*页/)
+  void router.push({
+    name: 'resource-preview',
+    params: { resourceId: citation.assetId },
+    query: {
+      returnTo: route.fullPath,
+      ...(pageMatch ? { page: pageMatch[1] } : {}),
+      citation: String(citation.number),
+    },
+  })
 }
 
 function handleComposerKeydown(event: KeyboardEvent) {
@@ -457,14 +501,14 @@ watch(routeConversationId, async (conversationId) => {
 })
 
 watch(() => chatStore.messages.map(message => message.content.length).join(','), () => {
-  void scrollToBottom(chatStore.sending ? 'auto' : 'smooth')
+  if (autoFollowLatest.value) void scrollToBottom(chatStore.sending ? 'auto' : 'smooth')
 })
 </script>
 
 <template>
   <StudentShell>
     <div class="chat-page">
-      <div ref="scrollContainer" class="chat-scroll">
+      <div ref="scrollContainer" class="chat-scroll" @scroll.passive="updateAutoFollowLatest">
         <section v-if="chatStore.loading" class="center-state">
           <LoaderCircle class="spin" :size="24" />
           <span>正在加载对话</span>
@@ -489,50 +533,24 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
           </div>
         </section>
 
-        <section v-else class="message-list" aria-live="polite">
-          <template v-for="message in chatStore.messages" :key="message.id">
-            <article v-if="message.role === 'USER'" class="message-row user-row">
-              <div v-if="message.content" class="user-message">{{ message.content }}</div>
-              <ChatAttachmentList
-                v-if="message.attachments?.length"
-                class="message-attachments user-attachments"
-                :items="attachmentItemsForMessage(message)"
-                compact
-                @open="openAsset"
-              />
-            </article>
-            <article v-else-if="message.role === 'ASSISTANT'" class="message-row assistant-row">
-              <ChatAttachmentList
-                v-if="message.attachments?.length"
-                class="message-attachments"
-                :items="attachmentItemsForMessage(message)"
-                compact
-                @open="openAsset"
-              />
-              <div class="assistant-message markdown-body" v-html="renderMarkdown(message.content)" />
-              <div v-if="message.citations.length" class="citations">
-                <span>参考来源</span>
-                <button
-                  v-for="citation in message.citations"
-                  :key="citation.chunkId"
-                  type="button"
-                  :title="citation.quotedText"
-                  @click="openCitation(citation.assetId)"
-                >{{ citation.number }}. {{ citation.assetName }}<small v-if="citation.locator">{{ citation.locator }}</small></button>
-              </div>
-              <div v-if="message.content && message.finalizedAt" class="message-actions">
-                <button
-                  type="button"
-                  :title="speechPlayingMessageId === message.id ? '停止朗读' : '朗读回答'"
-                  :aria-label="speechPlayingMessageId === message.id ? '停止朗读' : '朗读回答'"
-                  :aria-pressed="speechPlayingMessageId === message.id"
-                  @click="toggleSpeech(message)"
-                >
-                  <LoaderCircle v-if="speechLoadingMessageId === message.id" class="spin" :size="16" />
-                  <Square v-else-if="speechPlayingMessageId === message.id" :size="13" fill="currentColor" />
-                  <Volume2 v-else :size="16" />
-                </button>
-              </div>
+        <section v-else class="conversation-content">
+          <MessageList
+            ref="messageList"
+            :messages="chatStore.messages"
+            :version-groups="chatStore.versionGroups"
+            :busy="chatStore.sending || chatStore.loading"
+            :speech-loading-message-id="speechLoadingMessageId"
+            :speech-playing-message-id="speechPlayingMessageId"
+            :scroll-element="scrollContainer"
+            @edit="editMessage"
+            @regenerate="regenerateMessage"
+            @speak="toggleSpeech"
+            @switch-version="switchMessageVersion"
+            @open-asset="openAsset"
+            @open-citation="openCitation"
+            @active-user-index="activeSegmentIndex = $event"
+          >
+            <template #after-message="{ message }">
               <div v-if="artifactsFor(message).length" class="artifact-list">
                 <ChatArtifactCard
                   v-for="artifact in artifactsFor(message)"
@@ -545,8 +563,8 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
                   @open-asset="openAsset"
                 />
               </div>
-            </article>
-          </template>
+            </template>
+          </MessageList>
 
           <div v-if="chatStore.sending" class="run-status">
             <LoaderCircle class="spin" :size="16" />
@@ -558,6 +576,13 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
           </div>
         </section>
       </div>
+
+      <SegmentPanel
+        v-if="hasMessages"
+        :messages="chatStore.messages"
+        :active-index="activeSegmentIndex"
+        @navigate="navigateSegment"
+      />
 
       <div class="composer-dock">
         <div class="composer-context-shell">
@@ -573,6 +598,7 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
               removable
               compact
               @remove="removeDraftAttachment"
+              @retry="retryDraftAttachment"
               @open="openAsset"
             />
             <textarea
@@ -657,23 +683,7 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
 .quick-grid button > span { display: grid; width: 38px; height: 38px; margin-bottom: 19px; place-items: center; border-radius: 12px; background: var(--color-surface); }
 .quick-grid strong { font-size: 15px; }
 .quick-grid small { margin-top: 7px; color: var(--color-text-muted); font-size: 12px; line-height: 1.5; }
-.message-list { width: min(820px, 100%); margin: 0 auto; }
-.message-row { display: grid; margin: 0 0 30px; }
-.user-row { justify-items: end; }
-.user-message { max-width: min(72%, 620px); padding: 11px 16px; border-radius: 20px; color: var(--color-bg); background: var(--color-text); line-height: 1.65; white-space: pre-wrap; }
-.assistant-row { justify-items: start; }
-.message-attachments { margin-top: 8px; }
-.user-attachments { justify-self: end; }
-.assistant-message { width: 100%; min-height: 24px; line-height: 1.75; }
-.assistant-message:empty::after { content: ' '; display: inline-block; width: 7px; height: 18px; border-radius: 2px; background: var(--color-text); animation: blink 1s infinite; }
-.citations { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
-.citations > span { flex-basis: 100%; color: var(--color-text-muted); font-size: 12px; }
-.citations button { display: inline-flex; gap: 5px; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: 10px; color: inherit; background: var(--color-bg); cursor: pointer; }
-.citations button:hover { background: var(--color-surface); }
-.citations small { color: var(--color-text-muted); }
-.message-actions { margin-top: 8px; }
-.message-actions button { display: grid; width: 30px; height: 30px; padding: 0; place-items: center; border: 0; border-radius: 8px; color: var(--color-text-muted); background: transparent; cursor: pointer; }
-.message-actions button:hover { color: var(--color-text); background: var(--color-surface); }
+.conversation-content { width: min(820px, 100%); margin: 0 auto; }
 .artifact-list { display: grid; gap: 12px; width: 100%; margin-top: 16px; }
 .run-status { display: flex; align-items: center; gap: 8px; margin: 4px 0 24px; color: var(--color-text-muted); font-size: 13px; }
 .chat-error { display: flex; justify-content: space-between; gap: 12px; padding: 12px 14px; border-radius: 12px; color: #b42318; background: #fef3f2; }

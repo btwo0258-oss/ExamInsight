@@ -97,6 +97,13 @@ export function restoreAsset(assetId: string) {
   )
 }
 
+export function retryAssetProcessing(assetId: string) {
+  return call(
+    () => request.post<LibraryAssetDetail>(`/api/v2/assets/${assetId}/processing/retry`),
+    '重新处理资料失败。',
+  )
+}
+
 export function purgeAsset(assetId: string) {
   return call(
     () => request.delete<PurgeJob>(`/api/v2/assets/${assetId}`),

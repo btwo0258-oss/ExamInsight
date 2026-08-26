@@ -1,96 +1,201 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-import MessageBubble from "./MessageBubble.vue";
-import type { ChatMessage } from "@/stores/message";
-import type { LearningProfileData } from "@/components/learning/LearningProfileCard.vue";
-import type { ConversationId } from "@/types/contracts/conversation";
+import MessageBubble from './MessageBubble.vue'
+import type { ChatMessage, Citation, MessageVersionGroup } from '@/types/contracts/chatV2'
 
-type Props = {
-  conversationId: ConversationId | null;
-  messages: ChatMessage[];
-};
+const ESTIMATED_HEIGHT = 150
+const ITEM_GAP = 30
+const OVERSCAN_PX = 700
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<{
+  messages: ChatMessage[]
+  versionGroups: MessageVersionGroup[]
+  busy?: boolean
+  speechLoadingMessageId?: string
+  speechPlayingMessageId?: string
+  scrollElement?: HTMLElement | null
+}>(), {
+  busy: false,
+  speechLoadingMessageId: '',
+  speechPlayingMessageId: '',
+  scrollElement: null,
+})
+
 const emit = defineEmits<{
-  confirmLearningProfile: [messageId: string];
-  updateLearningProfile: [messageId: string, profile: LearningProfileData];
-  updateLearningDocument: [messageId: string, content: string];
-  regenerateLearningDocument: [messageId: string];
-}>();
+  edit: [messageId: string, content: string]
+  regenerate: [messageId: string]
+  speak: [message: ChatMessage]
+  switchVersion: [branchId: string]
+  openAsset: [assetId: string]
+  openCitation: [citation: Citation]
+  activeUserIndex: [index: number]
+}>()
 
-const wrap = ref<HTMLDivElement | null>(null);
-const autoScroll = ref(true);
+const root = ref<HTMLElement | null>(null)
+const viewportStart = ref(0)
+const viewportEnd = ref(1000)
+const layoutRevision = ref(0)
+const heights = new Map<string, number>()
+const observed = new Map<string, HTMLElement>()
+let scrollParent: HTMLElement | null = null
+let resizeObserver: ResizeObserver | null = null
+let frame = 0
 
-defineExpose({
-  scrollContainer: wrap,
-});
+const versionMap = computed(() => new Map(props.versionGroups.map(group => [group.id, group])))
+const layout = computed(() => {
+  layoutRevision.value
+  let top = 0
+  return props.messages.map((message, index) => {
+    const height = heights.get(message.id) ?? ESTIMATED_HEIGHT
+    const item = { message, index, top, height }
+    top += height + ITEM_GAP
+    return item
+  })
+})
+const totalHeight = computed(() => Math.max(1, layout.value.at(-1)
+  ? layout.value.at(-1)!.top + layout.value.at(-1)!.height
+  : 1))
+const visibleItems = computed(() => layout.value.filter(item => (
+  item.top + item.height >= viewportStart.value - OVERSCAN_PX
+  && item.top <= viewportEnd.value + OVERSCAN_PX
+)))
 
-function onScroll() {
-  const el = wrap.value;
-  if (!el) return;
-  const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-  autoScroll.value = distance < 120;
+function updateViewport() {
+  if (!scrollParent || !root.value) return
+  const listTop = listOffsetTop()
+  viewportStart.value = Math.max(0, scrollParent.scrollTop - listTop)
+  viewportEnd.value = viewportStart.value + scrollParent.clientHeight
+
+  const center = viewportStart.value + scrollParent.clientHeight / 2
+  const users = layout.value.filter(item => item.message.role === 'USER')
+  if (users.length) {
+    let closest = 0
+    let distance = Number.POSITIVE_INFINITY
+    users.forEach((item, index) => {
+      const current = Math.abs(item.top + item.height / 2 - center)
+      if (current < distance) {
+        closest = index
+        distance = current
+      }
+    })
+    emit('activeUserIndex', closest)
+  }
 }
 
-async function scrollToBottom() {
-  await nextTick();
-  const el = wrap.value;
-  if (!el) return;
-  el.scrollTop = el.scrollHeight;
+function listOffsetTop() {
+  if (!scrollParent || !root.value) return 0
+  const parentRect = scrollParent.getBoundingClientRect()
+  const rootRect = root.value.getBoundingClientRect()
+  return rootRect.top - parentRect.top + scrollParent.scrollTop
 }
 
-watch(
-  () => {
-    const last = props.messages[props.messages.length - 1];
-    return [
-      wrap.value,
-      autoScroll.value,
-      props.messages.length,
-      last?.content.length ?? 0,
-      last?.streaming ?? false,
-    ];
-  },
-  async () => {
-    if (!autoScroll.value) return;
-    await scrollToBottom();
-  },
-  { deep: false },
-);
+function scheduleViewportUpdate() {
+  cancelAnimationFrame(frame)
+  frame = requestAnimationFrame(updateViewport)
+}
+
+function observeItem(messageId: string, element: unknown) {
+  const next = element instanceof HTMLElement ? element : null
+  const previous = observed.get(messageId)
+  if (previous && previous !== next) resizeObserver?.unobserve(previous)
+  if (!next) {
+    observed.delete(messageId)
+    return
+  }
+  observed.set(messageId, next)
+  resizeObserver?.observe(next)
+}
+
+async function scrollToMessage(messageId: string, behavior: ScrollBehavior = 'smooth') {
+  const item = layout.value.find(candidate => candidate.message.id === messageId)
+  if (!item || !scrollParent || !root.value) return
+  scrollParent.scrollTo({
+    top: Math.max(0, listOffsetTop() + item.top - (scrollParent.clientHeight - item.height) / 2),
+    behavior,
+  })
+  await nextTick()
+}
+
+defineExpose({ scrollToMessage })
+
+function connectScrollParent() {
+  scrollParent?.removeEventListener('scroll', scheduleViewportUpdate)
+  scrollParent = props.scrollElement ?? root.value?.closest<HTMLElement>('.chat-scroll') ?? null
+  scrollParent?.addEventListener('scroll', scheduleViewportUpdate, { passive: true })
+  scheduleViewportUpdate()
+}
+
+onMounted(() => {
+  resizeObserver = new ResizeObserver((entries) => {
+    let changed = false
+    let anchorDelta = 0
+    const shouldFollowLatest = Boolean(scrollParent
+      && scrollParent.scrollHeight - scrollParent.scrollTop - scrollParent.clientHeight < 160)
+    const previousLayout = new Map(layout.value.map(item => [item.message.id, item]))
+    entries.forEach((entry) => {
+      const id = (entry.target as HTMLElement).dataset.virtualMessageId
+      const height = Math.ceil(entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height)
+      if (id && height > 0 && heights.get(id) !== height) {
+        const previous = previousLayout.get(id)
+        const previousHeight = heights.get(id) ?? ESTIMATED_HEIGHT
+        if (previous && previous.top < viewportStart.value) anchorDelta += height - previousHeight
+        heights.set(id, height)
+        changed = true
+      }
+    })
+    if (!changed) return
+    layoutRevision.value += 1
+    void nextTick(() => {
+      if (scrollParent && shouldFollowLatest) scrollParent.scrollTop = scrollParent.scrollHeight
+      else if (scrollParent && anchorDelta) scrollParent.scrollTop += anchorDelta
+      scheduleViewportUpdate()
+    })
+  })
+  connectScrollParent()
+})
+
+watch(() => props.scrollElement, connectScrollParent)
+watch(() => props.messages.map(message => `${message.id}:${message.content.length}:${message.status}`).join('|'),
+  () => nextTick(scheduleViewportUpdate))
+
+onBeforeUnmount(() => {
+  cancelAnimationFrame(frame)
+  scrollParent?.removeEventListener('scroll', scheduleViewportUpdate)
+  resizeObserver?.disconnect()
+})
 </script>
 
 <template>
-  <div ref="wrap" class="list" @scroll="onScroll">
-    <div class="list__inner">
+  <section ref="root" class="virtual-message-list" :style="{ height: `${totalHeight}px` }" aria-live="polite">
+    <div
+      v-for="item in visibleItems"
+      :key="item.message.id"
+      :ref="element => observeItem(item.message.id, element)"
+      class="virtual-message-item"
+      :data-virtual-message-id="item.message.id"
+      :style="{ transform: `translateY(${item.top}px)` }"
+    >
       <MessageBubble
-        v-for="m in messages"
-        :key="m.turnId ? `${m.turnId}-${m.role}-${m.qVersion ?? 0}-${m.aVersion ?? 0}` : m.id"
-        :message="m"
-        :conversation-id="conversationId"
-        :is-streaming="m.streaming"
-        @confirm-learning-profile="(id) => emit('confirmLearningProfile', id)"
-        @update-learning-profile="(id, profile) => emit('updateLearningProfile', id, profile)"
-        @update-learning-document="(id, content) => emit('updateLearningDocument', id, content)"
-        @regenerate-learning-document="(id) => emit('regenerateLearningDocument', id)"
-      />
+        :message="item.message"
+        :version-group="versionMap.get(item.message.versionGroupId)"
+        :busy="busy"
+        :speech-loading="speechLoadingMessageId === item.message.id"
+        :speech-playing="speechPlayingMessageId === item.message.id"
+        @edit="(...args) => emit('edit', ...args)"
+        @regenerate="emit('regenerate', $event)"
+        @speak="emit('speak', $event)"
+        @switch-version="emit('switchVersion', $event)"
+        @open-asset="emit('openAsset', $event)"
+        @open-citation="emit('openCitation', $event)"
+      >
+        <slot name="after-message" :message="item.message" />
+      </MessageBubble>
     </div>
-  </div>
+  </section>
 </template>
 
 <style scoped>
-.list {
-  height: 100%;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-}
-
-.list__inner {
-  width: min(880px, 100%);
-  margin: 0 auto;
-  padding: 24px 0 20px;
-  display: grid;
-  gap: 16px;
-  flex: 1;
-}
+.virtual-message-list { position: relative; width: min(820px, 100%); margin: 0 auto; contain: layout style; }
+.virtual-message-item { position: absolute; top: 0; left: 0; width: 100%; min-width: 0; will-change: transform; }
 </style>

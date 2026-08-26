@@ -8,6 +8,9 @@ const api = vi.hoisted(() => ({
   updateConversation: vi.fn(),
   trashConversation: vi.fn(),
   sendMessage: vi.fn(),
+  editMessage: vi.fn(),
+  regenerateMessage: vi.fn(),
+  activateBranch: vi.fn(),
   getRun: vi.fn(),
   cancelRun: vi.fn(),
   listArtifacts: vi.fn(),
@@ -215,5 +218,84 @@ describe('V2 optimistic chat flow', () => {
     expect(api.streamRunEvents).toHaveBeenCalledTimes(2)
     expect(api.streamRunEvents.mock.calls[1]?.[1].lastEventId).toBe('3')
     expect(store.sending).toBe(false)
+  })
+
+  it('activates a message version branch and replaces the visible timeline', async () => {
+    const store = useChatV2Store()
+    const created = store.beginConversation()
+    const original = conversation(created.id)
+    api.createConversation.mockResolvedValue(original)
+    await store.create({ conversationId: created.id })
+
+    const editedBranchId = '01BRANCHEDITED000000000000'
+    const editedConversation = {
+      ...original,
+      activeBranchId: editedBranchId,
+      messageCount: 2,
+      version: 1,
+    }
+    const editedMessages = [
+      {
+        id: '01USEREDITED00000000000000',
+        branchId: editedBranchId,
+        versionGroupId: '01USERORIGINAL000000000000',
+        parentMessageId: null,
+        role: 'USER',
+        status: 'FINAL',
+        sequence: 1,
+        content: '编辑后的问题',
+        runId: null,
+        attachments: [],
+        citations: [],
+        createdAt: '2026-08-26T00:01:00Z',
+        finalizedAt: '2026-08-26T00:01:00Z',
+      },
+      {
+        id: '01ASSISTANTEDITED000000000',
+        branchId: editedBranchId,
+        versionGroupId: '01ASSISTANTEDITED000000000',
+        parentMessageId: '01USEREDITED00000000000000',
+        role: 'ASSISTANT',
+        status: 'FINAL',
+        sequence: 2,
+        content: '编辑分支的回答',
+        runId: '01RUNEDITED000000000000000',
+        attachments: [],
+        citations: [],
+        createdAt: '2026-08-26T00:01:01Z',
+        finalizedAt: '2026-08-26T00:01:02Z',
+      },
+    ]
+    const versionGroups = [{
+      id: '01USERORIGINAL000000000000',
+      role: 'USER',
+      versions: [
+        {
+          messageId: '01USERORIGINAL000000000000',
+          branchId: original.activeBranchId,
+          createdAt: '2026-08-26T00:00:00Z',
+        },
+        {
+          messageId: '01USEREDITED00000000000000',
+          branchId: editedBranchId,
+          createdAt: '2026-08-26T00:01:00Z',
+        },
+      ],
+    }]
+    api.activateBranch.mockResolvedValue({
+      conversation: editedConversation,
+      messages: editedMessages,
+      versionGroups,
+    })
+
+    await store.activateMessageBranch(editedBranchId)
+
+    expect(api.activateBranch).toHaveBeenCalledWith(created.id, editedBranchId)
+    expect(store.activeConversation?.activeBranchId).toBe(editedBranchId)
+    expect(store.messages.map(message => message.content)).toEqual([
+      '编辑后的问题',
+      '编辑分支的回答',
+    ])
+    expect(store.versionGroups).toEqual(versionGroups)
   })
 })

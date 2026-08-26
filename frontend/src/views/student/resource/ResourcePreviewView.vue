@@ -34,6 +34,11 @@ const resourceId = computed(() =>
   typeof route.params.resourceId === "string" ? route.params.resourceId : "",
 );
 const resource = computed(() => preview.value?.resource ?? null);
+const targetPage = computed(() => {
+  const raw = Array.isArray(route.query.page) ? route.query.page[0] : route.query.page;
+  const page = Number.parseInt(typeof raw === "string" ? raw : "", 10);
+  return Number.isInteger(page) && page > 0 && page <= 1000 ? page : undefined;
+});
 const canRender = computed(() => preview.value?.status === "ready" && !localError.value);
 const canDownload = computed(() => preview.value?.canDownload === true);
 const textHtml = computed(() => {
@@ -188,6 +193,7 @@ onBeforeUnmount(() => {
           :sheets="sheets"
           word-html=""
           :text-html="textHtml"
+          :initial-page="targetPage"
           @download="download"
         />
       </main>
