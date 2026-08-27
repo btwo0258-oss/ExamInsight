@@ -895,7 +895,8 @@ public class ChatV2Repository {
             String generatedTitle) {
         transactions.executeWithoutResult(status -> {
             if (cancellationRequested(context.jobId())) {
-                cancelRunInternal(context);
+                // Cancellation can arrive after the final delta but before this transaction.
+                cancelRunInternal(context, answer);
                 return;
             }
             jdbc.update("""
@@ -994,7 +995,11 @@ public class ChatV2Repository {
     }
 
     public void cancelRun(RunExecutionContext context) {
-        transactions.executeWithoutResult(status -> cancelRunInternal(context));
+        cancelRun(context, null);
+    }
+
+    public void cancelRun(RunExecutionContext context, String partialAnswer) {
+        transactions.executeWithoutResult(status -> cancelRunInternal(context, partialAnswer));
     }
 
     public void recordRetrieval(
@@ -1130,13 +1135,25 @@ public class ChatV2Repository {
         return rows.stream().findFirst();
     }
 
-    private void cancelRunInternal(RunExecutionContext context) {
-        jdbc.update("""
+    private void cancelRunInternal(RunExecutionContext context, String partialAnswer) {
+        int cancelledMessage = jdbc.update("""
                 UPDATE message
-                   SET status = 'CANCELLED', finalized_at = CURRENT_TIMESTAMP(3),
+                   SET status = 'CANCELLED', plain_text = COALESCE(NULLIF(?, ''), plain_text),
+                       finalized_at = CURRENT_TIMESTAMP(3),
                        row_version = row_version + 1
                  WHERE id = ? AND status = 'STREAMING'
-                """, context.responseMessageId());
+                """, partialAnswer, context.responseMessageId());
+        // Save the partial Markdown in the same transaction as the terminal status.
+        // Only the first transition writes a part; repeated cancellation must not
+        // duplicate it or replace existing text with an empty buffer.
+        if (cancelledMessage > 0 && partialAnswer != null && !partialAnswer.isEmpty()) {
+            jdbc.update("""
+                    INSERT INTO message_part (
+                        message_id, part_no, part_type, text_content, content_sha256
+                    ) VALUES (?, 1, 'MARKDOWN', ?, ?)
+                    """, context.responseMessageId(), partialAnswer,
+                    sha256(partialAnswer.getBytes(StandardCharsets.UTF_8)));
+        }
         jdbc.update("""
                 UPDATE async_job
                    SET status = 'CANCELLED', stage_key = 'cancelled',

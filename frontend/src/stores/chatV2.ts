@@ -84,6 +84,25 @@ function sameSources(left: string[], right: string[]) {
   return left.length === right.length && left.every((value, index) => value === right[index])
 }
 
+function retainCancelledContent(snapshot: ChatMessage[], visible: ChatMessage[]): ChatMessage[] {
+  const previousById = new Map(visible.map(message => [message.id, message]))
+  return snapshot.map(message => {
+    if (message.role !== 'ASSISTANT' || !message.runId) return message
+    const previous = previousById.get(message.id)
+    if (!previous || previous.runId !== message.runId || previous.branchId !== message.branchId) return message
+    // An earlier history request may finish after the cancellation event.
+    if (previous.status === 'CANCELLED' && message.status === 'STREAMING') return previous
+    if (message.status !== 'CANCELLED') return message
+    const content = message.content ?? ''
+    // An empty or lagging snapshot cannot erase a prefix already shown for this
+    // cancelled answer. Never borrow text from another message, run or branch.
+    if (previous.content && previous.content.length > content.length && previous.content.startsWith(content)) {
+      return { ...message, content: previous.content }
+    }
+    return message
+  })
+}
+
 function wait(ms: number, signal: AbortSignal) {
   return new Promise<void>((resolve) => {
     if (signal.aborted) return resolve()
@@ -404,8 +423,9 @@ export const useChatV2Store = defineStore('chatV2', () => {
         fetchMessagesPage(conversationId),
         api.listArtifacts(conversationId),
       ])
+      const visibleMessages = activeConversation.value?.id === conversationId ? messages.value : []
       activeConversation.value = page.conversation
-      messages.value = page.messages
+      messages.value = retainCancelledContent(page.messages, visibleMessages)
       versionGroups.value = page.versionGroups ?? []
       segments.value = page.segments ?? []
       messageCursor.value = page.nextCursor
@@ -552,16 +572,21 @@ export const useChatV2Store = defineStore('chatV2', () => {
   }
 
   async function finishStream(runId: string) {
+    const conversationId = activeConversation.value?.id
+    const isCurrentRun = () => activeRunId.value === runId && activeConversation.value?.id === conversationId
+    if (!conversationId || !isCurrentRun()) return
     const run = await api.getRun(runId).catch(() => null)
+    if (!isCurrentRun()) return
     if (run) activeRun.value = run
     try {
       if (activeConversation.value) {
         const [page, artifactItems] = await Promise.all([
-          fetchMessagesPage(activeConversation.value.id),
-          api.listArtifacts(activeConversation.value.id),
+          fetchMessagesPage(conversationId),
+          api.listArtifacts(conversationId),
         ])
+        if (!isCurrentRun()) return
         activeConversation.value = page.conversation
-        messages.value = page.messages
+        messages.value = retainCancelledContent(page.messages, messages.value)
         versionGroups.value = page.versionGroups ?? []
         segments.value = page.segments ?? []
         messageCursor.value = page.nextCursor
@@ -573,6 +598,7 @@ export const useChatV2Store = defineStore('chatV2', () => {
         }
       }
     } catch (cause) {
+      if (!isCurrentRun()) return
       error.value = api.chatError(cause, '回答已经结束，但最新消息同步失败，请重新进入对话。').message
     }
     if (run?.status === 'FAILED') error.value = run.safeErrorMessage || '生成失败，请重试。'

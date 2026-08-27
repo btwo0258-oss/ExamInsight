@@ -82,6 +82,9 @@ public class ChatRunExecutor {
 
         Instant invocationStartedAt = Instant.now();
         AiCallResult<String> callResult = null;
+        // Keep exactly the text emitted to the client, even if the provider stream
+        // exits by cancellation before it can return an AgentResult.
+        StringBuffer streamedAnswer = new StringBuffer();
         try {
             AtomicBoolean generatingPublished = new AtomicBoolean(false);
             AgentResult result = agent.execute(
@@ -96,6 +99,7 @@ public class ChatRunExecutor {
                         if (generatingPublished.compareAndSet(false, true)) {
                             stage(context, "generating", 3);
                         }
+                        streamedAnswer.append(delta);
                         eventBus.publish(context.runExternalId(), "message.delta", Map.of(
                                 "runId", context.runExternalId(),
                                 "messageId", context.responseMessageExternalId(),
@@ -107,7 +111,7 @@ public class ChatRunExecutor {
             recordRetrievalSafely(context, result);
 
             if (repository.cancellationRequested(context.jobId())) {
-                repository.cancelRun(context);
+                repository.cancelRun(context, streamedAnswer.toString());
                 publishCancelled(context);
                 return;
             }
@@ -142,11 +146,11 @@ public class ChatRunExecutor {
                     "toolCalls", result.totalToolCalls(),
                     "citationCount", citations.size()));
         } catch (ControlledChatAgent.AgentCancelledException exception) {
-            repository.cancelRun(context);
+            repository.cancelRun(context, streamedAnswer.toString());
             publishCancelled(context);
         } catch (ProviderCallException exception) {
             if (repository.cancellationRequested(context.jobId())) {
-                repository.cancelRun(context);
+                repository.cancelRun(context, streamedAnswer.toString());
                 publishCancelled(context);
                 return;
             }
@@ -158,6 +162,11 @@ public class ChatRunExecutor {
                     "message", safeMessage,
                     "retryable", exception.retryable()));
         } catch (RuntimeException exception) {
+            if (repository.cancellationRequested(context.jobId())) {
+                repository.cancelRun(context, streamedAnswer.toString());
+                publishCancelled(context);
+                return;
+            }
             log.error("V2 general chat run failed: runId={}", context.runExternalId(), exception);
             String message = "回答生成失败，请稍后重试。";
             repository.failRun(context, "CHAT_RUN_FAILED", message, callResult, invocationStartedAt);
