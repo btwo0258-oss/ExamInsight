@@ -35,14 +35,20 @@ public class ChatRunExecutor {
     private final ChatV2Repository repository;
     private final ControlledChatAgent agent;
     private final AiRunEventBus eventBus;
+    private final ConversationTitleService titleService;
+    private final ConversationMemoryService memoryService;
 
     public ChatRunExecutor(
             ChatV2Repository repository,
             ControlledChatAgent agent,
-            AiRunEventBus eventBus) {
+            AiRunEventBus eventBus,
+            ConversationTitleService titleService,
+            ConversationMemoryService memoryService) {
         this.repository = repository;
         this.agent = agent;
         this.eventBus = eventBus;
+        this.titleService = titleService;
+        this.memoryService = memoryService;
     }
 
     @Async("chatV2TaskExecutor")
@@ -112,7 +118,13 @@ public class ChatRunExecutor {
             }
             stage(context, "persisting", 4);
             List<CitationSource> citations = citedSources(answer, result.sources());
-            repository.completeRun(context, answer, citations, callResult, invocationStartedAt);
+            boolean shouldGenerateTitle = repository.shouldGenerateAutoTitle(context);
+            repository.completeRun(context, answer, citations, callResult, invocationStartedAt, null);
+            memoryService.schedule(context);
+            if (shouldGenerateTitle
+                    && "SUCCEEDED".equals(repository.getRun(context.userId(), context.runExternalId()).status())) {
+                titleService.generateAsync(context.userId(), context.conversationExternalId(), context.requestText());
+            }
             if ("CANCELLED".equals(repository.getRun(context.userId(), context.runExternalId()).status())) {
                 publishCancelled(context);
                 return;
@@ -161,6 +173,10 @@ public class ChatRunExecutor {
         Map<String, Object> payload = new LinkedHashMap<>(activity.details());
         payload.put("runId", context.runExternalId());
         payload.put("stage", activity.stage());
+        if ("artifact-started".equals(activity.stage())) {
+            eventBus.publish(context.runExternalId(), "artifact.started", Map.copyOf(payload));
+            return;
+        }
         if ("artifact-created".equals(activity.stage())) {
             eventBus.publish(context.runExternalId(), "artifact.created", Map.copyOf(payload));
             return;
@@ -230,6 +246,12 @@ public class ChatRunExecutor {
     }
 
     private String safeProviderMessage(ProviderCallException exception) {
+        if ("CONTEXT_BUDGET_EXCEEDED".equals(exception.code())) {
+            return "当前对话内容过长，请拆分问题或减少一次性附带的资料。";
+        }
+        if ("CHAT_RESPONSE_TOO_LARGE".equals(exception.code())) {
+            return "回答内容过长，请拆分问题后分段生成。";
+        }
         return switch (exception.category()) {
             case QUOTA_EXHAUSTED -> "模型免费额度已用尽，当前无法继续生成。";
             case RATE_LIMITED -> "模型请求较多，请稍后重试。";

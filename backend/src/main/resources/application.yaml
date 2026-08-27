@@ -26,6 +26,8 @@ app:
       poll-interval: ${V2_ASSET_POLL_INTERVAL:PT2S}
       lease-duration: ${V2_ASSET_LEASE_DURATION:PT10M}
       batch-size: ${V2_ASSET_BATCH_SIZE:3}
+      trash-retention-days: ${V2_TRASH_RETENTION_DAYS:30}
+      retention-batch-size: ${V2_RETENTION_BATCH_SIZE:100}
       scanner:
         mode: ${V2_FILE_SCANNER_MODE:clamav}
         host: ${CLAMAV_HOST:localhost}

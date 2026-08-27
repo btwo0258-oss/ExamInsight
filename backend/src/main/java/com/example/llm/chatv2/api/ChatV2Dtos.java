@@ -19,7 +19,8 @@ public final class ChatV2Dtos {
     public record UpdateConversationRequest(
             @Size(max = 160) String title,
             @Size(max = 26) String knowledgeBaseId,
-            Boolean clearKnowledgeBase) {
+            Boolean clearKnowledgeBase,
+            Boolean pinned) {
     }
 
     public record SendMessageRequest(
@@ -46,12 +47,14 @@ public final class ChatV2Dtos {
     public record ConversationSummary(
             String id,
             String title,
+            String titleSource,
             String type,
             String status,
             String knowledgeBaseId,
             String activeBranchId,
             long messageCount,
             long version,
+            Instant pinnedAt,
             Instant lastMessageAt,
             Instant createdAt,
             Instant updatedAt) {
@@ -65,6 +68,28 @@ public final class ChatV2Dtos {
             messages = messages == null ? List.of() : List.copyOf(messages);
             versionGroups = versionGroups == null ? List.of() : List.copyOf(versionGroups);
         }
+    }
+
+    /**
+     * A bounded page of messages for the active branch.  The segment list is
+     * deliberately lightweight so the client can navigate to an unloaded
+     * question without downloading the full conversation body.
+     */
+    public record ConversationMessagesPage(
+            ConversationSummary conversation,
+            List<MessageView> messages,
+            List<MessageVersionGroup> versionGroups,
+            List<MessageSegment> segments,
+            String nextCursor,
+            boolean hasMore) {
+        public ConversationMessagesPage {
+            messages = messages == null ? List.of() : List.copyOf(messages);
+            versionGroups = versionGroups == null ? List.of() : List.copyOf(versionGroups);
+            segments = segments == null ? List.of() : List.copyOf(segments);
+        }
+    }
+
+    public record MessageSegment(String id, long sequence, String preview) {
     }
 
     public record MessageView(

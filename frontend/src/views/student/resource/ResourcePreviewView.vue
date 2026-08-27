@@ -14,9 +14,13 @@ import type { ResourcePreviewDto } from "@/types/contracts/library";
 import type { SpreadsheetSheetDraft } from "@/types/contracts/spreadsheet";
 import { renderMarkdownToHtml } from "@/utils/markdown";
 import { downloadBlob } from "@/utils/download";
+import { useAssetLibraryV2Store } from "@/stores/assetLibraryV2";
+import { getAsset } from "@/api/assetLibraryV2";
+import { resolvePreviewReturn } from "@/utils/previewReturn";
 
 const route = useRoute();
 const router = useRouter();
+const assetLibraryStore = useAssetLibraryV2Store();
 
 const preview = ref<ResourcePreviewDto | null>(null);
 const documentBlob = ref<Blob | null>(null);
@@ -71,15 +75,8 @@ const statusMessage = computed(() => {
   }
 });
 
-function returnPath() {
-  const value = route.query.returnTo;
-  return typeof value === "string" && value.startsWith("/") && !value.startsWith("//")
-    ? value
-    : "/library";
-}
-
 function closePreview() {
-  void router.push(returnPath());
+  void router.push(resolvePreviewReturn(router, route.query));
 }
 
 function clearPreparedPreview() {
@@ -112,6 +109,11 @@ async function loadPreview() {
     documentBlob.value = prepared.documentBlob;
     presentationData.value = prepared.presentationData;
     sheets.value = prepared.sheets;
+    // Keep the shared library store current while a resource is being viewed.
+    // This makes a just-confirmed artifact visible as soon as the user returns.
+    void getAsset(resourceId.value)
+      .then(detail => assetLibraryStore.upsertUploadedAsset(detail.asset))
+      .catch(() => undefined);
   } catch (error) {
     if (sequence === requestSequence) {
       localError.value = error instanceof Error ? error.message : "文件预览加载失败。";

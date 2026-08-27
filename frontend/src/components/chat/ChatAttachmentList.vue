@@ -197,14 +197,16 @@ onBeforeUnmount(() => {
 .file-grid { display: flex; flex-wrap: wrap; gap: 8px; }
 .file-card {
   position: relative; display: flex; width: min(292px, 100%); min-height: 64px; align-items: center; gap: 10px;
-  padding: 9px 36px 9px 10px; border: 1px solid var(--color-border); border-radius: 14px;
-  color: inherit; background: var(--color-bg); text-align: left;
+  padding: 9px 36px 9px 10px; border: 1px solid color-mix(in srgb, var(--color-border) 78%, var(--color-text) 22%); border-radius: 14px;
+  color: inherit; background: var(--color-surface);
+  text-align: left;
 }
 .file-card.interactive, .image-card.interactive { cursor: pointer; }
 .file-card.interactive:hover, .image-card.interactive:hover { border-color: var(--color-text-muted); }
+.file-card, .image-card { direction: ltr; }
 .file-icon {
   display: grid; width: 42px; height: 42px; flex: 0 0 42px; place-items: center;
-  border-radius: 11px; color: var(--color-text); background: var(--color-surface);
+  border-radius: 11px; color: var(--color-text); background: var(--color-bg-alt);
 }
 .file-copy { display: grid; min-width: 0; gap: 3px; }
 .file-copy strong { overflow: hidden; font-size: 13px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }

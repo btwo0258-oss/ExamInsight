@@ -23,6 +23,7 @@
         <testcontainers.version>2.0.5</testcontainers.version>
         <elasticsearch-java.version>8.19.19</elasticsearch-java.version>
         <spring-ai.version>1.1.8</spring-ai.version>
+        <commonmark.version>0.30.0</commonmark.version>
     </properties>
 
     <dependencyManagement>
@@ -148,6 +149,16 @@
         </dependency>
 
         <!-- ==================== 文档解析 ==================== -->
+        <dependency>
+            <groupId>org.commonmark</groupId>
+            <artifactId>commonmark</artifactId>
+            <version>${commonmark.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.commonmark</groupId>
+            <artifactId>commonmark-ext-gfm-tables</artifactId>
+            <version>${commonmark.version}</version>
+        </dependency>
         <dependency>
             <groupId>org.apache.tika</groupId>
             <artifactId>tika-core</artifactId>

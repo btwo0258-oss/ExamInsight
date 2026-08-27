@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import MindMap from 'simple-mind-map'
 import 'simple-mind-map/dist/simpleMindMap.esm.css'
 import type { MindMapRenderConfig, MindMapTreeNode } from '@/types/contracts/artifact'
-import { mindMapRenderData, resolveMindMapRenderConfig } from '@/utils/mindMapTheme'
+import { mindMapRenderData, resolveNeutralMindMapRenderConfig } from '@/utils/mindMapTheme'
 
 const props = withDefaults(defineProps<{
   tree: MindMapTreeNode
@@ -15,6 +15,7 @@ const container = ref<HTMLElement | null>(null)
 const renderFailed = ref(false)
 let instance: InstanceType<typeof MindMap> | null = null
 let resizeObserver: ResizeObserver | null = null
+let themeObserver: MutationObserver | null = null
 let renderTimer: number | null = null
 
 const fallbackNodes = computed(() => {
@@ -44,7 +45,7 @@ async function render() {
   instance?.destroy()
   container.value.innerHTML = ''
   try {
-    const renderConfig = resolveMindMapRenderConfig(props.renderConfig)
+    const renderConfig = resolveNeutralMindMapRenderConfig(props.renderConfig)
     instance = new MindMap({
       el: container.value,
       data: mindMapRenderData(normalizeTree(props.tree)),
@@ -81,12 +82,18 @@ onMounted(() => {
     })
     resizeObserver.observe(container.value)
   }
+  if (typeof MutationObserver !== 'undefined') {
+    themeObserver = new MutationObserver(() => void render())
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+  }
   void render()
 })
 onBeforeUnmount(() => {
   if (renderTimer !== null) window.clearTimeout(renderTimer)
   resizeObserver?.disconnect()
   resizeObserver = null
+  themeObserver?.disconnect()
+  themeObserver = null
   instance?.destroy()
   instance = null
 })
@@ -111,15 +118,15 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.mindmap-preview { position: relative; width: 100%; height: 100%; min-height: 520px; overflow: hidden; background: #fff; }
+.mindmap-preview { position: relative; width: 100%; height: 100%; min-height: 520px; overflow: hidden; background: var(--color-bg); }
 .mindmap-preview__canvas { position: absolute; inset: 0; width: 100%; height: 100%; min-height: inherit; }
 .mindmap-preview--compact { min-height: 220px; height: 220px; }
-:deep(.simple-mind-map-container) { width: 100%; height: 100%; background: #fff; }
-.mindmap-preview__fallback { height: 100%; min-height: inherit; padding: 28px; overflow: auto; background: #fff; }
-.mindmap-preview__fallback-node { min-height: 36px; display: flex; align-items: center; gap: 10px; color: #33413d; }
-.mindmap-preview__fallback-node span { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: #4f9b8d; }
+:deep(.simple-mind-map-container) { width: 100%; height: 100%; background: var(--color-bg); }
+.mindmap-preview__fallback { height: 100%; min-height: inherit; padding: 28px; overflow: auto; background: var(--color-bg); }
+.mindmap-preview__fallback-node { min-height: 36px; display: flex; align-items: center; gap: 10px; color: var(--color-text); }
+.mindmap-preview__fallback-node span { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: var(--color-text-muted); }
 .mindmap-preview__fallback-node strong { max-width: min(720px, 80vw); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
-.mindmap-preview__fallback-node--root { margin-bottom: 10px; color: #fff; }
-.mindmap-preview__fallback-node--root strong { padding: 8px 12px; border-radius: 6px; background: #4f9b8d; font-size: 16px; }
+.mindmap-preview__fallback-node--root { margin-bottom: 10px; color: var(--color-bg); }
+.mindmap-preview__fallback-node--root strong { padding: 8px 12px; border-radius: 6px; background: var(--color-text); font-size: 16px; }
 .mindmap-preview__fallback-node--root span { display: none; }
 </style>

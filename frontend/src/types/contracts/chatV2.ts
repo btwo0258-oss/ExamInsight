@@ -6,12 +6,14 @@ export type ArtifactType = 'DOCUMENT' | 'MINDMAP' | 'PRESENTATION' | 'IMAGE'
 export type ConversationSummary = {
   id: string
   title: string
+  titleSource?: 'AUTO' | 'AI' | 'FALLBACK' | 'MANUAL' | string
   type: string
   status: ConversationStatus | string
   knowledgeBaseId: string | null
   activeBranchId: string
   messageCount: number
   version: number
+  pinnedAt?: string | null
   lastMessageAt: string | null
   createdAt: string
   updatedAt: string
@@ -69,6 +71,21 @@ export type ConversationDetail = {
   conversation: ConversationSummary
   messages: ChatMessage[]
   versionGroups: MessageVersionGroup[]
+}
+
+export type MessageSegment = {
+  id: string
+  sequence: number
+  preview: string
+}
+
+export type ConversationMessagesPage = {
+  conversation: ConversationSummary
+  messages: ChatMessage[]
+  versionGroups: MessageVersionGroup[]
+  segments: MessageSegment[]
+  nextCursor: string | null
+  hasMore: boolean
 }
 
 export type ConversationPage = {
@@ -142,6 +159,7 @@ export type StreamEventName =
   | 'run.accepted'
   | 'run.stage_changed'
   | 'message.delta'
+  | 'artifact.started'
   | 'artifact.created'
   | 'usage'
   | 'run.completed'

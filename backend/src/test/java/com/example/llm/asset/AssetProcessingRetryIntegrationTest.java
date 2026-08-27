@@ -85,10 +85,10 @@ class AssetProcessingRetryIntegrationTest {
                 INSERT INTO async_job (
                     external_id, user_id, job_type, aggregate_type, aggregate_external_id,
                     status, stage_key, progress_current, progress_total, finished_at,
-                    error_code, safe_error_message, attempt_count, max_attempts
+                    error_code, safe_error_message, attempt_count, max_attempts, priority
                 ) VALUES (?, ?, 'FILE_PARSE', 'ASSET_VERSION', ?,
                           'FAILED', 'TEXT_EXTRACTION', 0, 1, CURRENT_TIMESTAMP(3),
-                          'PARSE_FAILED', '解析失败', 3, 3)
+                          'PARSE_FAILED', '解析失败', 3, 3, 1)
                 """, jobExternalId, userId, versionExternalId);
         long jobId = jdbc.queryForObject(
                 "SELECT id FROM async_job WHERE external_id = ?", Long.class, jobExternalId);

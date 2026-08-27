@@ -112,7 +112,12 @@ public class ArtifactDraftService {
                     asset.assetExternalId(), "Image generated and saved to the user's library.");
         } catch (RuntimeException exception) {
             transactions.executeWithoutResult(status -> repository.markFailed(row.id(), "IMAGE_GENERATION_FAILED"));
-            throw exception;
+            // Keep the failed draft visible to the chat. The caller can render an
+            // honest failure state and the user can retry from the run controls;
+            // returning a tool result also prevents a failed image from looking
+            // like a successful, but missing, asset.
+            return new ToolResult("FAILED", generating.id(), Type.IMAGE, input.title(),
+                    null, "Image generation failed. No file was saved.");
         }
     }
 

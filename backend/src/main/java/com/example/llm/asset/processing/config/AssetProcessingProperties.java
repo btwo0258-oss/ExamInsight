@@ -29,6 +29,19 @@ public class AssetProcessingProperties {
     @Max(20)
     private int batchSize = 3;
 
+    /**
+     * Number of days an item remains recoverable in the recycle bin.  The
+     * retention worker only schedules deletion after this window has elapsed;
+     * it never bypasses the normal purge job and its safety checks.
+     */
+    @Min(1)
+    @Max(3650)
+    private int trashRetentionDays = 30;
+
+    @Min(1)
+    @Max(1000)
+    private int retentionBatchSize = 100;
+
     @Valid
     @NotNull
     private Scanner scanner = new Scanner();

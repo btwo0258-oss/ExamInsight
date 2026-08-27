@@ -133,6 +133,7 @@ public class AssetIndexRepository {
                            row_version = row_version + 1
                      WHERE id = ? AND status IN ('PENDING', 'INDEXING', 'FAILED')
                     """, indexedAt, embeddingRecordId);
+            embeddingRuntime.resume();
             jdbc.update("""
                     UPDATE asset_version av
                     JOIN asset_parse_result pr ON pr.asset_version_id = av.id

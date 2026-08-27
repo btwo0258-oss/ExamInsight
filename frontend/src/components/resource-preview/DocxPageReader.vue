@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, watch } from "vue";
-import { renderAsync } from "docx-preview";
+import { parseAsync, renderDocument, type Options } from "docx-preview";
+import { applyGeneratedDocxDefaults } from "@/features/resource-preview/docxPreviewDefaults";
 
-const props = defineProps<{ blob: Blob }>();
+const props = withDefaults(defineProps<{ blob: Blob; generated?: boolean }>(), { generated: false });
 const bodyContainer = ref<HTMLElement | null>(null);
 const styleContainer = ref<HTMLElement | null>(null);
 const loading = ref(true);
 const errorMessage = ref("");
+const legacyDefaults = ref(false);
 let renderSequence = 0;
 
 function clear() {
@@ -18,13 +20,15 @@ async function render() {
   const sequence = ++renderSequence;
   loading.value = true;
   errorMessage.value = "";
+  legacyDefaults.value = false;
   await nextTick();
+  if (sequence !== renderSequence) return;
   clear();
   const body = bodyContainer.value;
   const styles = styleContainer.value;
   if (!body || !styles) return;
   try {
-    await renderAsync(props.blob, body, styles, {
+    const options: Partial<Options> = {
       inWrapper: true,
       breakPages: true,
       ignoreWidth: false,
@@ -35,7 +39,13 @@ async function render() {
       renderEndnotes: true,
       renderComments: false,
       useBase64URL: true,
-    });
+    };
+    const document = await parseAsync(props.blob, options);
+    if (sequence !== renderSequence) return;
+    if (props.generated) legacyDefaults.value = applyGeneratedDocxDefaults(document);
+    const nodes = await renderDocument(document, options);
+    if (sequence !== renderSequence) return;
+    for (const node of nodes) (node.nodeName === 'STYLE' ? styles : body).appendChild(node);
   } catch (error) {
     if (sequence === renderSequence) {
       errorMessage.value = error instanceof Error ? error.message : "DOCX 加载失败";
@@ -45,7 +55,7 @@ async function render() {
   }
 }
 
-watch(() => props.blob, () => void render(), { immediate: true });
+watch(() => [props.blob, props.generated], () => void render(), { immediate: true });
 
 onBeforeUnmount(() => {
   renderSequence += 1;
@@ -54,7 +64,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="docx-reader">
+  <section class="docx-reader" :data-preview-defaults="legacyDefaults || undefined">
     <div ref="styleContainer" />
     <div v-if="loading" class="reader-state">正在排版文档…</div>
     <div v-else-if="errorMessage" class="reader-state error">DOCX 暂时无法显示</div>

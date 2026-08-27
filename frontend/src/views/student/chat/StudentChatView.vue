@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  ArrowUp, FileImage, FileText, Image, LoaderCircle, Network, Paperclip,
+  ArrowUp, FileText, Image, LoaderCircle, Network, Paperclip,
   Plus, Presentation, RotateCcw, Square,
 } from 'lucide-vue-next'
 
@@ -11,6 +11,7 @@ import ChatAttachmentList from '@/components/chat/ChatAttachmentList.vue'
 import ChatSourceSelector from '@/components/chat/input/ChatSourceSelector.vue'
 import MessageList from '@/components/chat/message/MessageList.vue'
 import SegmentPanel from '@/components/chat/SegmentPanel.vue'
+import ImageCaptureUploader from '@/components/capture/ImageCaptureUploader.vue'
 import VoiceRecorder from '@/components/capture/VoiceRecorder.vue'
 import StudentShell from '@/components/layout/StudentShell.vue'
 import {
@@ -20,10 +21,12 @@ import {
   uploadAsset,
 } from '@/api/assetLibraryV2'
 import { synthesizeSpeech } from '@/api/chatV2'
+import { playSpeechBlob } from '@/utils/speechPlayback'
+import { clearPendingPreviewReturn, pendingPreviewReturnFor, rememberChatPreviewReturn } from '@/utils/previewReturn'
 import { useAssetLibraryV2Store } from '@/stores/assetLibraryV2'
 import { useAuthStore } from '@/stores/auth'
 import { useChatV2Store } from '@/stores/chatV2'
-import type { Artifact, ChatMessage, Citation, MessageAttachment } from '@/types/contracts/chatV2'
+import type { Artifact, ArtifactType, ChatMessage, Citation, MessageAttachment } from '@/types/contracts/chatV2'
 import type { LibraryAsset } from '@/types/contracts/assetLibraryV2'
 
 type DraftAttachmentStatus = 'uploading' | 'processing' | 'ready' | 'failed'
@@ -50,24 +53,29 @@ const chatStore = useChatV2Store()
 const assetLibraryStore = useAssetLibraryV2Store()
 
 const prompt = ref('')
+const requestedArtifactType = ref<ArtifactType | null>(null)
 const selectedKnowledgeBaseId = ref<string | null>(null)
 const draftAttachments = ref<DraftAttachment[]>([])
 const scrollContainer = ref<HTMLElement | null>(null)
+const composerDock = ref<HTMLElement | null>(null)
+const composerReserve = ref(260)
 const messageList = ref<InstanceType<typeof MessageList> | null>(null)
 const activeSegmentIndex = ref(0)
 const autoFollowLatest = ref(true)
+const restoringPreview = ref(false)
 const composer = ref<HTMLTextAreaElement | null>(null)
 const generalFileInput = ref<HTMLInputElement | null>(null)
-const imageFileInput = ref<HTMLInputElement | null>(null)
 const mobileAttachmentMenuOpen = ref(false)
 const artifactBusyId = ref('')
-const voiceError = ref('')
+const voiceInputError = ref('')
+const speechError = ref('')
+const speechErrorMessageId = ref('')
 const speechLoadingMessageId = ref('')
 const speechPlayingMessageId = ref('')
 let speechAbortController: AbortController | null = null
-let speechAudio: HTMLAudioElement | null = null
-let speechObjectUrl = ''
+let composerResizeObserver: ResizeObserver | null = null
 let destroyed = false
+let previewRestoreTask: Promise<boolean> | null = null
 
 const MAX_ATTACHMENTS = 20
 const MAX_FILE_BYTES = 100 * 1024 * 1024
@@ -85,11 +93,11 @@ const canSend = computed(() => (
   && (prompt.value.trim().length > 0 || readyAttachments.value.length > 0)
 ))
 
-const quickActions = [
-  { icon: FileText, title: '生成文档', description: '生成可编辑文档，确认后存入资料库', prompt: '请根据以下要求生成一份可编辑文档：' },
-  { icon: Network, title: '生成思维导图', description: '先补充主题或关联资料，再生成结构化导图', prompt: '请根据以下主题生成一份思维导图：' },
-  { icon: Presentation, title: '生成 PPT', description: '生成可调整的大纲与演示文稿', prompt: '请根据以下要求生成一份 PPT：' },
-  { icon: Image, title: '生成图片', description: '描述画面、比例与使用场景', prompt: '请生成一张图片，画面要求如下：' },
+const quickActions: Array<{ icon: typeof FileText; title: string; description: string; prompt: string; type: ArtifactType }> = [
+  { icon: FileText, title: '生成文档', description: '生成可编辑文档，确认后存入资料库', prompt: '请根据以下要求生成一份可编辑文档：', type: 'DOCUMENT' },
+  { icon: Network, title: '生成思维导图', description: '先补充主题或关联资料，再生成结构化导图', prompt: '请根据以下主题生成一份思维导图：', type: 'MINDMAP' },
+  { icon: Presentation, title: '生成 PPT', description: '生成可调整的大纲与演示文稿', prompt: '请根据以下要求生成一份 PPT：', type: 'PRESENTATION' },
+  { icon: Image, title: '生成图片', description: '描述画面、比例与使用场景', prompt: '请生成一张图片，画面要求如下：', type: 'IMAGE' },
 ]
 
 function assetStatus(asset: LibraryAsset): DraftAttachmentStatus {
@@ -155,6 +163,15 @@ async function waitUntilAssetSettled(assetId: string, key: string) {
     current.status = 'failed'
     current.error = '文件处理超时，可以重试。'
   }
+}
+
+async function loadConfirmedAsset(assetId: string) {
+  for (let attempt = 0; attempt < 8 && !destroyed; attempt += 1) {
+    const detail = await getAsset(assetId).catch(() => null)
+    if (detail?.asset) return detail.asset
+    await new Promise(resolve => window.setTimeout(resolve, 350))
+  }
+  return null
 }
 
 async function retryDraftAttachment(key: string) {
@@ -243,7 +260,7 @@ async function uploadOne(file: File) {
   }
 }
 
-async function handleFiles(files: FileList | null) {
+async function handleFiles(files: FileList | File[] | null) {
   mobileAttachmentMenuOpen.value = false
   if (!files?.length) return
   if (!authStore.isAuthed) {
@@ -267,7 +284,6 @@ async function handleFiles(files: FileList | null) {
   })
   await Promise.all(uploadable.map(uploadOne))
   if (generalFileInput.value) generalFileInput.value.value = ''
-  if (imageFileInput.value) imageFileInput.value.value = ''
 }
 
 function openGeneralFilePicker() {
@@ -275,18 +291,14 @@ function openGeneralFilePicker() {
   generalFileInput.value?.click()
 }
 
-function openImageFilePicker() {
-  mobileAttachmentMenuOpen.value = false
-  imageFileInput.value?.click()
-}
-
 function artifactsFor(message: ChatMessage) {
-  if (!message.runId) return []
+  if (message.role !== 'ASSISTANT' || !message.runId) return []
   return chatStore.artifacts.filter(artifact => artifact.runId === message.runId)
 }
 
-function applyQuickAction(value: string) {
+function applyQuickAction(value: string, type: ArtifactType) {
   prompt.value = value
+  requestedArtifactType.value = type
   nextTick(() => {
     composer.value?.focus()
     resizeComposer()
@@ -304,7 +316,7 @@ function handleTranscribed(text: string) {
   const value = text.trim()
   if (!value) return
   prompt.value = prompt.value.trim() ? `${prompt.value.trim()} ${value}` : value
-  voiceError.value = ''
+  voiceInputError.value = ''
   nextTick(() => {
     composer.value?.focus()
     resizeComposer()
@@ -314,12 +326,32 @@ function handleTranscribed(text: string) {
 function stopSpeech() {
   speechAbortController?.abort()
   speechAbortController = null
-  speechAudio?.pause()
-  speechAudio = null
-  if (speechObjectUrl) URL.revokeObjectURL(speechObjectUrl)
-  speechObjectUrl = ''
   speechLoadingMessageId.value = ''
   speechPlayingMessageId.value = ''
+}
+
+watch(routeConversationId, stopSpeech)
+
+function speechTextSegments(content: string) {
+  const plainText = content
+    .replace(/```[\s\S]*?```/g, '（代码块已省略）')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    .replace(/[>*_`~]/g, '')
+    .replace(/\n{2,}/g, '\n')
+    .trim()
+  const segments: string[] = []
+  let remaining = plainText
+  while (remaining.length > 520) {
+    const window = remaining.slice(0, 520)
+    const splitAt = Math.max(window.lastIndexOf('。'), window.lastIndexOf('！'), window.lastIndexOf('？'), window.lastIndexOf('\n'), window.lastIndexOf('. '), window.lastIndexOf('! '), window.lastIndexOf('? '))
+    const boundary = splitAt > 180 ? splitAt + 1 : 520
+    segments.push(remaining.slice(0, boundary).trim())
+    remaining = remaining.slice(boundary).trim()
+  }
+  if (remaining) segments.push(remaining)
+  return segments.filter(Boolean)
 }
 
 async function toggleSpeech(message: ChatMessage) {
@@ -328,40 +360,47 @@ async function toggleSpeech(message: ChatMessage) {
     return
   }
   stopSpeech()
-  voiceError.value = ''
+  speechError.value = ''
+  speechErrorMessageId.value = ''
   speechLoadingMessageId.value = message.id
-  speechAbortController = new AbortController()
+  const controller = new AbortController()
+  speechAbortController = controller
   try {
-    const audioBlob = await synthesizeSpeech(message.content, speechAbortController.signal)
-    speechAbortController = null
-    speechObjectUrl = URL.createObjectURL(audioBlob)
-    speechAudio = new Audio(speechObjectUrl)
-    speechAudio.onended = stopSpeech
-    speechAudio.onerror = () => {
-      voiceError.value = '回答朗读失败，请稍后重试。'
+    const segments = speechTextSegments(message.content)
+    if (!segments.length) throw new Error('没有可朗读的文本。')
+    for (const segment of segments) {
+      if (controller.signal.aborted) throw new DOMException('朗读已停止', 'AbortError')
+      const audioBlob = await synthesizeSpeech(segment, controller.signal)
+      if (controller.signal.aborted) throw new DOMException('朗读已停止', 'AbortError')
+      speechLoadingMessageId.value = ''
+      speechPlayingMessageId.value = message.id
+      await playSpeechBlob(audioBlob, controller.signal)
+    }
+    if (speechAbortController === controller) stopSpeech()
+  } catch (error) {
+    if (!controller.signal.aborted && speechAbortController === controller) {
+      speechErrorMessageId.value = message.id
+      speechError.value = error instanceof Error ? error.message : '朗读服务暂时不可用，请稍后重试。'
       stopSpeech()
     }
-    speechLoadingMessageId.value = ''
-    speechPlayingMessageId.value = message.id
-    await speechAudio.play()
-  } catch (error) {
-    if (!(error instanceof DOMException && error.name === 'AbortError')) {
-      voiceError.value = error instanceof Error ? error.message : '回答朗读失败，请稍后重试。'
-    }
-    stopSpeech()
+    if (controller.signal.aborted && speechAbortController === controller) stopSpeech()
   }
 }
 
 async function editMessage(messageId: string, content: string) {
   stopSpeech()
-  await chatStore.editMessage(messageId, content)
-  await scrollToBottom('smooth')
+  autoFollowLatest.value = true
+  const pending = chatStore.editMessage(messageId, content)
+  void scrollToBottom('auto')
+  await pending
 }
 
 async function regenerateMessage(messageId: string) {
   stopSpeech()
-  await chatStore.regenerateMessage(messageId)
-  await scrollToBottom('smooth')
+  autoFollowLatest.value = true
+  const pending = chatStore.regenerateMessage(messageId)
+  void scrollToBottom('auto')
+  await pending
 }
 
 async function switchMessageVersion(branchId: string) {
@@ -369,16 +408,32 @@ async function switchMessageVersion(branchId: string) {
   await chatStore.activateMessageBranch(branchId)
 }
 
-function navigateSegment(messageId: string) {
-  void messageList.value?.scrollToMessage(messageId)
+async function navigateSegment(messageId: string) {
+  if (!chatStore.messages.some(message => message.id === messageId)) {
+    await chatStore.loadMessagesAround(messageId).catch(() => false)
+  }
+  await nextTick()
+  await messageList.value?.scrollToMessage(messageId)
+}
+
+async function loadEarlierMessages() {
+  if (!chatStore.hasMoreMessages || chatStore.loadingEarlierMessages) return
+  const element = scrollContainer.value
+  const previousHeight = element?.scrollHeight ?? 0
+  const previousTop = element?.scrollTop ?? 0
+  await chatStore.loadEarlierMessages()
+  await nextTick()
+  if (element) element.scrollTop = previousTop + (element.scrollHeight - previousHeight)
 }
 
 async function scrollToBottom(behavior: ScrollBehavior = 'smooth') {
   await nextTick()
+  if (destroyed || restoringPreview.value || previewOrigin()) return
   scrollContainer.value?.scrollTo({ top: scrollContainer.value.scrollHeight, behavior })
 }
 
 function updateAutoFollowLatest() {
+  if (restoringPreview.value || previewOrigin()) return
   const element = scrollContainer.value
   if (!element) return
   autoFollowLatest.value = element.scrollHeight - element.scrollTop - element.clientHeight < 160
@@ -400,14 +455,17 @@ async function applyRouteSources() {
 
 async function loadConversation(conversationId: string) {
   if (!authStore.isAuthed || !conversationId) return
-  if (chatStore.activeConversation?.id === conversationId && chatStore.messages.length) return
-  await chatStore.load(conversationId)
+  const cached = chatStore.activeConversation?.id === conversationId && chatStore.messages.length > 0
+  if (!cached) await chatStore.load(conversationId)
+  if (destroyed || routeConversationId.value !== conversationId) return
   selectedKnowledgeBaseId.value = chatStore.activeConversation?.knowledgeBaseId ?? null
-  await scrollToBottom('auto')
+  // A cached store still mounts a fresh scroll container after preview/editor navigation.
+  if (!(await restorePreviewAnchor())) await scrollToBottom('auto')
 }
 
 async function submit() {
   const content = prompt.value.trim()
+  const generationType = requestedArtifactType.value
   if (!canSend.value) return
   if (!authStore.isAuthed) {
     authStore.openAuthModal(route.fullPath)
@@ -431,7 +489,7 @@ async function submit() {
         knowledgeBaseId: selectedKnowledgeBaseId.value,
       })
       optimisticConversationId = conversation.id
-      chatStore.beginOptimisticTurn(content, sourceAssetIds, submittedAttachments)
+      chatStore.beginOptimisticTurn(content, sourceAssetIds, submittedAttachments, generationType)
       await router.replace({ name: 'chat-detail', params: { id: conversation.id } })
       await scrollToBottom('auto')
       conversation = await chatStore.create({
@@ -441,11 +499,12 @@ async function submit() {
       })
       conversationPersisted = true
     } else {
-      chatStore.beginOptimisticTurn(content, sourceAssetIds, submittedAttachments)
+      chatStore.beginOptimisticTurn(content, sourceAssetIds, submittedAttachments, generationType)
       await scrollToBottom('auto')
       await chatStore.setKnowledgeBase(selectedKnowledgeBaseId.value)
     }
     await chatStore.send(content, sourceAssetIds, submittedAttachments)
+    requestedArtifactType.value = null
     clearDraftAttachments(submittedDrafts)
     await scrollToBottom()
   } catch {
@@ -455,39 +514,155 @@ async function submit() {
     }
     prompt.value = content
     draftAttachments.value = [...submittedDrafts, ...draftAttachments.value]
+    requestedArtifactType.value = generationType
     resizeComposer()
   }
 }
 
-async function saveArtifact(artifact: Artifact) {
+async function saveArtifact(artifact: Artifact, done?: (success: boolean) => void) {
   artifactBusyId.value = artifact.id
-  try { await chatStore.saveArtifact(artifact) } finally { artifactBusyId.value = '' }
+  try {
+    await chatStore.saveArtifact(artifact)
+    done?.(true)
+  } catch (cause) {
+    chatStore.error = cause instanceof Error ? cause.message : '保存生成内容失败。'
+    done?.(false)
+  } finally { artifactBusyId.value = '' }
 }
 
 async function confirmArtifact(artifact: Artifact) {
   artifactBusyId.value = artifact.id
-  try { await chatStore.confirmArtifact(artifact) } finally { artifactBusyId.value = '' }
+  try {
+    const confirmed = await chatStore.confirmArtifact(artifact)
+    // The conversation card is authoritative as soon as the confirmation API
+    // returns. Refresh it immediately; asset metadata can become visible a
+    // little later without delaying the user's interaction.
+    void chatStore.refreshArtifacts().catch(() => undefined)
+    if (confirmed.confirmedAssetId) {
+      // Asset creation is eventually consistent. Retry in the background so
+      // the card changes immediately while the library receives full metadata
+      // as soon as the new asset is readable.
+      void loadConfirmedAsset(confirmed.confirmedAssetId).then((confirmedAsset) => {
+        if (!confirmedAsset) return
+        assetLibraryStore.upsertUploadedAsset(confirmedAsset)
+        void assetLibraryStore.loadAssets('library')
+          .then(() => assetLibraryStore.upsertUploadedAsset(confirmedAsset))
+          .catch(() => undefined)
+      })
+    }
+  } catch (cause) {
+    chatStore.error = cause instanceof Error ? cause.message : '确认生成内容失败。'
+  } finally { artifactBusyId.value = '' }
 }
 
-function openArtifactEditor(artifact: Artifact) {
-  void router.push({ name: 'artifact-editor', params: { artifactId: artifact.id } })
+async function retryArtifact(artifact: Artifact) {
+  const sourceMessage = chatStore.messages.find(message => message.runId === artifact.runId)
+  if (!sourceMessage) {
+    chatStore.error = '找不到原始生成消息，请重新进入对话后重试。'
+    return
+  }
+  try {
+    await regenerateMessage(sourceMessage.id)
+  } catch {
+    // regenerateMessage already exposes the API error through the chat store.
+  }
 }
 
-function openAsset(assetId: string) {
-  void router.push({ name: 'resource-preview', params: { resourceId: assetId } })
+function previewOrigin() {
+  if (typeof route.query.returnMessageId === 'string' && route.query.returnMessageId) return route.query
+  return pendingPreviewReturnFor(route.path)
 }
 
-function openCitation(citation: Citation) {
+function previewQuery(messageId?: string, artifactId?: string) {
+  const messageElement = messageId ? [...(scrollContainer.value?.querySelectorAll<HTMLElement>('[data-message-id]') ?? [])]
+    .find(element => element.dataset.messageId === messageId) : undefined
+  const artifactElement = artifactId && messageElement
+    ? [...messageElement.querySelectorAll<HTMLElement>('[data-artifact-id]')]
+      .find(element => element.dataset.artifactId === artifactId)
+    : undefined
+  const anchor = artifactElement ?? messageElement
+  const query = {
+    returnTo: route.fullPath,
+    ...(messageId ? { returnMessageId: messageId } : {}),
+    ...(artifactId ? { returnArtifactId: artifactId } : {}),
+    ...(anchor && scrollContainer.value ? {
+      returnOffset: String(Math.round(anchor.getBoundingClientRect().top - scrollContainer.value.getBoundingClientRect().top)),
+    } : {}),
+  }
+  if (messageId) rememberChatPreviewReturn(query)
+  return query
+}
+
+function openArtifactEditor(artifact: Artifact, messageId: string) {
+  void router.push({
+    name: 'artifact-editor',
+    params: { artifactId: artifact.id },
+    query: previewQuery(messageId, artifact.id),
+  })
+}
+
+function openAsset(assetId: string, messageId?: string, artifactId?: string) {
+  void router.push({
+    name: 'resource-preview',
+    params: { resourceId: assetId },
+    query: previewQuery(messageId, artifactId),
+  })
+}
+
+function openCitation(citation: Citation, messageId?: string) {
   const pageMatch = citation.locator?.match(/第\s*(\d+)\s*页/)
   void router.push({
     name: 'resource-preview',
     params: { resourceId: citation.assetId },
     query: {
-      returnTo: route.fullPath,
+      ...previewQuery(messageId),
       ...(pageMatch ? { page: pageMatch[1] } : {}),
       citation: String(citation.number),
     },
   })
+}
+
+async function restorePreviewAnchor() {
+  if (previewRestoreTask) return previewRestoreTask
+  const origin = previewOrigin()
+  const messageId = origin?.returnMessageId
+  const conversationId = routeConversationId.value
+  if (typeof messageId !== 'string' || !messageId || chatStore.loading
+    || chatStore.activeConversation?.id !== conversationId) return false
+  const path = route.path
+  const artifactId = typeof origin?.returnArtifactId === 'string' ? origin.returnArtifactId : undefined
+  const offset = typeof origin?.returnOffset === 'string' ? Number(origin.returnOffset) : NaN
+  autoFollowLatest.value = false
+  restoringPreview.value = true
+  previewRestoreTask = (async () => {
+    // Confirmation updates the store immediately; this also reconciles a preview opened in another tab.
+    await chatStore.refreshArtifacts().catch(() => undefined)
+    if (!chatStore.messages.some(message => message.id === messageId)) {
+      await chatStore.loadMessagesAround(messageId).catch(() => false)
+    }
+    if (destroyed || routeConversationId.value !== conversationId) return false
+    await nextTick()
+    const restored = await messageList.value?.scrollToMessage(messageId, 'auto', {
+      artifactId,
+      offset: Number.isFinite(offset) ? Math.max(-100_000, Math.min(100_000, offset)) : 24,
+    })
+    if (destroyed || routeConversationId.value !== conversationId) return false
+    clearPendingPreviewReturn(path)
+    if (route.query.returnMessageId === messageId) {
+      const query = { ...route.query }
+      delete query.returnMessageId
+      delete query.returnArtifactId
+      delete query.returnOffset
+      await router.replace({ path, query, hash: route.hash })
+    }
+    return Boolean(restored)
+  })()
+  try {
+    return await previewRestoreTask
+  } finally {
+    restoringPreview.value = false
+    previewRestoreTask = null
+  }
 }
 
 function handleComposerKeydown(event: KeyboardEvent) {
@@ -509,6 +684,11 @@ function optimisticAttachments(items: DraftAttachment[]): MessageAttachment[] {
 }
 
 onMounted(async () => {
+  composerResizeObserver = new ResizeObserver(() => {
+    const height = composerDock.value?.getBoundingClientRect().height ?? 0
+    if (height > 0) composerReserve.value = Math.ceil(height + 28)
+  })
+  if (composerDock.value) composerResizeObserver.observe(composerDock.value)
   await authStore.init()
   await applyRouteSources()
   if (authStore.isAuthed) {
@@ -519,24 +699,42 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   destroyed = true
+  composerResizeObserver?.disconnect()
+  composerResizeObserver = null
   stopSpeech()
   clearDraftAttachments()
 })
 
 watch(routeConversationId, async (conversationId) => {
   if (conversationId) await loadConversation(conversationId)
-  else chatStore.clearActive()
+  else {
+    selectedKnowledgeBaseId.value = null
+    chatStore.clearActive()
+  }
+})
+
+watch(() => route.query.returnMessageId, () => {
+  if (routeConversationId.value && !chatStore.loading) void restorePreviewAnchor()
 })
 
 watch(() => chatStore.messages.map(message => message.content.length).join(','), () => {
-  if (autoFollowLatest.value) void scrollToBottom(chatStore.sending ? 'auto' : 'smooth')
+  if (autoFollowLatest.value && !restoringPreview.value && !previewOrigin()) void scrollToBottom(chatStore.sending ? 'auto' : 'smooth')
 })
 </script>
 
 <template>
   <StudentShell>
-    <div class="chat-page">
-      <div ref="scrollContainer" class="chat-scroll" @scroll.passive="updateAutoFollowLatest">
+    <div class="chat-page" :style="{ '--composer-reserve': `${composerReserve}px` }">
+      <header v-if="routeConversationId" class="conversation-header">
+        <h1>{{ chatStore.activeConversation?.id === routeConversationId ? chatStore.activeConversation.title : '对话' }}</h1>
+      </header>
+
+      <div
+        ref="scrollContainer"
+        class="chat-scroll"
+        :class="{ 'chat-scroll--with-header': Boolean(routeConversationId) }"
+        @scroll.passive="updateAutoFollowLatest"
+      >
         <section v-if="chatStore.loading" class="center-state">
           <LoaderCircle class="spin" :size="24" />
           <span>正在加载对话</span>
@@ -552,7 +750,7 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
               v-for="action in quickActions"
               :key="action.title"
               type="button"
-              @click="applyQuickAction(action.prompt)"
+              @click="applyQuickAction(action.prompt, action.type)"
             >
               <span><component :is="action.icon" :size="20" /></span>
               <strong>{{ action.title }}</strong>
@@ -567,8 +765,11 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
             :messages="chatStore.messages"
             :version-groups="chatStore.versionGroups"
             :busy="chatStore.sending || chatStore.loading"
+            :stage-text="chatStore.stageText"
             :speech-loading-message-id="speechLoadingMessageId"
             :speech-playing-message-id="speechPlayingMessageId"
+            :speech-error-message-id="speechErrorMessageId"
+            :speech-error="speechError"
             :scroll-element="scrollContainer"
             @edit="editMessage"
             @regenerate="regenerateMessage"
@@ -577,6 +778,7 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
             @open-asset="openAsset"
             @open-citation="openCitation"
             @active-user-index="activeSegmentIndex = $event"
+            @reach-top="loadEarlierMessages"
           >
             <template #after-message="{ message }">
               <div v-if="artifactsFor(message).length" class="artifact-list">
@@ -587,17 +789,14 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
                   :busy="artifactBusyId === artifact.id"
                   @save="saveArtifact"
                   @confirm="confirmArtifact"
-                  @open-editor="openArtifactEditor"
-                  @open-asset="openAsset"
+                  @retry="retryArtifact"
+                  @open-editor="(item) => openArtifactEditor(item, message.id)"
+                  @open-asset="(assetId) => openAsset(assetId, message.id, artifact.id)"
                 />
               </div>
             </template>
           </MessageList>
 
-          <div v-if="chatStore.sending" class="run-status">
-            <LoaderCircle class="spin" :size="16" />
-            <span>{{ chatStore.stageText || '正在处理' }}</span>
-          </div>
           <div v-if="chatStore.error" class="chat-error">
             <span>{{ chatStore.error }}</span>
             <button type="button" @click="chatStore.error = ''"><RotateCcw :size="15" />关闭</button>
@@ -608,17 +807,18 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
       <SegmentPanel
         v-if="hasMessages"
         :messages="chatStore.messages"
+        :segments="chatStore.segments"
         :active-index="activeSegmentIndex"
         @navigate="navigateSegment"
       />
 
-      <div class="composer-dock">
+      <div ref="composerDock" class="composer-dock">
         <div class="composer-context-shell">
           <ChatSourceSelector
             v-model:knowledge-base-id="selectedKnowledgeBaseId"
             :disabled="chatStore.sending"
           />
-          <div class="composer-box">
+          <div class="composer-box chat-composer">
             <ChatAttachmentList
               v-if="draftAttachments.length"
               class="draft-attachments"
@@ -632,15 +832,17 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
             <textarea
               ref="composer"
               v-model="prompt"
+              class="main-textarea"
               rows="1"
               placeholder="输入消息"
               aria-label="输入消息"
               @input="resizeComposer"
+              @pointerdown="mobileAttachmentMenuOpen = false"
               @keydown="handleComposerKeydown"
             />
-            <p v-if="voiceError" class="voice-error" role="alert">{{ voiceError }}</p>
+            <p v-if="voiceInputError" class="voice-error" role="alert">{{ voiceInputError }}</p>
             <div class="composer-toolbar">
-              <div class="attachment-entry">
+              <div class="attachment-entry toolbar-left">
                 <button
                   type="button"
                   class="attachment-button desktop-attachment"
@@ -649,18 +851,37 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
                   aria-label="上传附件"
                   @click="openGeneralFilePicker"
                 ><Paperclip :size="20" /></button>
-                <button
-                  type="button"
-                  class="attachment-button mobile-attachment"
-                  :disabled="chatStore.sending || draftAttachments.length >= MAX_ATTACHMENTS"
-                  title="添加附件"
-                  aria-label="添加附件"
-                  :aria-expanded="mobileAttachmentMenuOpen"
-                  @click="mobileAttachmentMenuOpen = !mobileAttachmentMenuOpen"
-                ><Plus :size="21" /></button>
-                <div v-if="mobileAttachmentMenuOpen" class="mobile-attachment-menu">
-                  <button type="button" @click="openGeneralFilePicker"><Paperclip :size="18" />上传文件</button>
-                  <button type="button" @click="openImageFilePicker"><FileImage :size="18" />上传图片</button>
+                <div class="mobile-add-control">
+                  <div
+                    class="mobile-add-pill"
+                    :class="{ 'mobile-add-pill--open': mobileAttachmentMenuOpen }"
+                  >
+                    <div v-if="mobileAttachmentMenuOpen" class="mobile-add-menu" @click.stop>
+                      <button
+                        class="mobile-menu-action"
+                        type="button"
+                        title="上传附件"
+                        aria-label="上传附件"
+                        @click="openGeneralFilePicker"
+                      ><Paperclip :size="18" /></button>
+                      <ImageCaptureUploader
+                        vertical
+                        :disabled="chatStore.sending || draftAttachments.length >= MAX_ATTACHMENTS"
+                        :remaining-count="MAX_ATTACHMENTS - draftAttachments.length"
+                        @select="handleFiles"
+                        @error="voiceInputError = $event"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      class="attachment-button mobile-attachment mobile-plus"
+                      :disabled="chatStore.sending || draftAttachments.length >= MAX_ATTACHMENTS"
+                      title="添加附件"
+                      aria-label="添加附件"
+                      :aria-expanded="mobileAttachmentMenuOpen"
+                      @click="mobileAttachmentMenuOpen = !mobileAttachmentMenuOpen"
+                    ><Plus :size="21" /></button>
+                  </div>
                 </div>
                 <input
                   ref="generalFileInput"
@@ -669,21 +890,13 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
                   multiple
                   @change="handleFiles(($event.target as HTMLInputElement).files)"
                 />
-                <input
-                  ref="imageFileInput"
-                  class="file-input"
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  @change="handleFiles(($event.target as HTMLInputElement).files)"
-                />
               </div>
-              <div class="composer-actions">
+              <div class="composer-actions toolbar-right">
                 <VoiceRecorder
                   chat-v2
                   :disabled="chatStore.sending"
                   @transcribed="handleTranscribed"
-                  @error="voiceError = $event"
+                  @error="voiceInputError = $event"
                 />
                 <button v-if="chatStore.sending" type="button" class="send-button" title="停止生成" @click="chatStore.cancel"><Square :size="15" fill="currentColor" /></button>
                 <button v-else type="button" class="send-button" :disabled="!canSend" title="发送" @click="submit"><ArrowUp :size="20" /></button>
@@ -698,8 +911,20 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
 </template>
 
 <style scoped>
-.chat-page { position: relative; height: 100%; min-height: 0; overflow: hidden; background: var(--color-bg); }
-.chat-scroll { height: 100%; overflow: auto; padding: 36px 28px 250px; }
+.chat-page { position: relative; height: 100%; min-height: 0; overflow: hidden; background: color-mix(in srgb, var(--color-text) 3.5%, var(--color-bg)); }
+.chat-scroll {
+  height: 100%; box-sizing: border-box; overflow: auto; padding: 36px 28px var(--composer-reserve, 260px);
+  background: color-mix(in srgb, var(--color-text) 3.5%, var(--color-bg));
+  scroll-padding-bottom: var(--composer-reserve, 260px); overscroll-behavior: contain;
+}
+.conversation-header {
+  position: absolute; top: 0; right: 0; left: 0; z-index: 20; display: flex; height: 54px;
+  align-items: center; justify-content: center; padding: 0 80px 0 24px; border-bottom: 1px solid var(--color-border);
+  color: var(--color-text); background: color-mix(in srgb, var(--color-bg) 90%, transparent);
+  backdrop-filter: blur(12px); pointer-events: none;
+}
+.conversation-header h1 { max-width: min(680px, 100%); margin: 0; overflow: hidden; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.chat-scroll--with-header { padding-top: 82px; }
 .center-state { display: flex; align-items: center; justify-content: center; gap: 10px; height: 60vh; color: var(--color-text-muted); }
 .chat-home { display: grid; gap: 34px; width: min(900px, 100%); margin: min(18vh, 150px) auto 0; }
 .home-heading { text-align: center; }
@@ -713,10 +938,9 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
 .quick-grid small { margin-top: 7px; color: var(--color-text-muted); font-size: 12px; line-height: 1.5; }
 .conversation-content { width: min(820px, 100%); margin: 0 auto; }
 .artifact-list { display: grid; gap: 12px; width: 100%; margin-top: 16px; }
-.run-status { display: flex; align-items: center; gap: 8px; margin: 4px 0 24px; color: var(--color-text-muted); font-size: 13px; }
 .chat-error { display: flex; justify-content: space-between; gap: 12px; padding: 12px 14px; border-radius: 12px; color: #b42318; background: #fef3f2; }
 .chat-error button { display: inline-flex; align-items: center; gap: 5px; border: 0; color: inherit; background: transparent; cursor: pointer; }
-.composer-dock { position: absolute; right: 0; bottom: 0; left: 0; padding: 18px 24px 14px; background: linear-gradient(transparent, var(--color-bg) 25%); }
+.composer-dock { position: absolute; right: 0; bottom: 0; left: 0; z-index: 30; padding: 18px 24px 14px; background: linear-gradient(transparent, color-mix(in srgb, var(--color-text) 3.5%, var(--color-bg)) 25%); }
 .composer-context-shell {
   width: min(820px, 100%); margin: 0 auto; padding: 4px 8px 0; border-radius: 26px;
   background: color-mix(in srgb, var(--color-text) 9%, var(--color-bg));
@@ -728,17 +952,31 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
 .voice-error { margin: 0 8px 8px; color: var(--color-danger); font-size: 12px; }
 .composer-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .attachment-entry { position: relative; }
+.toolbar-left, .toolbar-right { display: flex; align-items: center; gap: 7px; }
 .attachment-button { display: grid; width: 36px; height: 36px; padding: 0; place-items: center; border: 0; border-radius: 50%; color: var(--color-text-muted); background: transparent; cursor: pointer; }
 .attachment-button:not(:disabled):hover { color: var(--color-text); background: var(--color-surface); }
 .attachment-button:disabled { cursor: default; opacity: .32; }
 .mobile-attachment { display: none; }
-.mobile-attachment-menu {
-  position: absolute; bottom: 44px; left: 0; z-index: 48; display: grid; width: 156px; gap: 3px;
-  padding: 7px; border: 1px solid var(--color-border); border-radius: 15px; background: var(--color-bg);
-  box-shadow: 0 14px 38px rgb(0 0 0 / 16%);
+.mobile-add-control { display: none; position: relative; width: 36px; height: 36px; flex: 0 0 36px; }
+.mobile-add-pill {
+  position: absolute; bottom: -8px; left: 0; z-index: 48; display: flex; width: 36px;
+  flex-direction: column; align-items: center; justify-content: flex-end; padding: 2px;
+  overflow: hidden; border: 1px solid transparent; border-radius: 999px;
+  background: var(--color-surface); box-sizing: border-box;
+  transition: max-height .25s ease, border-color .2s ease, box-shadow .2s ease, background-color .2s ease;
 }
-.mobile-attachment-menu button { display: flex; align-items: center; gap: 9px; min-height: 40px; padding: 0 10px; border: 0; border-radius: 10px; color: inherit; background: transparent; font: inherit; cursor: pointer; }
-.mobile-attachment-menu button:hover { background: var(--color-surface); }
+.mobile-add-pill--open { max-height: 136px; border-color: var(--color-border); box-shadow: 0 12px 30px rgb(0 0 0 / 16%); }
+.mobile-add-menu {
+  display: flex; width: 32px; max-height: 104px; flex-direction: column; align-items: center; gap: 4px;
+  margin-bottom: 4px; padding: 0; overflow: hidden; opacity: 1;
+}
+.mobile-menu-action {
+  display: inline-flex; width: 32px; height: 32px; flex: 0 0 32px; align-items: center; justify-content: center;
+  padding: 0; border: 0; border-radius: 8px; color: var(--color-text-muted); background: transparent; cursor: pointer;
+}
+.mobile-menu-action:hover { color: var(--color-text); background: var(--color-bg); }
+.mobile-add-menu :deep(.image-actions) { display: flex; width: 32px; flex-direction: column; align-items: center; gap: 4px; }
+.mobile-add-menu :deep(.image-action) { width: 32px; height: 32px; flex: 0 0 32px; }
 .file-input { display: none; }
 .composer-actions { display: flex; gap: 7px; }
 .send-button { display: grid; width: 36px; height: 36px; padding: 0; place-items: center; border: 0; border-radius: 50%; cursor: pointer; }
@@ -759,6 +997,8 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
   .user-message { max-width: 88%; }
   .composer-dock { padding-right: 10px; padding-left: 10px; }
   .desktop-attachment { display: none; }
+  .mobile-add-control { display: block; }
   .mobile-attachment { display: grid; }
+  .mobile-plus { transform: translateY(-1px); }
 }
 </style>

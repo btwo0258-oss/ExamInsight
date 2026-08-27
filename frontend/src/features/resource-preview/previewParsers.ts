@@ -1,5 +1,24 @@
 import type { SpreadsheetSheetDraft } from "@/types/contracts/spreadsheet";
 
+/** A safe client-side fallback for formats whose decompressed size can dwarf the file size. */
+export class PreviewBudgetExceededError extends Error {
+  readonly code = "PREVIEW_BUDGET_EXCEEDED";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "PreviewBudgetExceededError";
+  }
+}
+
+const CSV_MAX_CHARACTERS = 5_000_000;
+const CSV_MAX_ROWS = 10_000;
+const CSV_MAX_COLUMNS = 100;
+const CSV_MAX_CELLS = 250_000;
+const XLSX_MAX_SHEETS = 20;
+const XLSX_MAX_ROWS = 5_000;
+const XLSX_MAX_COLUMNS = 100;
+const XLSX_MAX_CELLS = 250_000;
+
 function spreadsheetColumnName(index: number) {
   let value = index + 1;
   let label = "";
@@ -64,7 +83,16 @@ export async function parseXlsx(blob: Blob): Promise<SpreadsheetSheetDraft[]> {
   const ExcelJS = await import("exceljs");
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(await blob.arrayBuffer());
+  if (workbook.worksheets.length > XLSX_MAX_SHEETS) {
+    throw new PreviewBudgetExceededError("工作表数量超过在线预览限制，请下载文件查看。");
+  }
   return workbook.worksheets.map((worksheet, sheetIndex) => {
+    if (worksheet.actualRowCount > XLSX_MAX_ROWS || worksheet.columnCount > XLSX_MAX_COLUMNS) {
+      throw new PreviewBudgetExceededError("工作表内容过大，请下载文件查看。");
+    }
+    if (worksheet.actualRowCount * worksheet.columnCount > XLSX_MAX_CELLS) {
+      throw new PreviewBudgetExceededError("工作表单元格数量超过在线预览限制，请下载文件查看。");
+    }
     const rows = worksheet.getSheetValues().slice(1) as unknown[][];
     const width = Math.max(1, ...rows.map((row) => (Array.isArray(row) ? row.length - 1 : 0)));
     return {
@@ -81,7 +109,11 @@ export async function parseXlsx(blob: Blob): Promise<SpreadsheetSheetDraft[]> {
 }
 
 export function parseCsv(text: string): SpreadsheetSheetDraft[] {
+  if (text.length > CSV_MAX_CHARACTERS) {
+    throw new PreviewBudgetExceededError("CSV 内容超过在线预览限制，请下载文件查看。");
+  }
   const rows: string[][] = [];
+  let cellCount = 0;
   let row: string[] = [];
   let cell = "";
   let quoted = false;
@@ -96,11 +128,22 @@ export function parseCsv(text: string): SpreadsheetSheetDraft[] {
       }
     } else if (character === "," && !quoted) {
       row.push(cell);
+      cellCount += 1;
+      if (row.length > CSV_MAX_COLUMNS) {
+        throw new PreviewBudgetExceededError("CSV 列数超过在线预览限制，请下载文件查看。");
+      }
       cell = "";
     } else if ((character === "\n" || character === "\r") && !quoted) {
       if (character === "\r" && text[index + 1] === "\n") index += 1;
       row.push(cell);
+      cellCount += 1;
+      if (row.length > CSV_MAX_COLUMNS) {
+        throw new PreviewBudgetExceededError("CSV 列数超过在线预览限制，请下载文件查看。");
+      }
       if (row.some((value) => value.length > 0)) rows.push(row);
+      if (rows.length > CSV_MAX_ROWS || cellCount > CSV_MAX_CELLS) {
+        throw new PreviewBudgetExceededError("CSV 内容超过在线预览限制，请下载文件查看。");
+      }
       row = [];
       cell = "";
     } else {
@@ -108,7 +151,14 @@ export function parseCsv(text: string): SpreadsheetSheetDraft[] {
     }
   }
   row.push(cell);
+  cellCount += 1;
+  if (row.length > CSV_MAX_COLUMNS) {
+    throw new PreviewBudgetExceededError("CSV 列数超过在线预览限制，请下载文件查看。");
+  }
   if (row.some((value) => value.length > 0)) rows.push(row);
+  if (rows.length > CSV_MAX_ROWS || cellCount > CSV_MAX_CELLS) {
+    throw new PreviewBudgetExceededError("CSV 内容超过在线预览限制，请下载文件查看。");
+  }
   const width = Math.max(1, ...rows.map((value) => value.length));
   return [
     {
@@ -119,4 +169,3 @@ export function parseCsv(text: string): SpreadsheetSheetDraft[] {
     },
   ];
 }
-

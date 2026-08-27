@@ -12,13 +12,19 @@ const props = withDefaults(defineProps<{
   messages: ChatMessage[]
   versionGroups: MessageVersionGroup[]
   busy?: boolean
+  stageText?: string
   speechLoadingMessageId?: string
   speechPlayingMessageId?: string
+  speechErrorMessageId?: string
+  speechError?: string
   scrollElement?: HTMLElement | null
 }>(), {
   busy: false,
+  stageText: '',
   speechLoadingMessageId: '',
   speechPlayingMessageId: '',
+  speechErrorMessageId: '',
+  speechError: '',
   scrollElement: null,
 })
 
@@ -27,9 +33,10 @@ const emit = defineEmits<{
   regenerate: [messageId: string]
   speak: [message: ChatMessage]
   switchVersion: [branchId: string]
-  openAsset: [assetId: string]
-  openCitation: [citation: Citation]
+  openAsset: [assetId: string, messageId: string]
+  openCitation: [citation: Citation, messageId: string]
   activeUserIndex: [index: number]
+  reachTop: []
 }>()
 
 const root = ref<HTMLElement | null>(null)
@@ -41,6 +48,9 @@ const observed = new Map<string, HTMLElement>()
 let scrollParent: HTMLElement | null = null
 let resizeObserver: ResizeObserver | null = null
 let frame = 0
+let restoringAnchor = false
+// Do not trigger a history request during the initial mount at scrollTop=0.
+let topNotified = true
 
 const versionMap = computed(() => new Map(props.versionGroups.map(group => [group.id, group])))
 const layout = computed(() => {
@@ -66,6 +76,14 @@ function updateViewport() {
   const listTop = listOffsetTop()
   viewportStart.value = Math.max(0, scrollParent.scrollTop - listTop)
   viewportEnd.value = viewportStart.value + scrollParent.clientHeight
+
+  const nearTop = scrollParent.scrollTop <= 72
+  if (nearTop && !topNotified && !restoringAnchor) {
+    topNotified = true
+    emit('reachTop')
+  } else if (!nearTop) {
+    topNotified = false
+  }
 
   const center = viewportStart.value + scrollParent.clientHeight / 2
   const users = layout.value.filter(item => item.message.role === 'USER')
@@ -107,14 +125,44 @@ function observeItem(messageId: string, element: unknown) {
   resizeObserver?.observe(next)
 }
 
-async function scrollToMessage(messageId: string, behavior: ScrollBehavior = 'smooth') {
+async function scrollToMessage(
+  messageId: string,
+  behavior: ScrollBehavior = 'smooth',
+  anchor?: { artifactId?: string; offset?: number },
+) {
   const item = layout.value.find(candidate => candidate.message.id === messageId)
-  if (!item || !scrollParent || !root.value) return
-  scrollParent.scrollTo({
-    top: Math.max(0, listOffsetTop() + item.top - (scrollParent.clientHeight - item.height) / 2),
-    behavior,
-  })
-  await nextTick()
+  if (!item || !scrollParent || !root.value) return false
+  restoringAnchor = Boolean(anchor)
+  try {
+    scrollParent.scrollTo({
+      top: Math.max(0, listOffsetTop() + item.top - (anchor ? 24 : (scrollParent.clientHeight - item.height) / 2)),
+      behavior: anchor ? 'auto' : behavior,
+    })
+    updateViewport()
+    await nextTick()
+    if (anchor) {
+      // Bring the virtual item into the DOM first, then use its measured card position.
+      // Bounded frames let ResizeObserver settle; no polling or fetching the whole history.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+        if (!scrollParent || !root.value) return false
+        const messageElement = observed.get(messageId)
+        const artifactElement = anchor.artifactId && messageElement
+          ? [...messageElement.querySelectorAll<HTMLElement>('[data-artifact-id]')]
+            .find(element => element.dataset.artifactId === anchor.artifactId)
+          : undefined
+        const target = artifactElement ?? messageElement
+        if (!target) continue
+        scrollParent.scrollTop += target.getBoundingClientRect().top
+          - scrollParent.getBoundingClientRect().top - (anchor.offset ?? 24)
+        updateViewport()
+        await nextTick()
+      }
+    }
+    return true
+  } finally {
+    restoringAnchor = false
+  }
 }
 
 defineExpose({ scrollToMessage })
@@ -130,7 +178,7 @@ onMounted(() => {
   resizeObserver = new ResizeObserver((entries) => {
     let changed = false
     let anchorDelta = 0
-    const shouldFollowLatest = Boolean(scrollParent
+    const shouldFollowLatest = Boolean(!restoringAnchor && scrollParent
       && scrollParent.scrollHeight - scrollParent.scrollTop - scrollParent.clientHeight < 160)
     const previousLayout = new Map(layout.value.map(item => [item.message.id, item]))
     entries.forEach((entry) => {
@@ -147,8 +195,8 @@ onMounted(() => {
     if (!changed) return
     layoutRevision.value += 1
     void nextTick(() => {
-      if (scrollParent && shouldFollowLatest) scrollParent.scrollTop = scrollParent.scrollHeight
-      else if (scrollParent && anchorDelta) scrollParent.scrollTop += anchorDelta
+      if (scrollParent && !restoringAnchor && shouldFollowLatest) scrollParent.scrollTop = scrollParent.scrollHeight
+      else if (scrollParent && !restoringAnchor && anchorDelta) scrollParent.scrollTop += anchorDelta
       scheduleViewportUpdate()
     })
   })
@@ -156,6 +204,10 @@ onMounted(() => {
 })
 
 watch(() => props.scrollElement, connectScrollParent)
+watch(() => props.messages.length, () => {
+  // Allow another top-load after a page has been prepended.
+  if (scrollParent && scrollParent.scrollTop > 72) topNotified = false
+})
 watch(() => props.messages.map(message => `${message.id}:${message.content.length}:${message.status}`).join('|'),
   () => nextTick(scheduleViewportUpdate))
 
@@ -180,14 +232,16 @@ onBeforeUnmount(() => {
         :message="item.message"
         :version-group="versionMap.get(item.message.versionGroupId)"
         :busy="busy"
+        :stage-text="stageText"
         :speech-loading="speechLoadingMessageId === item.message.id"
         :speech-playing="speechPlayingMessageId === item.message.id"
+        :speech-error="speechErrorMessageId === item.message.id ? speechError : ''"
         @edit="(...args) => emit('edit', ...args)"
         @regenerate="emit('regenerate', $event)"
         @speak="emit('speak', $event)"
         @switch-version="emit('switchVersion', $event)"
-        @open-asset="emit('openAsset', $event)"
-        @open-citation="emit('openCitation', $event)"
+        @open-asset="(...args) => emit('openAsset', ...args)"
+        @open-citation="(...args) => emit('openCitation', ...args)"
       >
         <slot name="after-message" :message="item.message" />
       </MessageBubble>

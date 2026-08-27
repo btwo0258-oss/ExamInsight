@@ -109,6 +109,20 @@ public class KnowledgeBaseLibraryRepository {
         return rows.stream().findFirst();
     }
 
+    public List<ExpiredTrashKnowledgeBase> findExpiredTrash(LocalDateTime cutoff, int limit) {
+        return jdbc.query("""
+                SELECT id, user_id, external_id, trash_started_at
+                  FROM knowledge_base
+                 WHERE status = 'TRASHED'
+                   AND trash_started_at IS NOT NULL
+                   AND trash_started_at <= ?
+                 ORDER BY trash_started_at ASC, id ASC
+                 LIMIT ?
+                """, (rs, rowNum) -> new ExpiredTrashKnowledgeBase(
+                rs.getLong("id"), rs.getLong("user_id"), rs.getString("external_id"),
+                rs.getObject("trash_started_at", LocalDateTime.class)), cutoff, limit);
+    }
+
     public boolean activeNameExists(long userId, String normalizedName, long excludedId) {
         Boolean exists = jdbc.queryForObject("""
                 SELECT EXISTS(
@@ -148,6 +162,11 @@ public class KnowledgeBaseLibraryRepository {
     }
 
     public void purge(long id) {
+        // Conversation history keeps its immutable citation/context snapshot,
+        // while the optional current knowledge-base association is detached.
+        // This lets retention remove an empty container without deleting chat
+        // history or violating the conversation foreign key.
+        jdbc.update("UPDATE conversation SET knowledge_base_id = NULL WHERE knowledge_base_id = ?", id);
         jdbc.update("DELETE FROM knowledge_base_asset WHERE knowledge_base_id = ?", id);
         jdbc.update("""
                 UPDATE knowledge_base
@@ -213,6 +232,13 @@ public class KnowledgeBaseLibraryRepository {
             String previousStatus,
             LocalDateTime trashStartedAt,
             long rowVersion) {
+    }
+
+    public record ExpiredTrashKnowledgeBase(
+            long id,
+            long userId,
+            String externalId,
+            LocalDateTime trashStartedAt) {
     }
 
     public record OwnedAsset(long id, String externalId) {

@@ -9,6 +9,7 @@ import type {
   ChatStreamEvent,
   CreateConversationPayload,
   ConversationDetail,
+  ConversationMessagesPage,
   ConversationPage,
   ConversationSummary,
   SendMessageAccepted,
@@ -51,6 +52,22 @@ async function call<T>(operation: () => Promise<{ data: T }>, fallback: string) 
   }
 }
 
+function normalizeConversationPage(value: unknown): ConversationPage {
+  if (!value || typeof value !== 'object') {
+    return { items: [], nextCursor: null, hasMore: false }
+  }
+  const source = value as Partial<ConversationPage>
+  const items = Array.isArray(source.items) ? source.items : []
+  const nextCursor = typeof source.nextCursor === 'string' && source.nextCursor.length
+    ? source.nextCursor
+    : null
+  return {
+    items,
+    nextCursor,
+    hasMore: Boolean(nextCursor && source.hasMore),
+  }
+}
+
 export function createConversation(payload: CreateConversationPayload) {
   return call(
     () => request.post<ConversationSummary>('/api/v2/conversations', payload),
@@ -58,13 +75,14 @@ export function createConversation(payload: CreateConversationPayload) {
   )
 }
 
-export function listConversations(cursor?: string | null, limit = 30) {
-  return call(
+export async function listConversations(cursor?: string | null, limit = 30) {
+  const page = await call(
     () => request.get<ConversationPage>('/api/v2/conversations', {
       params: { cursor: cursor || undefined, limit },
     }),
     '加载对话列表失败。',
   )
+  return normalizeConversationPage(page)
 }
 
 export function getConversation(conversationId: string) {
@@ -74,9 +92,38 @@ export function getConversation(conversationId: string) {
   )
 }
 
+export async function getConversationMessages(
+  conversationId: string,
+  options: { cursor?: string | null; targetMessageId?: string | null; limit?: number } = {},
+) {
+  return call(
+    () => request.get<ConversationMessagesPage>(
+      `/api/v2/conversations/${conversationId}/messages`,
+      { params: {
+        cursor: options.cursor || undefined,
+        targetMessageId: options.targetMessageId || undefined,
+        limit: options.limit ?? 40,
+      } },
+    ),
+    '加载消息失败。',
+  )
+}
+
+export function getConversationSummary(conversationId: string) {
+  return call(
+    () => request.get<ConversationSummary>(`/api/v2/conversations/${conversationId}/summary`),
+    '加载对话状态失败。',
+  )
+}
+
 export function updateConversation(
   conversationId: string,
-  payload: { title?: string; knowledgeBaseId?: string | null; clearKnowledgeBase?: boolean },
+  payload: {
+    title?: string
+    knowledgeBaseId?: string | null
+    clearKnowledgeBase?: boolean
+    pinned?: boolean
+  },
 ) {
   return call(
     () => request.patch<ConversationSummary>(`/api/v2/conversations/${conversationId}`, payload),
@@ -216,6 +263,18 @@ export async function synthesizeSpeech(text: string, signal?: AbortSignal) {
     })
     return response.data
   } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.data instanceof Blob) {
+      try {
+        const body = JSON.parse(await error.response.data.text()) as ApiErrorBody
+        throw new ChatV2ApiError(
+          body.error?.message || body.message || '朗读服务暂时不可用，请稍后重试。',
+          body.error?.code,
+          body.error?.requestId ?? null,
+        )
+      } catch (parseError) {
+        if (parseError instanceof ChatV2ApiError) throw parseError
+      }
+    }
     throw chatError(error, '朗读服务暂时不可用，请稍后重试。')
   }
 }

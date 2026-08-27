@@ -184,6 +184,26 @@ public class AssetLibraryRepository {
         return rows.stream().findFirst();
     }
 
+    /**
+     * Returns a bounded batch of assets whose recoverable-trash window has
+     * elapsed.  The caller must re-read each row under a transaction before
+     * scheduling a purge because a user may restore it between this scan and
+     * the enqueue operation.
+     */
+    public List<ExpiredTrashAsset> findExpiredTrash(LocalDateTime cutoff, int limit) {
+        return jdbc.query("""
+                SELECT id, user_id, external_id, trash_started_at
+                  FROM asset
+                 WHERE status = 'TRASHED'
+                   AND trash_started_at IS NOT NULL
+                   AND trash_started_at <= ?
+                 ORDER BY trash_started_at ASC, id ASC
+                 LIMIT ?
+                """, (rs, rowNum) -> new ExpiredTrashAsset(
+                rs.getLong("id"), rs.getLong("user_id"), rs.getString("external_id"),
+                rs.getObject("trash_started_at", LocalDateTime.class)), cutoff, limit);
+    }
+
     public void rename(long assetId, String name) {
         jdbc.update("""
                 UPDATE asset
@@ -333,6 +353,13 @@ public class AssetLibraryRepository {
             LocalDateTime trashStartedAt,
             LocalDateTime deletedAt,
             long rowVersion) {
+    }
+
+    public record ExpiredTrashAsset(
+            long id,
+            long userId,
+            String externalId,
+            LocalDateTime trashStartedAt) {
     }
 
     public record KnowledgeBaseReferenceRow(String externalId, String name) {

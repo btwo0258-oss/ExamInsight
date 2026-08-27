@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('Visual Regression and Interaction Tests', () => {
+test.describe.skip('Visual Regression and Interaction Tests（旧版消息 DOM 契约，当前契约见 chat-v2-contract.spec.ts）', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('http://localhost:5173/chat');
   });

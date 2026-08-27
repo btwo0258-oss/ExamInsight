@@ -26,7 +26,10 @@ public class EmbeddingRuntime {
     }
 
     public boolean isSemanticIndexAvailable() {
-        if (!properties.getIndexing().isEnabled() || suspensionCode.get() != null) return false;
+        // A previous provider failure is observable through suspensionCode,
+        // but it must not permanently disable recovery.  The next bounded
+        // query/index attempt is allowed to probe the configured provider.
+        if (!properties.getIndexing().isEnabled()) return false;
         return "dashscope".equals(provider()) && dashScope.isConfigured();
     }
 
@@ -36,5 +39,9 @@ public class EmbeddingRuntime {
 
     public String suspensionCode() {
         return suspensionCode.get();
+    }
+
+    public void resume() {
+        suspensionCode.set(null);
     }
 }

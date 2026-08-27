@@ -12,6 +12,7 @@ export type PreviewLoadStrategy =
   | 'text'
   | 'docx'
   | 'pptx'
+  | 'mindmap'
   | 'csv'
   | 'xlsx'
   | 'object-url'
@@ -28,6 +29,7 @@ const RENDERERS: Record<AssetPreviewRenderer, PreviewDescriptor> = {
   image: { kind: 'image', fileType: 'image', strategy: 'object-url' },
   docx: { kind: 'word', fileType: 'document', strategy: 'docx' },
   pptx: { kind: 'presentation', fileType: 'presentation', strategy: 'pptx' },
+  mindmap: { kind: 'mindmap', fileType: 'mindmap', strategy: 'mindmap' },
   xlsx: { kind: 'spreadsheet', fileType: 'spreadsheet', strategy: 'xlsx' },
   csv: { kind: 'spreadsheet', fileType: 'spreadsheet', strategy: 'csv' },
   markdown: { kind: 'text', fileType: 'document', strategy: 'text' },

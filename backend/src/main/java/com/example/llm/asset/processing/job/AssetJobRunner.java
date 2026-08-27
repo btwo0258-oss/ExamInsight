@@ -4,6 +4,7 @@ import com.example.llm.asset.processing.ProcessingFailure;
 import com.example.llm.asset.processing.config.AssetProcessingProperties;
 import com.example.llm.asset.processing.job.AssetJobRepository.AssetJob;
 import com.example.llm.asset.processing.service.AssetProcessingCoordinator;
+import com.example.llm.asset.service.AssetRetentionService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -26,6 +27,7 @@ public class AssetJobRunner {
     private final AssetProcessingProperties properties;
     private final ObjectMapper objectMapper;
     private final Clock clock;
+    private final AssetRetentionService retention;
     private final String workerId;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
@@ -34,12 +36,14 @@ public class AssetJobRunner {
             AssetProcessingCoordinator coordinator,
             AssetProcessingProperties properties,
             ObjectMapper objectMapper,
-            Clock clock) {
+            Clock clock,
+            AssetRetentionService retention) {
         this.jobs = jobs;
         this.coordinator = coordinator;
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.clock = clock;
+        this.retention = retention;
         this.workerId = newWorkerId();
     }
 
@@ -63,6 +67,12 @@ public class AssetJobRunner {
                 log.warn("Unable to reconcile V2 vector indexing work", exception);
             }
             LocalDateTime now = now();
+            AssetRetentionService.RetentionResult retentionResult = retention.expire(now);
+            if (retentionResult.assetPurgeJobsScheduled() > 0
+                    || retentionResult.knowledgeBasesPurged() > 0) {
+                log.info("Recycle-bin retention scheduled {} asset purge job(s) and purged {} knowledge base(s)",
+                        retentionResult.assetPurgeJobsScheduled(), retentionResult.knowledgeBasesPurged());
+            }
             int reopened = jobs.extendLegacySecurityScanRetries(now);
             if (reopened > 0) {
                 log.info("Reopened {} legacy V2 security scan job(s)", reopened);

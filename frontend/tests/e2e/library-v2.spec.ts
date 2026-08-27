@@ -126,7 +126,7 @@ test.describe('V2 个人资料库', () => {
 
     await expect(page.getByRole('heading', { name: '资料库' })).toBeVisible()
     await expect(page.getByText('计算机网络期末笔记.pdf')).toBeVisible()
-    await expect(page.getByText('可用于 AI').first()).toBeVisible()
+    await expect(page.getByText('计算机网络期末复习', { exact: true })).toBeVisible()
     await expect(page.getByText('操作系统复习提纲.docx')).toBeVisible()
     await expect(page.getByText('解析中')).toBeVisible()
     await expect(page.getByText('主要知识点')).toHaveCount(0)
@@ -154,6 +154,7 @@ test.describe('V2 个人资料库', () => {
     await expect(page.getByRole('heading', { name: '上传学习资料' })).toBeVisible()
     await expect(page.getByText(/支持 PDF、DOCX、PPTX、XLSX/)).toBeVisible()
     await expect(page.getByText('上传后加入知识库')).toBeVisible()
+    await page.getByRole('combobox', { name: '上传后加入知识库' }).click()
     await expect(page.getByRole('option', { name: '计算机网络期末复习' })).toHaveCount(1)
     await page.screenshot({ path: 'test-results/library-v2-upload.png', fullPage: true })
   })

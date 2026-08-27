@@ -12,8 +12,11 @@ import {
   MessageSquare,
   Moon,
   MoreHorizontal,
+  Pin,
+  PinOff,
   Plus,
   Sun,
+  Trash2,
   UserRound,
 } from 'lucide-vue-next'
 
@@ -52,12 +55,16 @@ const recentExpanded = ref(true)
 const profileOpen = ref(false)
 const accountMenuOpen = ref(false)
 const activeMenuId = ref('')
+const loadingMoreConversations = ref(false)
+const sidebarRoot = ref<HTMLElement | null>(null)
 let resizeStartX = 0
 let resizeStartWidth = DEFAULT_SIDEBAR_WIDTH
 
 const activeWidth = computed(() => collapsed.value ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth.value)
 const displayName = computed(() => authStore.user?.nickname || authStore.user?.email?.split('@')[0] || '登录')
 const activeConversationId = computed(() => String(route.params.id || ''))
+const pinnedConversations = computed(() => chatStore.conversations.filter(item => Boolean(item.pinnedAt)))
+const recentConversations = computed(() => chatStore.conversations.filter(item => !item.pinnedAt))
 
 watch(activeWidth, value => emit('widthChange', value), { immediate: true })
 watch(sidebarWidth, value => localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(value)))
@@ -82,6 +89,33 @@ async function deleteConversation(id: string) {
   if (!window.confirm('确定删除这个对话吗？')) return
   await chatStore.remove(id)
   if (activeConversationId.value === id) await router.push({ name: 'chat' })
+}
+
+async function togglePinConversation(id: string, pinned: boolean) {
+  activeMenuId.value = ''
+  try {
+    await chatStore.setPinned(id, pinned)
+  } catch (cause) {
+    window.alert(cause instanceof Error ? cause.message : '保存置顶状态失败。')
+  }
+}
+
+async function requestMoreConversations() {
+  if (loadingMoreConversations.value || !chatStore.hasMoreConversations) return
+  loadingMoreConversations.value = true
+  try {
+    await chatStore.loadList(true)
+  } catch (cause) {
+    window.alert(cause instanceof Error ? cause.message : '加载更多对话失败。')
+  } finally {
+    loadingMoreConversations.value = false
+  }
+}
+
+function handleConversationScroll(event: Event) {
+  const element = event.currentTarget as HTMLElement
+  if (element.scrollTop + element.clientHeight < element.scrollHeight - 80) return
+  void requestMoreConversations()
 }
 
 function toggleSidebar() {
@@ -125,16 +159,35 @@ async function logout() {
   await authStore.logout(router)
 }
 
+function closeTransientMenus(event: PointerEvent) {
+  if (sidebarRoot.value?.contains(event.target as Node)) return
+  activeMenuId.value = ''
+  accountMenuOpen.value = false
+}
+
+function closeMenusOnEscape(event: KeyboardEvent) {
+  if (event.key !== 'Escape') return
+  activeMenuId.value = ''
+  accountMenuOpen.value = false
+}
+
 onMounted(() => {
   authStore.init()
   if (authStore.isAuthed && !chatStore.conversations.length) void chatStore.loadList().catch(() => undefined)
+  document.addEventListener('pointerdown', closeTransientMenus)
+  document.addEventListener('keydown', closeMenusOnEscape)
 })
 
-onBeforeUnmount(stopResize)
+onBeforeUnmount(() => {
+  stopResize()
+  document.removeEventListener('pointerdown', closeTransientMenus)
+  document.removeEventListener('keydown', closeMenusOnEscape)
+})
 </script>
 
 <template>
   <aside
+    ref="sidebarRoot"
     class="student-sidebar"
     :class="{ 'student-sidebar--collapsed': collapsed, 'student-sidebar--resizing': isResizing }"
     :style="{ '--student-sidebar-width': `${activeWidth}px` }"
@@ -182,9 +235,10 @@ onBeforeUnmount(stopResize)
         <span>最近</span>
         <ChevronDown :size="14" :class="{ folded: !recentExpanded }" />
       </button>
-      <div v-show="recentExpanded" class="conversation-list">
+      <div v-show="recentExpanded" class="conversation-list" @scroll.passive="handleConversationScroll">
+        <div v-if="pinnedConversations.length" class="conversation-group-label">已置顶</div>
         <div
-          v-for="item in chatStore.conversations"
+          v-for="item in pinnedConversations"
           :key="item.id"
           class="conversation-item"
           :class="{ active: activeConversationId === item.id }"
@@ -203,10 +257,39 @@ onBeforeUnmount(stopResize)
           </button>
           <div v-if="activeMenuId === item.id" class="conversation-menu">
             <button type="button" @click="renameConversation(item.id, item.title)">重命名</button>
-            <button class="danger" type="button" @click="deleteConversation(item.id)">删除</button>
+            <button type="button" @click="togglePinConversation(item.id, false)"><PinOff :size="15" />取消置顶</button>
+            <button class="danger" type="button" @click="deleteConversation(item.id)"><Trash2 :size="15" />删除</button>
+          </div>
+        </div>
+        <div v-if="pinnedConversations.length" class="conversation-group-label">最近</div>
+        <div
+          v-for="item in recentConversations"
+          :key="item.id"
+          class="conversation-item"
+          :class="{ active: activeConversationId === item.id }"
+        >
+          <RouterLink :to="`/chat/${item.id}`" :title="item.title">
+            <MessageSquare :size="15" />
+            <span>{{ item.title }}</span>
+          </RouterLink>
+          <button
+            class="conversation-more"
+            type="button"
+            aria-label="对话操作"
+            @click.stop="activeMenuId = activeMenuId === item.id ? '' : item.id"
+          >
+            <MoreHorizontal :size="16" />
+          </button>
+          <div v-if="activeMenuId === item.id" class="conversation-menu">
+            <button type="button" @click="renameConversation(item.id, item.title)">重命名</button>
+            <button type="button" @click="togglePinConversation(item.id, true)"><Pin :size="15" />置顶</button>
+            <button class="danger" type="button" @click="deleteConversation(item.id)"><Trash2 :size="15" />删除</button>
           </div>
         </div>
         <p v-if="!chatStore.conversations.length">暂无对话</p>
+        <button v-if="chatStore.hasMoreConversations" class="load-more-conversations" type="button" :disabled="chatStore.listLoading || loadingMoreConversations" @click="requestMoreConversations">
+          {{ chatStore.listLoading || loadingMoreConversations ? '加载中…' : '加载更多' }}
+        </button>
       </div>
     </section>
 
@@ -364,6 +447,7 @@ onBeforeUnmount(stopResize)
 .section-title svg.folded { transform: rotate(-90deg); }
 .conversation-list { height: calc(100% - 30px); overflow: auto; scrollbar-width: thin; }
 .conversation-list > p { margin: 12px 8px; color: var(--color-text-muted); font-size: 12px; }
+.conversation-group-label { margin: 10px 8px 4px; color: var(--color-text-muted); font-size: 11px; font-weight: 650; }
 .conversation-item { position: relative; display: flex; align-items: center; border-radius: 8px; }
 .conversation-item:hover, .conversation-item.active { background: var(--ui-hover-bg, var(--color-hover)); }
 .conversation-item > a { display: flex; min-width: 0; height: 36px; flex: 1; align-items: center; gap: 9px; padding: 0 34px 0 8px; color: inherit; font-size: 14px; text-decoration: none; }
@@ -376,6 +460,9 @@ onBeforeUnmount(stopResize)
 .conversation-menu button, .account-menu button { display: flex; min-height: 36px; align-items: center; gap: 8px; padding: 0 10px; border: 0; border-radius: 8px; color: inherit; background: transparent; text-align: left; cursor: pointer; }
 .conversation-menu button:hover, .account-menu button:hover { background: var(--ui-hover-bg, var(--color-hover)); }
 .conversation-menu button.danger { color: var(--color-danger); }
+.load-more-conversations { display: block; width: calc(100% - 16px); min-height: 30px; margin: 8px; padding: 0 8px; border: 1px solid var(--color-border); border-radius: 8px; color: var(--color-text-muted); background: transparent; font: inherit; font-size: 11px; cursor: pointer; }
+.load-more-conversations:hover:not(:disabled) { color: var(--color-text); background: var(--ui-hover-bg, var(--color-hover)); }
+.load-more-conversations:disabled { cursor: wait; opacity: .65; }
 
 .sidebar-footer { display: grid; flex: 0 0 auto; gap: 12px; margin-top: auto; padding-top: 12px; border-top: 1px solid var(--color-border); }
 .theme-toggle-row { display: flex; min-height: 46px; align-items: center; justify-content: space-between; padding: 0 12px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface); font-size: 14px; font-weight: 700; }

@@ -32,9 +32,6 @@ function enhanceCodeBlocks() {
     toolbar.innerHTML = `
       <span class="code-language">${languageNames[language.toLowerCase()] || language}</span>
       <span class="code-toolbar-actions">
-        <button type="button" data-code-action="expand" title="展开代码" aria-label="展开代码">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg>
-        </button>
         <button type="button" data-code-action="copy" title="复制代码" aria-label="复制代码">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         </button>
@@ -50,11 +47,6 @@ async function onClick(event: MouseEvent) {
   const pre = button.closest('pre')
   const code = pre?.querySelector('code')
   if (!pre || !code) return
-  if (button.dataset.codeAction === 'expand') {
-    pre.classList.toggle('code-expanded')
-    button.title = pre.classList.contains('code-expanded') ? '收起代码' : '展开代码'
-    return
-  }
   await copyText(code.textContent || '')
   button.classList.add('copied')
   button.title = '已复制'
@@ -90,8 +82,7 @@ watch(html, async () => {
 .markdown :deep(blockquote) { padding-left: 14px; border-left: 3px solid var(--color-border); color: var(--color-text-muted); }
 .markdown :deep(code) { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
 .markdown :deep(:not(pre) > code) { padding: 2px 5px; border-radius: 5px; background: var(--color-surface); font-size: .9em; }
-.markdown :deep(pre) { position: relative; max-height: 520px; margin: 14px 0; padding: 50px 12px 14px; border: 1px solid var(--color-border); border-radius: 14px; background: color-mix(in srgb, var(--color-text) 5%, var(--color-bg)); overflow: auto; transition: max-height .2s ease; }
-.markdown :deep(pre.code-expanded) { max-height: none; }
+.markdown :deep(pre) { position: relative; max-height: none; margin: 14px 0; padding: 50px 12px 14px; border: 1px solid var(--color-border); border-radius: 14px; background: color-mix(in srgb, var(--color-text) 5%, var(--color-bg)); overflow: auto; }
 .markdown :deep(pre code) { display: block; padding: 0; border: 0; background: transparent; font-size: 13px; line-height: 1.65; }
 .markdown :deep(.code-toolbar) { position: absolute; inset: 0 0 auto; display: flex; height: 38px; align-items: center; justify-content: space-between; padding: 0 10px 0 12px; border-bottom: 1px solid var(--color-border); color: var(--color-text-muted); background: color-mix(in srgb, var(--color-text) 4%, var(--color-bg)); font-size: 12px; }
 .markdown :deep(.code-toolbar-actions) { display: flex; gap: 2px; }

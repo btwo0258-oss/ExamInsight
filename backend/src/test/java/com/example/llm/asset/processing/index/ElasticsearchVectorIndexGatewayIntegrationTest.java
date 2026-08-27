@@ -57,7 +57,7 @@ class ElasticsearchVectorIndexGatewayIntegrationTest {
     }
 
     @Test
-    void createsStrict2560DimensionIndexAndIdempotentlyOverwritesDocument() throws Exception {
+    void createsStrict1024DimensionIndexAndIdempotentlyOverwritesDocument() throws Exception {
         AssetProcessingProperties properties = new AssetProcessingProperties();
         properties.getIndexing().setIndexName("examinsight-v2-vector-integration-test");
         ElasticsearchVectorIndexGateway gateway = new ElasticsearchVectorIndexGateway(client, properties);
@@ -65,7 +65,7 @@ class ElasticsearchVectorIndexGatewayIntegrationTest {
                 "embedding-record-1", "01J00000000000000000000100",
                 7L, 11L, 13L, 17L, 1,
                 "a".repeat(64), properties.getIndexing().getEmbeddingVersion(),
-                Collections.nCopies(2560, 0.01f));
+                Collections.nCopies(1024, 0.01f));
 
         gateway.ensureIndex();
         gateway.upsert(document);
@@ -86,7 +86,7 @@ class ElasticsearchVectorIndexGatewayIntegrationTest {
                 .result().get(properties.getIndexing().getIndexName())
                 .mappings().properties().get("embedding")
                 .denseVector().dims();
-        assertThat(dimensions).isEqualTo(2560);
+        assertThat(dimensions).isEqualTo(1024);
     }
 
     @Test
@@ -143,11 +143,11 @@ class ElasticsearchVectorIndexGatewayIntegrationTest {
             List<Float> embedding) {
         return new VectorIndexGateway.VectorDocument(
                 documentId, chunkId, userId, assetId, versionId, versionId + 100,
-                1, "b".repeat(64), "xfyun-llm-embedding-2560-v1", embedding);
+                1, "b".repeat(64), "dashscope-qwen3.7-text-embedding-1024-v1", embedding);
     }
 
     private List<Float> unitVector(int dimension) {
-        List<Float> vector = new ArrayList<>(Collections.nCopies(2560, 0f));
+        List<Float> vector = new ArrayList<>(Collections.nCopies(1024, 0f));
         vector.set(dimension, 1f);
         return vector;
     }

@@ -400,11 +400,6 @@ function openAsset(asset: LibraryAsset) {
   }
 }
 
-function startLearning(knowledgeBaseId: string) {
-  closeKnowledgeMenu();
-  void router.push({ path: "/learning/new", query: { knowledgeBaseId } });
-}
-
 function startChatWithSelection() {
   actionError.value = "";
   const knowledgeBases = selectedAssets.value.filter((asset) => asset.kind === "knowledge");
@@ -494,10 +489,6 @@ async function saveAssetName() {
   } catch (error) {
     actionError.value = error instanceof Error ? error.message : "重命名失败";
   }
-}
-
-function startLearningFromAsset(asset: LibraryAsset) {
-  if (asset.kind === "knowledge") startLearning(asset.source.id);
 }
 
 function openMoveForAsset(asset: LibraryAsset) {
@@ -669,7 +660,7 @@ function assetName(asset: LibraryAsset) {
 
 function knowledgeDescription(asset: LibraryAsset) {
   if (asset.kind !== "knowledge") return "";
-  return asset.source.description || "整理相关资料，供检索和智能学习使用。";
+  return asset.source.description || "整理相关资料，供检索使用。";
 }
 
 function openTrash() {
@@ -945,7 +936,6 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer));
                     <button class="ui-menu-item ui-menu-item--danger" type="button" @click="purgeTargets = [asset]"><span class="ui-menu-icon"><AppIcon name="trash" :size="16" /></span>彻底删除</button>
                   </template>
                   <template v-else>
-                    <button class="ui-menu-item" type="button" @click="startLearning(asset.source.id)"><span class="ui-menu-icon"><AppIcon name="graduation" :size="16" /></span>开始智能学习</button>
                     <button class="ui-menu-item" type="button" @click="renameKnowledge(asset.source)"><span class="ui-menu-icon"><AppIcon name="edit" :size="16" /></span>重命名</button>
                     <div class="ui-menu-divider" />
                     <button class="ui-menu-item ui-menu-item--danger" type="button" @click="requestDelete([asset])"><span class="ui-menu-icon"><AppIcon name="trash" :size="16" /></span>移入回收站</button>
@@ -1045,7 +1035,6 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer));
                 <button class="ui-menu-item ui-menu-item--danger" type="button" @click="purgeTargets = [asset]"><span class="ui-menu-icon"><AppIcon name="trash" :size="16" /></span>彻底删除</button>
               </template>
               <template v-else-if="asset.kind === 'knowledge'">
-                <button class="ui-menu-item" type="button" @click="startLearningFromAsset(asset)"><span class="ui-menu-icon"><AppIcon name="graduation" :size="16" /></span>开始智能学习</button>
                 <button class="ui-menu-item" type="button" @click="renameAsset(asset)"><span class="ui-menu-icon"><AppIcon name="edit" :size="16" /></span>重命名</button>
                 <div class="ui-menu-divider" />
                 <button class="ui-menu-item ui-menu-item--danger" type="button" @click="requestDelete([asset])"><span class="ui-menu-icon"><AppIcon name="trash" :size="16" /></span>移入回收站</button>

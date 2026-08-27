@@ -35,6 +35,44 @@ function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
 describe('MessageBubble V2 actions', () => {
   beforeEach(() => vi.clearAllMocks())
 
+  it('shows a blinking cursor and three skeleton lines below the waiting label, above the artifact slot', async () => {
+    const wrapper = mount(MessageBubble, {
+      props: { message: message({ content: '', status: 'STREAMING' }), stageText: '正在理解你的要求' },
+      slots: { default: '<div class="artifact-placeholder" />' },
+    })
+    const row = wrapper.get('.response-loading')
+    expect(row.find('.response-loading__cursor').exists()).toBe(true)
+    expect(row.find('.response-skeleton').exists()).toBe(true)
+    expect(row.findAll('.response-skeleton__line')).toHaveLength(3)
+    expect(row.get('.response-skeleton').element.previousElementSibling).toBe(row.get('.response-loading__status').element)
+    expect(row.text()).toBe('正在理解你的需求')
+    expect(row.element.parentElement).toBe(wrapper.get('.artifact-placeholder').element.parentElement)
+    await wrapper.setProps({ message: message({ content: '开始回答', status: 'STREAMING' }) })
+    expect(wrapper.find('.response-skeleton').exists()).toBe(false)
+    expect(wrapper.find('.response-loading').exists()).toBe(false)
+    expect(wrapper.find('.artifact-placeholder').exists()).toBe(true)
+    await wrapper.setProps({ message: message({ content: '已完成', status: 'FINALIZED' }) })
+    expect(wrapper.find('.response-loading').exists()).toBe(false)
+  })
+
+  it('does not show a generation label again while an artifact is pending', () => {
+    const wrapper = mount(MessageBubble, {
+      props: { message: message({ content: '正文已经开始', status: 'STREAMING' }), stageText: '正在生成内容' },
+      slots: { default: '<div class="artifact-placeholder" />' },
+    })
+    expect(wrapper.text()).not.toContain('正在生成内容')
+    expect(wrapper.find('.response-loading').exists()).toBe(false)
+    expect(wrapper.find('.artifact-placeholder').exists()).toBe(true)
+  })
+
+  it('allows cancelling speech while audio is still being prepared', async () => {
+    const wrapper = mount(MessageBubble, { props: { message: message(), speechLoading: true } })
+    const button = wrapper.get('button[title="停止朗读"]')
+    expect(button.attributes('disabled')).toBeUndefined()
+    await button.trigger('click')
+    expect(wrapper.emitted('speak')).toHaveLength(1)
+  })
+
   it('copies an assistant answer', async () => {
     const wrapper = mount(MessageBubble, { props: { message: message() } })
     await wrapper.get('button[title="复制"]').trigger('click')

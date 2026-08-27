@@ -2,6 +2,7 @@ package com.example.llm.chatv2.controller;
 
 import com.example.llm.chatv2.api.ChatV2Dtos.ConversationDetail;
 import com.example.llm.chatv2.api.ChatV2Dtos.ConversationPage;
+import com.example.llm.chatv2.api.ChatV2Dtos.ConversationMessagesPage;
 import com.example.llm.chatv2.api.ChatV2Dtos.ConversationSummary;
 import com.example.llm.chatv2.api.ChatV2Dtos.CreateConversationRequest;
 import com.example.llm.chatv2.api.ChatV2Dtos.EditMessageRequest;
@@ -52,6 +53,20 @@ public class ConversationV2Controller {
     @GetMapping("/{conversationId}")
     public ConversationDetail detail(@PathVariable String conversationId) {
         return service.get(conversationId);
+    }
+
+    @GetMapping("/{conversationId}/summary")
+    public ConversationSummary summary(@PathVariable String conversationId) {
+        return service.summary(conversationId);
+    }
+
+    @GetMapping("/{conversationId}/messages")
+    public ConversationMessagesPage messages(
+            @PathVariable String conversationId,
+            @RequestParam(required = false) String cursor,
+            @RequestParam(required = false) String targetMessageId,
+            @RequestParam(defaultValue = "40") int limit) {
+        return service.messages(conversationId, cursor, targetMessageId, limit);
     }
 
     @PatchMapping("/{conversationId}")

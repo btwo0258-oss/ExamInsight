@@ -7,7 +7,7 @@ test.beforeEach(async ({ page }) => {
   })
 })
 
-test('desktop composer keeps attachment on the left and model before voice on the right', async ({ page }) => {
+test('desktop composer keeps attachment on the left and voice on the right', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 })
   await page.goto('http://localhost:5173/chat')
 
@@ -19,8 +19,8 @@ test('desktop composer keeps attachment on the left and model before voice on th
   const rightChildren = await composer.locator('.toolbar-right').evaluate((element) =>
     Array.from(element.children).map((child) => child.className),
   )
-  expect(String(rightChildren[0])).toContain('model-switch')
-  expect(String(rightChildren[1])).toContain('voice-control')
+  expect(String(rightChildren[0])).toContain('voice-control')
+  expect(rightChildren).toHaveLength(2)
 })
 
 test('mobile left pill grows upward with attachment, photo upload and camera actions', async ({ page }) => {

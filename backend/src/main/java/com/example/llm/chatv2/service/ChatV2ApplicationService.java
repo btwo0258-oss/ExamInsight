@@ -3,6 +3,7 @@ package com.example.llm.chatv2.service;
 import com.example.llm.chatv2.api.ChatV2ApiException;
 import com.example.llm.chatv2.api.ChatV2Dtos.AiRunView;
 import com.example.llm.chatv2.api.ChatV2Dtos.ConversationDetail;
+import com.example.llm.chatv2.api.ChatV2Dtos.ConversationMessagesPage;
 import com.example.llm.chatv2.api.ChatV2Dtos.ConversationPage;
 import com.example.llm.chatv2.api.ChatV2Dtos.ConversationSummary;
 import com.example.llm.chatv2.api.ChatV2Dtos.CreateConversationRequest;
@@ -50,6 +51,20 @@ public class ChatV2ApplicationService {
         return repository.getConversation(UserContext.requireSession().userId(), requireExternalId(conversationId));
     }
 
+    public ConversationMessagesPage messages(
+            String conversationId, String cursor, String targetMessageId, int limit) {
+        return repository.getConversationMessages(
+                UserContext.requireSession().userId(), requireExternalId(conversationId),
+                cursor == null || cursor.isBlank() ? null : cursor.trim(),
+                targetMessageId == null || targetMessageId.isBlank() ? null : requireExternalId(targetMessageId),
+                limit);
+    }
+
+    public ConversationSummary summary(String conversationId) {
+        return repository.getConversationSummary(
+                UserContext.requireSession().userId(), requireExternalId(conversationId));
+    }
+
     public ConversationSummary update(String conversationId, UpdateConversationRequest request) {
         if (Boolean.TRUE.equals(request.clearKnowledgeBase())
                 && request.knowledgeBaseId() != null && !request.knowledgeBaseId().isBlank()) {
@@ -58,7 +73,8 @@ public class ChatV2ApplicationService {
         }
         return repository.updateConversation(
                 UserContext.requireSession().userId(), requireExternalId(conversationId), request.title(),
-                normalizeExternalId(request.knowledgeBaseId()), Boolean.TRUE.equals(request.clearKnowledgeBase()));
+                normalizeExternalId(request.knowledgeBaseId()), Boolean.TRUE.equals(request.clearKnowledgeBase()),
+                request.pinned());
     }
 
     public void trash(String conversationId) {
@@ -152,7 +168,7 @@ public class ChatV2ApplicationService {
     }
 
     private String normalizeCursor(String value) {
-        return value == null || value.isBlank() ? null : requireExternalId(value);
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     private String requireExternalId(String value) {

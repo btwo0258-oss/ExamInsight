@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-test.describe('PPT workspace', () => {
+test.describe.skip('PPT workspace（旧版独立路由，V2 已由对话生成卡与独立编辑页接管）', () => {
   test.use({ viewport: { width: 1440, height: 960 } })
 
   test('runs config, outline, generation and preview in Mock mode', async ({ page }) => {

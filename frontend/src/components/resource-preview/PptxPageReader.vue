@@ -20,6 +20,11 @@ function decorateSlides(target: HTMLElement) {
     frame.className = "pptx-page-frame";
     frame.setAttribute("aria-label", `第 ${index + 1} 页`);
     frame.dataset.pptxPage = String(index + 1);
+    const slideWidth = Number.parseFloat(slide.style.width);
+    const slideHeight = Number.parseFloat(slide.style.height);
+    if (slideWidth > 0 && slideHeight > 0) {
+      frame.style.setProperty("--pptx-slide-ratio", `${slideWidth} / ${slideHeight}`);
+    }
 
     const label = document.createElement("div");
     label.className = "pptx-page-label";
@@ -124,11 +129,12 @@ onBeforeUnmount(() => {
 .pptx-pages :deep(.pptx-page-frame) {
   width: min(960px, 100%);
   margin: 0 auto 28px;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid var(--color-border);
   border-radius: 14px;
   background: var(--color-surface);
   box-shadow: var(--shadow-sm);
+  box-sizing: border-box;
 }
 .pptx-pages :deep(.pptx-page-label) {
   height: 38px;
@@ -141,7 +147,9 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 .pptx-pages :deep(.pptx-preview-slide-wrapper) {
-  max-width: 100%;
+  /* pptx-preview calculates the exact render height from the slide ratio and
+     scales every child against that size. Do not replace its inline height
+     with auto/aspect-ratio: doing so crops the lower half of a slide. */
   margin: 0 auto !important;
   box-shadow: none;
 }

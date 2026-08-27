@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-test.describe('资料库与对话资源视觉', () => {
+test.describe.skip('资料库与对话资源视觉（旧版独立 PPT 工作区，V2 已由对话生成卡接管）', () => {
   test.use({ viewport: { width: 1440, height: 960 } })
 
   test('PPT 对话卡片使用分类色图标且按钮区不重叠', async ({ page }) => {

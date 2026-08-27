@@ -7,6 +7,7 @@ import PptxPageReader from "@/components/resource-preview/PptxPageReader.vue";
 import LearningMindMapPreview from "@/components/learning/LearningMindMapPreview.vue";
 import MindMapStaticPreview from "@/components/artifact/MindMapStaticPreview.vue";
 import PresentationSlidePreview from "@/components/presentation/PresentationSlidePreview.vue";
+import MarkdownRenderer from "@/components/chat/message/MarkdownRenderer.vue";
 import type { ResourcePreviewDto } from "@/types/contracts/library";
 import type { PresentationDto } from "@/types/contracts/presentation";
 import type { SpreadsheetSheetDraft } from "@/types/contracts/spreadsheet";
@@ -128,13 +129,14 @@ const learningMindMapTree = computed(
   <DocxPageReader
     v-else-if="preview.previewKind === 'word' && documentBlob"
     :blob="documentBlob"
+    :generated="preview.resource.sourceType === 'generated'"
   />
   <article
     v-else-if="preview.previewKind === 'word' && generatedDocumentText"
     class="paper-document generated-document"
   >
     <h1>{{ resourceName }}</h1>
-    <p>{{ generatedDocumentText }}</p>
+    <MarkdownRenderer :content="generatedDocumentText" />
   </article>
   <article
     v-else-if="preview.previewKind === 'word'"
@@ -161,7 +163,7 @@ const learningMindMapTree = computed(
     class="paper-document generated-document"
   >
     <h1>{{ resourceName }}</h1>
-    <p>{{ generatedDocumentText }}</p>
+    <MarkdownRenderer :content="generatedDocumentText" />
   </article>
   <PdfPageReader
     v-else-if="preview.previewKind === 'pdf' && preview.previewUrl"
@@ -355,10 +357,10 @@ const learningMindMapTree = computed(
   margin: 0 0 28px;
   font-size: 26px;
 }
-.generated-document p {
-  white-space: pre-wrap;
-  line-height: 1.85;
-}
+.generated-document :deep(.markdown) { font-size: 15px; line-height: 1.85; }
+.generated-document :deep(.markdown h1),
+.generated-document :deep(.markdown h2),
+.generated-document :deep(.markdown h3) { line-height: 1.35; }
 .spreadsheet-document {
   overflow: hidden;
 }

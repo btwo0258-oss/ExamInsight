@@ -55,6 +55,7 @@ export type AssetPreviewRenderer =
   | 'image'
   | 'docx'
   | 'pptx'
+  | 'mindmap'
   | 'xlsx'
   | 'csv'
   | 'markdown'

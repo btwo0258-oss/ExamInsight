@@ -7,10 +7,12 @@ import com.example.llm.chatv2.api.ChatV2ApiException;
 import com.example.llm.chatv2.api.ChatV2Dtos.AiRunView;
 import com.example.llm.chatv2.api.ChatV2Dtos.CitationView;
 import com.example.llm.chatv2.api.ChatV2Dtos.ConversationDetail;
+import com.example.llm.chatv2.api.ChatV2Dtos.ConversationMessagesPage;
 import com.example.llm.chatv2.api.ChatV2Dtos.ConversationPage;
 import com.example.llm.chatv2.api.ChatV2Dtos.ConversationSummary;
 import com.example.llm.chatv2.api.ChatV2Dtos.MessageView;
 import com.example.llm.chatv2.api.ChatV2Dtos.MessageAttachmentView;
+import com.example.llm.chatv2.api.ChatV2Dtos.MessageSegment;
 import com.example.llm.chatv2.api.ChatV2Dtos.MessageVersionGroup;
 import com.example.llm.chatv2.api.ChatV2Dtos.MessageVersionView;
 import com.example.llm.integration.ai.AiCallResult;
@@ -27,10 +29,12 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.DateTimeException;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Collections;
@@ -81,9 +85,10 @@ public class ChatV2Repository {
             long conversationId = insertAndReturnId("""
                     INSERT INTO conversation (
                         external_id, user_id, conversation_type, knowledge_base_id,
-                        title, status
-                    ) VALUES (?, ?, 'GENERAL', ?, ?, 'ACTIVE')
-                    """, conversationExternalId, userId, knowledgeBaseId, normalizedTitle(requestedTitle));
+                        title, title_source, status
+                    ) VALUES (?, ?, 'GENERAL', ?, ?, ?, 'ACTIVE')
+                    """, conversationExternalId, userId, knowledgeBaseId,
+                    normalizedTitle(requestedTitle), initialTitleSource(requestedTitle));
 
             String branchExternalId = crypto.newExternalId();
             long branchId = insertAndReturnId("""
@@ -99,28 +104,54 @@ public class ChatV2Repository {
     public ConversationPage listConversations(long userId, String cursor, int requestedLimit) {
         int limit = Math.max(1, Math.min(100, requestedLimit));
         List<Object> args = new ArrayList<>();
-        args.add(userId);
         String cursorPredicate = "";
         if (cursor != null && !cursor.isBlank()) {
-            cursorPredicate = " AND c.external_id < ?";
-            args.add(cursor.trim());
+            cursorPredicate = """
+                     AND (
+                            (CASE WHEN c.pinned_at IS NULL THEN 0 ELSE 1 END) < ?
+                         OR ((CASE WHEN c.pinned_at IS NULL THEN 0 ELSE 1 END) = ?
+                             AND (COALESCE(c.pinned_at, COALESCE(c.last_message_at, c.created_at)) < ?
+                                  OR (COALESCE(c.pinned_at, COALESCE(c.last_message_at, c.created_at)) = ?
+                                      AND c.external_id < ?)))
+                        )
+                    """;
+            ConversationCursor decoded = decodeCursor(cursor);
+            args.add(decoded.pinned() ? 1 : 0);
+            args.add(decoded.pinned() ? 1 : 0);
+            args.add(Timestamp.from(decoded.orderAt()));
+            args.add(Timestamp.from(decoded.orderAt()));
+            args.add(decoded.externalId());
+        }
+        args.add(userId);
+        if (cursor != null && !cursor.isBlank()) {
+            // The cursor predicate appears after the user predicate in the SQL text.
+            // Reorder the bound arguments so JDBC follows SQL placeholder order.
+            List<Object> predicateArgs = new ArrayList<>(args.subList(0, args.size() - 1));
+            args.clear();
+            args.add(userId);
+            args.addAll(predicateArgs);
         }
         args.add(limit + 1);
         List<ConversationSummary> rows = jdbc.query("""
                 SELECT c.external_id, c.title, c.conversation_type, c.status,
-                       kb.external_id AS knowledge_base_external_id,
+                       c.title_source, kb.external_id AS knowledge_base_external_id,
                        branch.external_id AS active_branch_external_id,
                        (SELECT COUNT(*) FROM message m WHERE m.conversation_id = c.id) AS message_count,
-                       c.row_version, c.last_message_at, c.created_at, c.updated_at
+                       c.row_version, c.pinned_at, c.last_message_at, c.created_at, c.updated_at
                   FROM conversation c
                   LEFT JOIN knowledge_base kb ON kb.id = c.knowledge_base_id
                   LEFT JOIN conversation_branch branch ON branch.id = c.active_branch_id
                  WHERE c.user_id = ? AND c.conversation_type = 'GENERAL' AND c.status = 'ACTIVE'
-                """ + cursorPredicate + " ORDER BY c.external_id DESC LIMIT ?",
+                """ + cursorPredicate + """
+                ORDER BY (c.pinned_at IS NOT NULL) DESC,
+                          COALESCE(c.pinned_at, COALESCE(c.last_message_at, c.created_at)) DESC,
+                          c.external_id DESC
+                 LIMIT ?
+                """,
                 (rs, rowNum) -> mapConversationSummary(rs), args.toArray());
         boolean hasMore = rows.size() > limit;
         List<ConversationSummary> items = hasMore ? List.copyOf(rows.subList(0, limit)) : List.copyOf(rows);
-        String nextCursor = hasMore && !items.isEmpty() ? items.get(items.size() - 1).id() : null;
+        String nextCursor = hasMore && !items.isEmpty() ? encodeCursor(items.get(items.size() - 1)) : null;
         return new ConversationPage(items, nextCursor, hasMore);
     }
 
@@ -140,12 +171,234 @@ public class ChatV2Repository {
         return new ConversationDetail(summary, messages, loadVersionGroups(userId, conversationExternalId));
     }
 
+    /**
+     * Loads only a bounded window of the active branch.  The full conversation
+     * endpoint remains available for compatibility, while the chat screen uses
+     * this endpoint so opening a long conversation never downloads its entire
+     * message body.
+     */
+    public ConversationMessagesPage getConversationMessages(
+            long userId,
+            String conversationExternalId,
+            String cursor,
+            String targetMessageExternalId,
+            int requestedLimit) {
+        ConversationSummary summary = requireConversationSummary(userId, conversationExternalId);
+        ConversationIdentity identity = requireConversationIdentity(
+                userId, conversationExternalId, summary.activeBranchId());
+        int limit = Math.max(1, Math.min(100, requestedLimit));
+        Long beforeSequence = cursor == null || cursor.isBlank() ? null : decodeMessageCursor(cursor);
+
+        if (targetMessageExternalId != null && !targetMessageExternalId.isBlank()) {
+            List<MessageSegment> visibleSegments = loadVisibleSegments(identity.id(), identity.activeBranchId());
+            MessageSegment target = visibleSegments.stream()
+                    .filter(segment -> targetMessageExternalId.equals(segment.id()))
+                    .findFirst()
+                    .orElseThrow(() -> conflict("MESSAGE_BRANCH_INVALID", "该消息不在当前对话版本中。"));
+            // Return a window ending at the target, so a navigation click can
+            // locate it even when the target was not in the initially loaded page.
+            beforeSequence = target.sequence() == Long.MAX_VALUE ? null : target.sequence() + 1;
+        }
+
+        PageData page = loadVisibleMessagePage(identity.id(), identity.activeBranchId(), beforeSequence, limit);
+        List<String> messageExternalIds = page.items().stream().map(MessageData::externalId).toList();
+        Map<String, List<CitationView>> citations = loadCitationsForMessages(
+                userId, conversationExternalId, messageExternalIds);
+        Map<String, List<MessageAttachmentView>> attachments = loadMessageAttachmentsForMessages(
+                userId, conversationExternalId, messageExternalIds);
+        List<MessageView> messages = page.items().stream()
+                .map(row -> new MessageView(
+                        row.externalId(), row.branchExternalId(), row.versionGroupExternalId(),
+                        row.parentExternalId(), row.role(), row.status(), row.sequence(),
+                        row.content() == null ? "" : row.content(), row.runExternalId(),
+                        attachments.getOrDefault(row.externalId(), List.of()),
+                        citations.getOrDefault(row.externalId(), List.of()),
+                        row.createdAt(), row.finalizedAt()))
+                .toList();
+        String nextCursor = page.hasMore() && !page.items().isEmpty()
+                ? encodeMessageCursor(page.items().get(0).sequence())
+                : null;
+        return new ConversationMessagesPage(
+                summary, messages, loadVersionGroups(userId, conversationExternalId),
+                loadVisibleSegments(identity.id(), identity.activeBranchId()),
+                nextCursor, page.hasMore());
+    }
+
+    public Optional<MemoryCheckpoint> latestMemoryCheckpoint(
+            long userId, String conversationExternalId, String branchExternalId) {
+        List<MemoryBranchLink> branches = jdbc.query("""
+                SELECT branch.id, branch.parent_branch_id, fork.sequence_no AS fork_sequence
+                  FROM conversation_branch branch
+                  JOIN conversation conversation ON conversation.id = branch.conversation_id
+                  LEFT JOIN message fork ON fork.id = branch.forked_from_message_id
+                 WHERE conversation.user_id = ? AND conversation.external_id = ?
+                   AND branch.external_id = ? AND branch.status = 'ACTIVE'
+                """, (rs, rowNum) -> new MemoryBranchLink(
+                        rs.getLong("id"), nullableLong(rs, "parent_branch_id"),
+                        nullableLong(rs, "fork_sequence")),
+                userId, conversationExternalId, branchExternalId);
+        if (branches.isEmpty()) return Optional.empty();
+        return latestMemoryCheckpoint(userId, conversationExternalId,
+                branches.get(0).id(), Long.MAX_VALUE);
+    }
+
+    /**
+     * A newly forked branch shares the parent's prefix. If it has not produced
+     * its own checkpoint yet, reuse only the ancestor checkpoint covered by the
+     * fork point; summaries from a sibling or a later parent sequence never
+     * cross into the child branch.
+     */
+    private Optional<MemoryCheckpoint> latestMemoryCheckpoint(
+            long userId, String conversationExternalId, long branchId, long maxSequence) {
+        List<MemoryCheckpoint> rows = jdbc.query("""
+                SELECT checkpoint.id, checkpoint.external_id, checkpoint.conversation_id,
+                       checkpoint.branch_id, checkpoint.covered_through_message_id,
+                       checkpoint.covered_through_sequence, checkpoint.source_hash,
+                       CAST(checkpoint.summary_json AS CHAR), checkpoint.summary_tokens,
+                       checkpoint.model_name
+                  FROM conversation_memory_checkpoint checkpoint
+                  JOIN conversation conversation ON conversation.id = checkpoint.conversation_id
+                 WHERE checkpoint.user_id = ? AND conversation.external_id = ?
+                   AND checkpoint.branch_id = ?
+                   AND checkpoint.covered_through_sequence <= ?
+                 ORDER BY checkpoint.covered_through_sequence DESC, checkpoint.id DESC
+                 LIMIT 1
+                """, (rs, rowNum) -> new MemoryCheckpoint(
+                        rs.getLong("id"), rs.getString("external_id"), rs.getLong("conversation_id"),
+                        rs.getLong("branch_id"), rs.getLong("covered_through_message_id"),
+                        rs.getLong("covered_through_sequence"), rs.getString("source_hash"),
+                        rs.getString("summary_json"), rs.getInt("summary_tokens"),
+                        rs.getString("model_name")),
+                userId, conversationExternalId, branchId, maxSequence);
+        if (!rows.isEmpty()) return Optional.of(rows.get(0));
+
+        List<MemoryBranchLink> parent = jdbc.query("""
+                SELECT parent.id, parent.parent_branch_id,
+                       child_fork.sequence_no AS fork_sequence
+                  FROM conversation_branch child
+                  JOIN conversation_branch parent ON parent.id = child.parent_branch_id
+                  LEFT JOIN message child_fork ON child_fork.id = child.forked_from_message_id
+                 WHERE child.id = ?
+                """, (rs, rowNum) -> new MemoryBranchLink(
+                        rs.getLong("id"), nullableLong(rs, "parent_branch_id"),
+                        nullableLong(rs, "fork_sequence")), branchId);
+        if (parent.isEmpty()) return Optional.empty();
+        long parentMax = maxSequence;
+        if (parent.get(0).forkSequence() != null) {
+            parentMax = Math.min(parentMax, parent.get(0).forkSequence());
+        }
+        return latestMemoryCheckpoint(userId, conversationExternalId,
+                parent.get(0).id(), parentMax);
+    }
+
+    /** Returns a bounded, ordered range for incremental memory summarisation. */
+    public List<MemoryMessage> loadMemoryMessages(
+            long userId,
+            String conversationExternalId,
+            String branchExternalId,
+            long afterSequence,
+            int limit) {
+        ConversationIdentity identity = requireConversationIdentity(
+                userId, conversationExternalId, branchExternalId);
+        int boundedLimit = Math.max(1, Math.min(80, limit));
+        List<MemoryMessage> result = new ArrayList<>();
+        for (BranchSlice slice : visibleBranchSlices(identity.id(), identity.activeBranchId())) {
+            String upperPredicate = slice.upperSequenceExclusive() == null ? "" : " AND m.sequence_no < ?";
+            List<Object> args = new ArrayList<>();
+            args.add(slice.branchId());
+            args.add(afterSequence);
+            if (slice.upperSequenceExclusive() != null) args.add(slice.upperSequenceExclusive());
+            args.add(boundedLimit + 1);
+            result.addAll(jdbc.query("""
+                    SELECT m.id, m.external_id, m.role, m.sequence_no, m.plain_text
+                      FROM message m
+                     WHERE m.branch_id = ? AND m.sequence_no > ?
+                       AND m.status = 'FINALIZED' AND m.plain_text IS NOT NULL
+                    """ + upperPredicate + " ORDER BY m.sequence_no ASC LIMIT ?",
+                    (rs, rowNum) -> new MemoryMessage(
+                            rs.getLong("id"), rs.getString("external_id"), rs.getString("role"),
+                            rs.getLong("sequence_no"), rs.getString("plain_text")), args.toArray()));
+        }
+        Map<Long, MemoryMessage> unique = new LinkedHashMap<>();
+        result.forEach(message -> unique.putIfAbsent(message.id(), message));
+        return unique.values().stream()
+                .sorted(Comparator.comparingLong(MemoryMessage::sequence))
+                .limit(boundedLimit + 1)
+                .toList();
+    }
+
+    public void saveMemoryCheckpoint(
+            long userId,
+            String conversationExternalId,
+            String branchExternalId,
+            MemoryCheckpoint checkpoint,
+            String summaryJson,
+            int summaryTokens,
+            String modelName) {
+        ConversationIdentity identity = requireConversationIdentity(
+                userId, conversationExternalId, branchExternalId);
+        jdbc.update("""
+                INSERT INTO conversation_memory_checkpoint (
+                    external_id, user_id, conversation_id, branch_id,
+                    covered_through_message_id, covered_through_sequence,
+                    source_hash, summary_json, summary_tokens, model_name
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?)
+                """, crypto.newExternalId(), userId, identity.id(), identity.activeBranchId(),
+                checkpoint.coveredThroughMessageId(), checkpoint.coveredThroughSequence(),
+                checkpoint.sourceHash(), summaryJson, Math.max(0, summaryTokens), modelName);
+    }
+
+    public boolean shouldGenerateAutoTitle(RunExecutionContext context) {
+        List<Boolean> rows = jdbc.query("""
+                SELECT c.title_source,
+                       (SELECT COUNT(*) FROM message response
+                         WHERE response.conversation_id = c.id
+                           AND response.role = 'ASSISTANT'
+                           AND response.status = 'FINALIZED') AS finalized_responses
+                  FROM conversation c
+                 WHERE c.id = ? AND c.user_id = ? AND c.status = 'ACTIVE'
+                """, (rs, rowNum) -> "AUTO".equals(rs.getString("title_source"))
+                        && rs.getLong("finalized_responses") == 0,
+                context.conversationId(), context.userId());
+        return !rows.isEmpty() && rows.get(0);
+    }
+
+    public void applyAutoTitle(long userId, String conversationExternalId, String generatedTitle) {
+        String title = generatedTitle == null ? "" : generatedTitle.trim();
+        if (title.isBlank() || title.chars().anyMatch(Character::isISOControl)) return;
+        String normalized = title.length() <= 40 ? title : title.substring(0, 40);
+        transactions.executeWithoutResult(status -> jdbc.update("""
+                UPDATE conversation
+                   SET title = ?, title_source = 'AI', row_version = row_version + 1
+                 WHERE external_id = ? AND user_id = ? AND status = 'ACTIVE'
+                   AND title_source = 'AUTO'
+                   AND (SELECT COUNT(*) FROM message response
+                         WHERE response.conversation_id = conversation.id
+                           AND response.role = 'ASSISTANT'
+                           AND response.status = 'FINALIZED') = 1
+                """, normalized, conversationExternalId, userId));
+    }
+
+    public void markAutoTitleFallback(long userId, String conversationExternalId) {
+        transactions.executeWithoutResult(status -> jdbc.update("""
+                UPDATE conversation
+                   SET title_source = 'FALLBACK', row_version = row_version + 1
+                 WHERE external_id = ? AND user_id = ? AND status = 'ACTIVE'
+                   AND title_source = 'AUTO'
+                   AND (SELECT COUNT(*) FROM message response
+                         WHERE response.conversation_id = conversation.id
+                           AND response.role = 'ASSISTANT'
+                           AND response.status = 'FINALIZED') = 1
+                """, conversationExternalId, userId));
+    }
+
     public ConversationSummary updateConversation(
             long userId,
             String conversationExternalId,
             String requestedTitle,
             String knowledgeBaseExternalId,
-            boolean clearKnowledgeBase) {
+            boolean clearKnowledgeBase,
+            Boolean requestedPinned) {
         return transactions.execute(status -> {
             ConversationRow conversation = requireConversationForUpdate(userId, conversationExternalId);
             String title = requestedTitle == null ? conversation.title() : normalizedTitle(requestedTitle);
@@ -155,11 +408,25 @@ public class ChatV2Repository {
             } else if (knowledgeBaseExternalId != null) {
                 knowledgeBaseId = resolveKnowledgeBaseId(userId, knowledgeBaseExternalId, false);
             }
-            jdbc.update("""
+            StringBuilder updateSql = new StringBuilder("""
                     UPDATE conversation
-                       SET title = ?, knowledge_base_id = ?, row_version = row_version + 1
-                     WHERE id = ?
-                    """, title, knowledgeBaseId, conversation.id());
+                       SET title = ?,
+                           knowledge_base_id = ?
+                    """);
+            List<Object> updateArgs = new ArrayList<>();
+            updateArgs.add(title);
+            updateArgs.add(knowledgeBaseId);
+            if (requestedTitle != null) {
+                updateSql.append(", title_source = 'MANUAL'\n");
+            }
+            if (requestedPinned != null) {
+                updateSql.append(requestedPinned
+                        ? ", pinned_at = COALESCE(pinned_at, CURRENT_TIMESTAMP(3))\n"
+                        : ", pinned_at = NULL\n");
+            }
+            updateSql.append("       , row_version = row_version + 1 WHERE id = ?");
+            updateArgs.add(conversation.id());
+            jdbc.update(updateSql.toString(), updateArgs.toArray());
             return requireConversationSummary(userId, conversationExternalId);
         });
     }
@@ -376,6 +643,12 @@ public class ChatV2Repository {
                 "versionId", source.versionExternalId(),
                 "name", source.assetName())).toList());
         manifest.put("messageSequence", requestSequence);
+        manifest.put("contextPlan", Map.of(
+                "historyPolicy", "branch_visible_recent_turns_plus_memory_checkpoint",
+                "inputTokenCap", 26_000,
+                "outputReservation", 4_096,
+                "safetyMargin", 2_048,
+                "toolResultPolicy", "bounded_per_run"));
         String manifestJson = json(manifest);
         long contextSnapshotId = insertAndReturnId("""
                 INSERT INTO ai_context_snapshot (
@@ -387,16 +660,12 @@ public class ChatV2Repository {
         persistFrozenSources(
                 contextSnapshotId, conversation.knowledgeBaseId(), directSources, knowledgeBaseSources);
 
-        String title = conversation.title();
-        if (updateDefaultTitle && DEFAULT_TITLE.equals(title)) {
-            title = titleFromMessage(requireRequestMessage(requestMessageId).content(), directSources);
-        }
         jdbc.update("""
                 UPDATE conversation
-                   SET title = ?, active_branch_id = ?, last_message_at = CURRENT_TIMESTAMP(3),
+                   SET active_branch_id = ?, last_message_at = CURRENT_TIMESTAMP(3),
                        row_version = row_version + 1
                  WHERE id = ?
-                """, title, branch.id(), conversation.id());
+                """, branch.id(), conversation.id());
 
         return new PreparedRun(
                 runId, runExternalId, jobId, jobExternalId, userId,
@@ -622,7 +891,8 @@ public class ChatV2Repository {
             String answer,
             List<CitationSource> citations,
             AiCallResult<String> result,
-            Instant invocationStartedAt) {
+            Instant invocationStartedAt,
+            String generatedTitle) {
         transactions.executeWithoutResult(status -> {
             if (cancellationRequested(context.jobId())) {
                 cancelRunInternal(context);
@@ -666,9 +936,22 @@ public class ChatV2Repository {
                     """, context.branchId(), context.runId());
             jdbc.update("""
                     UPDATE conversation
-                       SET last_message_at = CURRENT_TIMESTAMP(3), row_version = row_version + 1
+                       SET title = CASE
+                               WHEN title_source = 'AUTO'
+                                    AND NOT EXISTS (
+                                        SELECT 1 FROM message prior_response
+                                         WHERE prior_response.conversation_id = conversation.id
+                                           AND prior_response.role = 'ASSISTANT'
+                                           AND prior_response.status = 'FINALIZED'
+                                           AND prior_response.id <> ?
+                                    )
+                               THEN ?
+                               ELSE title
+                           END,
+                           last_message_at = CURRENT_TIMESTAMP(3), row_version = row_version + 1
                      WHERE id = ?
-                    """, context.conversationId());
+                    """, context.responseMessageId(),
+                    normalizedGeneratedTitle(generatedTitle, context.requestText()), context.conversationId());
             persistInvocation(context, result, invocationStartedAt, "SUCCEEDED", null);
         });
     }
@@ -969,6 +1252,42 @@ public class ChatV2Repository {
         return result;
     }
 
+    private Map<String, List<CitationView>> loadCitationsForMessages(
+            long userId, String conversationExternalId, List<String> messageExternalIds) {
+        if (messageExternalIds.isEmpty()) return Map.of();
+        List<Object> args = new ArrayList<>();
+        args.add(conversationExternalId);
+        args.add(userId);
+        args.addAll(messageExternalIds);
+        Map<String, List<CitationView>> result = new LinkedHashMap<>();
+        jdbc.query("""
+                SELECT m.external_id AS message_external_id, citation.citation_no,
+                       a.external_id AS asset_external_id, a.name AS asset_name,
+                       av.external_id AS version_external_id, chunk.external_id AS chunk_external_id,
+                       citation.quoted_text, citation.locator_label, citation.support_score
+                  FROM message_citation citation
+                  JOIN message m ON m.id = citation.message_id
+                  JOIN conversation c ON c.id = m.conversation_id
+                  JOIN document_chunk chunk ON chunk.id = citation.document_chunk_id
+                  JOIN asset_parse_result parse_result ON parse_result.id = chunk.parse_result_id
+                  JOIN asset_version av ON av.id = parse_result.asset_version_id
+                  JOIN asset a ON a.id = av.asset_id
+                 WHERE c.external_id = ? AND c.user_id = ?
+                   AND m.external_id IN (%s)
+                 ORDER BY m.sequence_no ASC, citation.citation_no ASC
+                """.formatted(placeholders(messageExternalIds.size())), (rs, rowNum) ->
+                result.computeIfAbsent(rs.getString("message_external_id"), ignored -> new ArrayList<>()).add(
+                        new CitationView(
+                                rs.getInt("citation_no"), rs.getString("asset_external_id"),
+                                rs.getString("asset_name"), rs.getString("version_external_id"),
+                                rs.getString("chunk_external_id"), rs.getString("quoted_text"),
+                                rs.getString("locator_label"),
+                                rs.getObject("support_score") == null ? null : rs.getDouble("support_score"))),
+                args.toArray());
+        result.replaceAll((key, value) -> List.copyOf(value));
+        return result;
+    }
+
     private Map<String, List<MessageAttachmentView>> loadMessageAttachments(
             long userId, String conversationExternalId) {
         Map<String, List<MessageAttachmentView>> result = new LinkedHashMap<>();
@@ -999,6 +1318,39 @@ public class ChatV2Repository {
         return result;
     }
 
+    private Map<String, List<MessageAttachmentView>> loadMessageAttachmentsForMessages(
+            long userId, String conversationExternalId, List<String> messageExternalIds) {
+        if (messageExternalIds.isEmpty()) return Map.of();
+        List<Object> args = new ArrayList<>();
+        args.add(conversationExternalId);
+        args.add(userId);
+        args.addAll(messageExternalIds);
+        Map<String, List<MessageAttachmentView>> result = new LinkedHashMap<>();
+        jdbc.query("""
+                SELECT m.external_id AS message_external_id,
+                       a.external_id AS asset_external_id,
+                       av.external_id AS version_external_id,
+                       COALESCE(attachment.display_name, a.name) AS display_name,
+                       av.mime_type, av.size_bytes, a.asset_type
+                  FROM message_attachment attachment
+                  JOIN message m ON m.id = attachment.message_id
+                  JOIN conversation c ON c.id = m.conversation_id
+                  JOIN asset_version av ON av.id = attachment.asset_version_id
+                  JOIN asset a ON a.id = av.asset_id
+                 WHERE c.external_id = ? AND c.user_id = ?
+                   AND m.external_id IN (%s)
+                 ORDER BY m.sequence_no ASC, attachment.id ASC
+                """.formatted(placeholders(messageExternalIds.size())), (RowCallbackHandler) rs ->
+                result.computeIfAbsent(rs.getString("message_external_id"), ignored -> new ArrayList<>()).add(
+                        new MessageAttachmentView(
+                                rs.getString("asset_external_id"), rs.getString("version_external_id"),
+                                rs.getString("display_name"), rs.getString("mime_type"),
+                                rs.getLong("size_bytes"), rs.getString("asset_type"))),
+                args.toArray());
+        result.replaceAll((key, value) -> List.copyOf(value));
+        return result;
+    }
+
     private List<HistoryMessage> loadHistory(long branchId, long throughMessageId) {
         List<MessagePoint> points = jdbc.query("""
                 SELECT conversation_id, sequence_no FROM message WHERE id = ?
@@ -1006,17 +1358,91 @@ public class ChatV2Repository {
                         rs.getLong("conversation_id"), rs.getLong("sequence_no")), throughMessageId);
         if (points.isEmpty()) return List.of();
         MessagePoint through = points.get(0);
-        List<MessageData> visible = loadVisibleMessages(through.conversationId(), branchId);
-        List<HistoryMessage> history = visible.stream()
-                .filter(message -> message.sequence() <= through.sequence())
+        PageData visiblePage = loadVisibleMessagePage(
+                through.conversationId(), branchId, through.sequence() == Long.MAX_VALUE
+                        ? null : through.sequence() + 1, 80);
+        List<HistoryMessage> history = visiblePage.items().stream()
                 .filter(message -> "FINALIZED".equals(message.status()) && message.content() != null)
                 .map(message -> new HistoryMessage(message.role().toLowerCase(), message.content()))
                 .toList();
-        int from = Math.max(0, history.size() - 20);
-        return List.copyOf(history.subList(from, history.size()));
+        int from = Math.max(0, history.size() - 40);
+        List<HistoryMessage> bounded = new ArrayList<>();
+        String memory = loadLatestMemorySummary(branchId, through.sequence());
+        if (memory != null && !memory.isBlank()) {
+            bounded.add(new HistoryMessage("memory", memory));
+        }
+        bounded.addAll(history.subList(from, history.size()));
+        return List.copyOf(bounded);
+    }
+
+    private String loadLatestMemorySummary(long branchId, long throughSequence) {
+        long currentBranchId = branchId;
+        long maxSequence = throughSequence;
+        for (int depth = 0; depth < 32; depth++) {
+            List<String> rows = jdbc.query("""
+                    SELECT CAST(summary_json AS CHAR)
+                      FROM conversation_memory_checkpoint
+                     WHERE branch_id = ? AND covered_through_sequence <= ?
+                     ORDER BY covered_through_sequence DESC, id DESC
+                     LIMIT 1
+                    """, (rs, rowNum) -> rs.getString(1), currentBranchId, maxSequence);
+            if (!rows.isEmpty()) {
+                String value = rows.get(0);
+                return value.length() <= 8_000 ? value : value.substring(0, 8_000);
+            }
+            List<MemoryBranchLink> parent = jdbc.query("""
+                    SELECT parent.id, parent.parent_branch_id,
+                           fork.sequence_no AS fork_sequence
+                      FROM conversation_branch child
+                      JOIN conversation_branch parent ON parent.id = child.parent_branch_id
+                      LEFT JOIN message fork ON fork.id = child.forked_from_message_id
+                     WHERE child.id = ?
+                    """, (rs, rowNum) -> new MemoryBranchLink(
+                            rs.getLong("id"), nullableLong(rs, "parent_branch_id"),
+                            nullableLong(rs, "fork_sequence")), currentBranchId);
+            if (parent.isEmpty()) return null;
+            if (parent.get(0).forkSequence() != null) {
+                maxSequence = Math.min(maxSequence, parent.get(0).forkSequence());
+            }
+            currentBranchId = parent.get(0).id();
+        }
+        return null;
     }
 
     private List<MessageData> loadVisibleMessages(
+            long userId, String conversationExternalId, String activeBranchExternalId) {
+        ConversationIdentity conversation = requireConversationIdentity(
+                userId, conversationExternalId, activeBranchExternalId);
+        return loadVisibleMessages(conversation.id(), conversation.activeBranchId());
+    }
+
+    private List<MessageData> loadVisibleMessages(long conversationId, long activeBranchId) {
+        List<MessageData> messages = new ArrayList<>();
+        for (BranchSlice slice : visibleBranchSlices(conversationId, activeBranchId)) {
+            String sequencePredicate = slice.upperSequenceExclusive() == null ? "" : " AND m.sequence_no < ?";
+            List<Object> args = new ArrayList<>();
+            args.add(slice.branchId());
+            if (slice.upperSequenceExclusive() != null) args.add(slice.upperSequenceExclusive());
+            messages.addAll(jdbc.query("""
+                    SELECT m.id, m.external_id, branch.external_id AS branch_external_id,
+                           COALESCE(origin.external_id, m.external_id) AS version_group_external_id,
+                           parent.external_id AS parent_external_id,
+                           m.role, m.status, m.sequence_no, m.plain_text,
+                           run.external_id AS run_external_id, m.created_at, m.finalized_at
+                      FROM message m
+                      JOIN conversation_branch branch ON branch.id = m.branch_id
+                      LEFT JOIN message origin ON origin.id = m.edited_from_message_id
+                      LEFT JOIN message parent ON parent.id = m.parent_message_id
+                      LEFT JOIN ai_run run ON run.id = m.ai_run_id
+                     WHERE m.branch_id = ?
+                    """ + sequencePredicate + " ORDER BY m.sequence_no ASC",
+                    this::mapMessageData, args.toArray()));
+        }
+        messages.sort(Comparator.comparingLong(MessageData::sequence));
+        return List.copyOf(messages);
+    }
+
+    private ConversationIdentity requireConversationIdentity(
             long userId, String conversationExternalId, String activeBranchExternalId) {
         List<ConversationIdentity> conversations = jdbc.query("""
                 SELECT c.id, c.active_branch_id
@@ -1026,12 +1452,11 @@ public class ChatV2Repository {
                 """, (rs, rowNum) -> new ConversationIdentity(
                         rs.getLong("id"), rs.getLong("active_branch_id")),
                 conversationExternalId, userId, activeBranchExternalId);
-        if (conversations.isEmpty()) return List.of();
-        ConversationIdentity conversation = conversations.get(0);
-        return loadVisibleMessages(conversation.id(), conversation.activeBranchId());
+        if (conversations.isEmpty()) throw notFound("CONVERSATION_NOT_FOUND", "对话不存在或不可用。");
+        return conversations.get(0);
     }
 
-    private List<MessageData> loadVisibleMessages(long conversationId, long activeBranchId) {
+    private List<BranchSlice> visibleBranchSlices(long conversationId, long activeBranchId) {
         List<BranchTopology> branches = jdbc.query("""
                 SELECT branch.id, branch.external_id, branch.parent_branch_id,
                        fork.sequence_no AS fork_sequence
@@ -1053,13 +1478,26 @@ public class ChatV2Repository {
             current = current.parentBranchId() == null ? null : byId.get(current.parentBranchId());
         }
         Collections.reverse(slices);
+        return List.copyOf(slices);
+    }
 
+    private PageData loadVisibleMessagePage(
+            long conversationId, long activeBranchId, Long beforeSequence, int limit) {
         List<MessageData> messages = new ArrayList<>();
-        for (BranchSlice slice : slices) {
-            String sequencePredicate = slice.upperSequenceExclusive() == null ? "" : " AND m.sequence_no < ?";
+        int queryLimit = limit + 1;
+        for (BranchSlice slice : visibleBranchSlices(conversationId, activeBranchId)) {
+            StringBuilder predicates = new StringBuilder();
             List<Object> args = new ArrayList<>();
             args.add(slice.branchId());
-            if (slice.upperSequenceExclusive() != null) args.add(slice.upperSequenceExclusive());
+            if (slice.upperSequenceExclusive() != null) {
+                predicates.append(" AND m.sequence_no < ?");
+                args.add(slice.upperSequenceExclusive());
+            }
+            if (beforeSequence != null) {
+                predicates.append(" AND m.sequence_no < ?");
+                args.add(beforeSequence);
+            }
+            args.add(queryLimit);
             messages.addAll(jdbc.query("""
                     SELECT m.id, m.external_id, branch.external_id AS branch_external_id,
                            COALESCE(origin.external_id, m.external_id) AS version_group_external_id,
@@ -1072,17 +1510,52 @@ public class ChatV2Repository {
                       LEFT JOIN message parent ON parent.id = m.parent_message_id
                       LEFT JOIN ai_run run ON run.id = m.ai_run_id
                      WHERE m.branch_id = ?
-                    """ + sequencePredicate + " ORDER BY m.sequence_no ASC",
-                    (rs, rowNum) -> new MessageData(
-                            rs.getLong("id"), rs.getString("external_id"),
-                            rs.getString("branch_external_id"), rs.getString("version_group_external_id"),
-                            rs.getString("parent_external_id"), rs.getString("role"), rs.getString("status"),
-                            rs.getLong("sequence_no"), rs.getString("plain_text"),
-                            rs.getString("run_external_id"), instant(rs.getTimestamp("created_at")),
-                            instant(rs.getTimestamp("finalized_at"))), args.toArray()));
+                    """ + predicates + " ORDER BY m.sequence_no DESC LIMIT ?",
+                    this::mapMessageData, args.toArray()));
         }
-        messages.sort(Comparator.comparingLong(MessageData::sequence));
-        return List.copyOf(messages);
+        Map<Long, MessageData> unique = new LinkedHashMap<>();
+        messages.forEach(message -> unique.putIfAbsent(message.id(), message));
+        List<MessageData> selected = unique.values().stream()
+                .sorted(Comparator.comparingLong(MessageData::sequence).reversed())
+                .limit(queryLimit)
+                .sorted(Comparator.comparingLong(MessageData::sequence))
+                .toList();
+        return new PageData(selected, selected.size() > limit);
+    }
+
+    private List<MessageSegment> loadVisibleSegments(long conversationId, long activeBranchId) {
+        List<MessageSegment> segments = new ArrayList<>();
+        for (BranchSlice slice : visibleBranchSlices(conversationId, activeBranchId)) {
+            String sequencePredicate = slice.upperSequenceExclusive() == null ? "" : " AND m.sequence_no < ?";
+            List<Object> args = new ArrayList<>();
+            args.add(slice.branchId());
+            if (slice.upperSequenceExclusive() != null) args.add(slice.upperSequenceExclusive());
+            segments.addAll(jdbc.query("""
+                    SELECT m.external_id, m.sequence_no, LEFT(COALESCE(m.plain_text, ''), 160) AS preview
+                      FROM message m
+                     WHERE m.branch_id = ? AND m.role = 'USER'
+                    """ + sequencePredicate + " ORDER BY m.sequence_no ASC",
+                    (rs, rowNum) -> new MessageSegment(
+                            rs.getString("external_id"), rs.getLong("sequence_no"),
+                            segmentPreview(rs.getString("preview"))), args.toArray()));
+        }
+        segments.sort(Comparator.comparingLong(MessageSegment::sequence));
+        return List.copyOf(segments);
+    }
+
+    private MessageData mapMessageData(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {
+        return new MessageData(
+                rs.getLong("id"), rs.getString("external_id"),
+                rs.getString("branch_external_id"), rs.getString("version_group_external_id"),
+                rs.getString("parent_external_id"), rs.getString("role"), rs.getString("status"),
+                rs.getLong("sequence_no"), rs.getString("plain_text"),
+                rs.getString("run_external_id"), instant(rs.getTimestamp("created_at")),
+                instant(rs.getTimestamp("finalized_at")));
+    }
+
+    private String segmentPreview(String value) {
+        if (value == null) return "";
+        return value.replaceAll("\\s+", " ").trim();
     }
 
     private List<MessageVersionGroup> loadVersionGroups(long userId, String conversationExternalId) {
@@ -1344,13 +1817,17 @@ public class ChatV2Repository {
                 .orElseThrow(() -> notFound("CONVERSATION_NOT_FOUND", "对话不存在或不可用。"));
     }
 
+    public ConversationSummary getConversationSummary(long userId, String externalId) {
+        return requireConversationSummary(userId, externalId);
+    }
+
     private Optional<ConversationSummary> findConversationSummary(long userId, String externalId) {
         List<ConversationSummary> rows = jdbc.query("""
-                SELECT c.external_id, c.title, c.conversation_type, c.status,
+                SELECT c.external_id, c.title, c.title_source, c.conversation_type, c.status,
                        kb.external_id AS knowledge_base_external_id,
                        branch.external_id AS active_branch_external_id,
                        (SELECT COUNT(*) FROM message m WHERE m.conversation_id = c.id) AS message_count,
-                       c.row_version, c.last_message_at, c.created_at, c.updated_at
+                       c.row_version, c.pinned_at, c.last_message_at, c.created_at, c.updated_at
                   FROM conversation c
                   LEFT JOIN knowledge_base kb ON kb.id = c.knowledge_base_id
                   LEFT JOIN conversation_branch branch ON branch.id = c.active_branch_id
@@ -1362,11 +1839,11 @@ public class ChatV2Repository {
 
     private ConversationSummary mapConversationSummary(java.sql.ResultSet rs) throws java.sql.SQLException {
         return new ConversationSummary(
-                rs.getString("external_id"), rs.getString("title"),
+                rs.getString("external_id"), rs.getString("title"), rs.getString("title_source"),
                 rs.getString("conversation_type"), rs.getString("status"),
                 rs.getString("knowledge_base_external_id"), rs.getString("active_branch_external_id"),
                 rs.getLong("message_count"), rs.getLong("row_version"),
-                instant(rs.getTimestamp("last_message_at")), instant(rs.getTimestamp("created_at")),
+                instant(rs.getTimestamp("pinned_at")), instant(rs.getTimestamp("last_message_at")), instant(rs.getTimestamp("created_at")),
                 instant(rs.getTimestamp("updated_at")));
     }
 
@@ -1397,6 +1874,61 @@ public class ChatV2Repository {
         return title;
     }
 
+    private String initialTitleSource(String requestedTitle) {
+        return requestedTitle == null
+                || requestedTitle.isBlank()
+                || DEFAULT_TITLE.equals(requestedTitle.trim())
+                ? "AUTO"
+                : "MANUAL";
+    }
+
+    private String encodeCursor(ConversationSummary item) {
+        boolean pinned = item.pinnedAt() != null;
+        Instant orderAt = pinned
+                ? item.pinnedAt()
+                : item.lastMessageAt() == null ? item.createdAt() : item.lastMessageAt();
+        String raw = "v1|" + (pinned ? "1" : "0") + "|" + orderAt.toEpochMilli() + "|" + item.id();
+        return Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(raw.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private ConversationCursor decodeCursor(String value) {
+        try {
+            String raw = new String(Base64.getUrlDecoder().decode(value), StandardCharsets.UTF_8);
+            String[] parts = raw.split("\\|", -1);
+            if (parts.length != 4 || !"v1".equals(parts[0])
+                    || !("0".equals(parts[1]) || "1".equals(parts[1]))) {
+                throw new IllegalArgumentException("invalid cursor shape");
+            }
+            Instant orderAt = Instant.ofEpochMilli(Long.parseLong(parts[2]));
+            if (!parts[3].matches("^[0-9A-HJKMNP-TV-Z]{26}$")) {
+                throw new IllegalArgumentException("invalid cursor id");
+            }
+            return new ConversationCursor("1".equals(parts[1]), orderAt, parts[3]);
+        } catch (IllegalArgumentException | DateTimeException exception) {
+            throw badRequest("INVALID_CURSOR", "对话列表游标无效，请重新加载列表。");
+        }
+    }
+
+    private String encodeMessageCursor(long sequence) {
+        String raw = "v1|" + sequence;
+        return Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(raw.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private long decodeMessageCursor(String value) {
+        try {
+            String raw = new String(Base64.getUrlDecoder().decode(value), StandardCharsets.UTF_8);
+            String[] parts = raw.split("\\|", -1);
+            long sequence = parts.length == 2 && "v1".equals(parts[0])
+                    ? Long.parseLong(parts[1]) : -1;
+            if (sequence <= 0) throw new IllegalArgumentException("invalid message cursor");
+            return sequence;
+        } catch (IllegalArgumentException exception) {
+            throw badRequest("INVALID_MESSAGE_CURSOR", "消息分页游标无效，请重新加载对话。");
+        }
+    }
+
     private String titleFromMessage(String content, List<LockedAssetVersion> directSources) {
         String oneLine = content == null ? "" : content.trim().replaceAll("\\s+", " ");
         if (oneLine.isBlank()) {
@@ -1409,6 +1941,14 @@ public class ChatV2Repository {
             }
         }
         return oneLine.length() <= 40 ? oneLine : oneLine.substring(0, 40);
+    }
+
+    private String normalizedGeneratedTitle(String generatedTitle, String requestText) {
+        String value = generatedTitle == null ? "" : generatedTitle.trim().replaceAll("\\s+", " ");
+        if (value.isBlank() || value.chars().anyMatch(Character::isISOControl)) {
+            return titleFromMessage(requestText, List.of());
+        }
+        return value.length() <= 40 ? value : value.substring(0, 40);
     }
 
     private String requestText(String value) {
@@ -1572,6 +2112,25 @@ public class ChatV2Repository {
     public record HistoryMessage(String role, String content) {
     }
 
+    public record MemoryMessage(long id, String externalId, String role, long sequence, String content) {
+    }
+
+    public record MemoryCheckpoint(
+            long id,
+            String externalId,
+            long conversationId,
+            long branchId,
+            long coveredThroughMessageId,
+            long coveredThroughSequence,
+            String sourceHash,
+            String summaryJson,
+            int summaryTokens,
+            String modelName) {
+    }
+
+    private record MemoryBranchLink(long id, Long parentBranchId, Long forkSequence) {
+    }
+
     public record CitationSource(
             int number,
             String chunkExternalId,
@@ -1591,6 +2150,9 @@ public class ChatV2Repository {
             Long activeRunId) {
     }
 
+    private record ConversationCursor(boolean pinned, Instant orderAt, String externalId) {
+    }
+
     private record BranchRow(long id, String externalId) {
     }
 
@@ -1608,6 +2170,9 @@ public class ChatV2Repository {
     }
 
     private record BranchSlice(long branchId, Long upperSequenceExclusive) {
+    }
+
+    private record PageData(List<MessageData> items, boolean hasMore) {
     }
 
     private record MessageData(

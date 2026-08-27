@@ -148,10 +148,10 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', handleDocument
 </template>
 
 <style scoped>
-.chat-source-selector { position: relative; min-width: 0; margin-left: 10px; }
+.chat-source-selector { position: relative; width: min(190px, 36vw); min-width: 150px; margin-left: 10px; }
 .source-trigger {
-  display: inline-flex; max-width: min(360px, 70vw); height: 22px; align-items: center; gap: 4px;
-  padding: 0 4px; border: 0; border-radius: 6px;
+  display: inline-flex; width: 100%; max-width: none; height: 24px; align-items: center; justify-content: flex-start; gap: 5px;
+  box-sizing: border-box; padding: 0 8px; border: 0; border-radius: 7px;
   color: color-mix(in srgb, var(--color-text) 64%, transparent);
   background: transparent;
   font-family: inherit;
@@ -165,7 +165,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', handleDocument
 .source-trigger:not(:disabled):hover { background: rgb(0 0 0 / 5%); }
 .source-trigger:disabled { cursor: not-allowed; opacity: .45; }
 .source-panel {
-  position: absolute; bottom: 42px; left: 0; z-index: 45; width: min(360px, calc(100vw - 32px));
+  position: absolute; bottom: 42px; left: 0; z-index: 45; width: min(390px, calc(100vw - 32px));
   max-height: 390px; overflow: auto; padding: 10px; border: 1px solid var(--color-border);
   border-radius: 18px; color: var(--color-text); background: var(--color-bg);
   box-shadow: 0 16px 46px rgb(0 0 0 / 16%);
@@ -194,4 +194,8 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', handleDocument
 .create-form button:disabled { cursor: default; opacity: .35; }
 .create-error { margin: 7px 3px 0; color: var(--color-danger); font-size: 12px; }
 :global(html.dark) .source-trigger:not(:disabled):hover { background: rgb(255 255 255 / 8%); }
+@media (max-width: 560px) {
+  .chat-source-selector { width: min(180px, 56vw); min-width: 132px; }
+  .source-trigger { padding-inline: 6px; }
+}
 </style>

@@ -1,7 +1,6 @@
 package com.example.llm.chatv2.artifact;
 
 import com.example.llm.chatv2.artifact.ArtifactDraftRepository.ArtifactRow;
-import com.example.llm.chatv2.artifact.ArtifactModels.Type;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.poi.sl.usermodel.TextParagraph;
 import org.apache.poi.xslf.usermodel.XMLSlideShow;
@@ -9,10 +8,7 @@ import org.apache.poi.xslf.usermodel.XSLFSlide;
 import org.apache.poi.xslf.usermodel.XSLFTextBox;
 import org.apache.poi.xslf.usermodel.XSLFTextParagraph;
 import org.apache.poi.xslf.usermodel.XSLFTextRun;
-import org.apache.poi.xwpf.usermodel.ParagraphAlignment;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
-import org.apache.poi.xwpf.usermodel.XWPFParagraph;
-import org.apache.poi.xwpf.usermodel.XWPFRun;
 import org.springframework.stereotype.Component;
 
 import java.awt.Color;
@@ -43,9 +39,7 @@ public class ArtifactBinaryRenderer {
         String markdown = requiredString(draft.content(), "markdown");
         try (XWPFDocument document = new XWPFDocument();
              ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            for (String line : markdown.replace("\r\n", "\n").split("\n", -1)) {
-                appendMarkdownLine(document, line);
-            }
+            new MarkdownDocxRenderer(document).render(markdown);
             document.write(output);
             return new RenderedArtifact(fileName(draft.title(), ".docx"),
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -90,37 +84,6 @@ public class ArtifactBinaryRenderer {
         }
     }
 
-    private void appendMarkdownLine(XWPFDocument document, String line) {
-        XWPFParagraph paragraph = document.createParagraph();
-        String text = line;
-        int level = headingLevel(line);
-        if (level > 0) {
-            text = line.substring(level).trim();
-            paragraph.setStyle("Heading" + Math.min(level, 6));
-        } else if (line.startsWith("- ") || line.startsWith("* ")) {
-            text = line.substring(2).trim();
-            paragraph.setIndentationLeft(360);
-        } else if (line.matches("^\\d+\\.\\s+.*")) {
-            text = line.replaceFirst("^\\d+\\.\\s+", "");
-            paragraph.setIndentationLeft(360);
-        }
-        if (text.isBlank()) {
-            return;
-        }
-        XWPFRun run = paragraph.createRun();
-        run.setText(stripInlineMarkdown(text));
-        if (level == 1) {
-            paragraph.setAlignment(ParagraphAlignment.CENTER);
-            run.setBold(true);
-            run.setFontSize(20);
-        } else if (level > 1) {
-            run.setBold(true);
-            run.setFontSize(Math.max(12, 18 - level));
-        } else {
-            run.setFontSize(11);
-        }
-    }
-
     private void appendSlide(XMLSlideShow show, Map<String, Object> slideData) {
         XSLFSlide slide = show.createSlide();
         slide.getBackground().setFillColor(Color.WHITE);
@@ -138,29 +101,27 @@ public class ArtifactBinaryRenderer {
         bodyBox.setAnchor(new Rectangle2D.Double(95, 170, 1_080, 470));
         Object rawBullets = slideData.get("bullets");
         if (rawBullets instanceof List<?> bullets) {
-            for (Object rawBullet : bullets) {
-                String bullet = rawBullet == null ? "" : rawBullet.toString().trim();
-                if (bullet.isEmpty()) continue;
+            List<String> bulletTexts = bullets.stream()
+                    .map(rawBullet -> rawBullet == null ? "" : rawBullet.toString().trim())
+                    .filter(bullet -> !bullet.isEmpty())
+                    .toList();
+            int longestBullet = bulletTexts.stream().mapToInt(String::length).max().orElse(0);
+            // Keep dense or unusually long drafts readable inside the fixed 16:9
+            // slide canvas instead of allowing the generated preview to clip the
+            // lower lines. The editor still preserves the original text.
+            double bodyFontSize = Math.max(11d, Math.min(20d,
+                    21d - Math.max(0, bulletTexts.size() - 8) * 0.55d
+                            - Math.max(0, longestBullet - 55) * 0.045d));
+            for (String bullet : bulletTexts) {
                 XSLFTextParagraph paragraph = bodyBox.addNewTextParagraph();
                 paragraph.setBullet(true);
                 paragraph.setTextAlign(TextParagraph.TextAlign.LEFT);
                 XSLFTextRun run = paragraph.addNewTextRun();
                 run.setText(bullet);
-                run.setFontSize(20d);
+                run.setFontSize(bodyFontSize);
                 run.setFontColor(new Color(40, 40, 40));
             }
         }
-    }
-
-    private int headingLevel(String line) {
-        int count = 0;
-        while (count < line.length() && line.charAt(count) == '#') count++;
-        return count > 0 && count <= 6 && count < line.length() && line.charAt(count) == ' '
-                ? count : 0;
-    }
-
-    private String stripInlineMarkdown(String value) {
-        return value.replace("**", "").replace("__", "").replace("`", "");
     }
 
     private String requiredString(Map<String, Object> values, String key) {

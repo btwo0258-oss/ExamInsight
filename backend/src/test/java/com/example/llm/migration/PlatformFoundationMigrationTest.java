@@ -163,6 +163,27 @@ class PlatformFoundationMigrationTest {
             CONVERSATION_AI_TABLES
     );
 
+    /** Tables introduced by the post-V007 runtime and product migrations. */
+    private static final Set<String> FINAL_SCHEMA_TABLES = schemaTables(
+            FOUNDATION_TABLES,
+            MODEL_REGISTRY_TABLES,
+            IDENTITY_TABLES,
+            STORAGE_ASSET_TABLES,
+            PRIVACY_ADMIN_TABLES,
+            KNOWLEDGE_BASE_TABLES,
+            CONVERSATION_AI_TABLES,
+            Set.of(
+                    "terms_document_version",
+                    "terms_acceptance",
+                    "model_invocation",
+                    "asset_preview_derivative",
+                    "ai_context_source",
+                    "artifact_draft",
+                    "artifact_revision",
+                    "conversation_memory_checkpoint"
+            )
+    );
+
     @Container
     private static final MySQLContainer MYSQL = new MySQLContainer("mysql:8.0.45")
             .withDatabaseName("examinsight_v2_test")
@@ -230,11 +251,15 @@ class PlatformFoundationMigrationTest {
             assertThat(readTables(connection)).containsExactlyInAnyOrderElementsOf(CONVERSATION_AI_SCHEMA_TABLES);
         }
 
-        Flyway conversationCascadeFixFlyway = configureFlyway(null);
-        assertRunsOneMigrationThenBecomesIdempotent(conversationCascadeFixFlyway);
+        Flyway remainingMigrationsFlyway = configureFlyway(null);
+        MigrateResult remaining = remainingMigrationsFlyway.migrate();
+        MigrateResult secondRun = remainingMigrationsFlyway.migrate();
+        assertThat(remaining.migrationsExecuted).isEqualTo(13);
+        assertThat(secondRun.migrationsExecuted).isZero();
+        assertThat(remainingMigrationsFlyway.validateWithResult().validationSuccessful).isTrue();
 
         try (Connection connection = MYSQL.createConnection("")) {
-            assertThat(readTables(connection)).containsExactlyInAnyOrderElementsOf(CONVERSATION_AI_SCHEMA_TABLES);
+            assertThat(readTables(connection)).containsExactlyInAnyOrderElementsOf(FINAL_SCHEMA_TABLES);
             assertConversationAndAiRuntimeBoundaries(connection, userId);
         }
     }

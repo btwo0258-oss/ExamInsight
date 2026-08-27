@@ -37,7 +37,9 @@ public class ProviderQueryEmbeddingGateway implements QueryEmbeddingGateway {
                         "V2 semantic retrieval only supports the frozen DashScope embedding model");
             }
             List<Double> raw = dashScope.embed(query);
-            return validate(raw, properties.getIndexing().getDimensions());
+            List<Float> vector = validate(raw, properties.getIndexing().getDimensions());
+            runtime.resume();
+            return vector;
         } catch (RetrievalException exception) {
             throw exception;
         } catch (EmbeddingProviderException exception) {

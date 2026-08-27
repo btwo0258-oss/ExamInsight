@@ -17,6 +17,7 @@ import java.util.Map;
 public class AssetPreviewService {
     private static final long MIB = 1024L * 1024L;
     private static final long TEXT_LIMIT = 10L * MIB;
+    private static final long MINDMAP_LIMIT = 10L * MIB;
     private static final long IMAGE_LIMIT = 20L * MIB;
     private static final long DOCUMENT_LIMIT = 30L * MIB;
     private static final long AUDIO_LIMIT = 30L * MIB;
@@ -103,6 +104,10 @@ public class AssetPreviewService {
         if (mimeType.equals("application/vnd.openxmlformats-officedocument.presentationml.presentation")
                 || trustedFallback(mimeType, extension, "pptx")) {
             return new PreviewRule("pptx", DOCUMENT_LIMIT);
+        }
+        if (mimeType.equals("application/vnd.examinsight.mindmap+json")
+                || trustedFallback(mimeType, extension, "mindmap.json")) {
+            return new PreviewRule("mindmap", MINDMAP_LIMIT);
         }
         if (mimeType.equals("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                 || trustedFallback(mimeType, extension, "xlsx")) {
