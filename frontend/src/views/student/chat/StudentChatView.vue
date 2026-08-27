@@ -13,7 +13,12 @@ import MessageList from '@/components/chat/message/MessageList.vue'
 import SegmentPanel from '@/components/chat/SegmentPanel.vue'
 import VoiceRecorder from '@/components/capture/VoiceRecorder.vue'
 import StudentShell from '@/components/layout/StudentShell.vue'
-import { getAsset, retryAssetProcessing, uploadAsset } from '@/api/assetLibraryV2'
+import {
+  addAssetToKnowledgeBase,
+  getAsset,
+  retryAssetProcessing,
+  uploadAsset,
+} from '@/api/assetLibraryV2'
 import { synthesizeSpeech } from '@/api/chatV2'
 import { useAssetLibraryV2Store } from '@/stores/assetLibraryV2'
 import { useAuthStore } from '@/stores/auth'
@@ -35,6 +40,7 @@ type DraftAttachment = {
   progress: number
   error?: string
   previewUrl?: string
+  pendingKnowledgeBaseId?: string
 }
 
 const route = useRoute()
@@ -156,8 +162,20 @@ async function retryDraftAttachment(key: string) {
   if (!current?.assetId || current.status === 'uploading' || current.status === 'processing') return
   current.status = 'processing'
   current.error = undefined
-  current.indexStatus = 'PROCESSING'
   try {
+    if (current.pendingKnowledgeBaseId) {
+      await addAssetToKnowledgeBase(current.pendingKnowledgeBaseId, current.assetId)
+      current.pendingKnowledgeBaseId = undefined
+      const detail = await getAsset(current.assetId)
+      current.status = assetStatus(detail.asset)
+      current.indexStatus = detail.asset.version?.indexStatus
+      assetLibraryStore.upsertUploadedAsset(detail.asset)
+      if (current.status === 'processing' || current.indexStatus === 'PROCESSING') {
+        await waitUntilAssetSettled(current.assetId, key)
+      }
+      return
+    }
+    current.indexStatus = 'PROCESSING'
     const detail = await retryAssetProcessing(current.assetId)
     current.status = assetStatus(detail.asset)
     current.indexStatus = detail.asset.version?.indexStatus
@@ -171,6 +189,7 @@ async function retryDraftAttachment(key: string) {
 
 async function uploadOne(file: File) {
   const key = crypto.randomUUID()
+  const targetKnowledgeBaseId = selectedKnowledgeBaseId.value
   const item: DraftAttachment = {
     key,
     name: file.name,
@@ -182,7 +201,7 @@ async function uploadOne(file: File) {
   }
   draftAttachments.value.push(item)
   try {
-    const result = await uploadAsset(file, selectedKnowledgeBaseId.value, progress => {
+    const result = await uploadAsset(file, targetKnowledgeBaseId, progress => {
       const current = draftAttachments.value.find(candidate => candidate.key === key)
       if (current) current.progress = progress.percentage
     })
@@ -198,13 +217,22 @@ async function uploadOne(file: File) {
     if (result.associationWarning) {
       current.status = 'failed'
       current.error = result.associationWarning
+      current.pendingKnowledgeBaseId = targetKnowledgeBaseId ?? undefined
+      const detail = await getAsset(current.assetId)
+      current.indexStatus = detail.asset.version?.indexStatus
+      assetLibraryStore.upsertUploadedAsset(detail.asset)
       return
     }
     if (current.status === 'processing') {
       await waitUntilAssetSettled(current.assetId, key)
     } else {
       const detail = await getAsset(current.assetId)
+      current.status = assetStatus(detail.asset)
+      current.indexStatus = detail.asset.version?.indexStatus
       assetLibraryStore.upsertUploadedAsset(detail.asset)
+      if (current.indexStatus === 'PROCESSING') {
+        await waitUntilAssetSettled(current.assetId, key)
+      }
     }
   } catch (error) {
     const current = draftAttachments.value.find(candidate => candidate.key === key)

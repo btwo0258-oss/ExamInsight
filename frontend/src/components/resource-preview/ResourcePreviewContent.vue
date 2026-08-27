@@ -154,7 +154,6 @@ const learningMindMapTree = computed(
     v-else-if="preview.previewKind === 'image' && preview.previewUrl"
     class="image-document"
     :src="preview.previewUrl"
-    :initial-page="initialPage"
     :alt="resourceName"
   />
   <article
@@ -167,6 +166,7 @@ const learningMindMapTree = computed(
   <PdfPageReader
     v-else-if="preview.previewKind === 'pdf' && preview.previewUrl"
     :src="preview.previewUrl"
+    :initial-page="initialPage"
   />
   <section
     v-else-if="preview.previewKind === 'audio' && preview.previewUrl"

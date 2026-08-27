@@ -116,6 +116,13 @@ onBeforeUnmount(() => {
           </button>
         </span>
         <button
+          v-if="item.status !== 'failed' && canRetry(item)"
+          class="image-retry-button"
+          type="button"
+          :aria-label="`重试处理 ${item.name}`"
+          @click.stop="emit('retry', item.key)"
+        ><RotateCcw :size="14" /></button>
+        <button
           v-if="removable"
           class="remove-button"
           type="button"
@@ -210,6 +217,11 @@ onBeforeUnmount(() => {
   position: absolute; right: 32px; bottom: 6px; display: grid; width: 24px; height: 24px; padding: 0;
   place-items: center; border: 0; border-radius: 50%; color: var(--color-text-muted);
   background: var(--color-surface); cursor: pointer;
+}
+.image-retry-button {
+  position: absolute; right: 36px; bottom: 7px; display: grid; width: 27px; height: 27px; padding: 0;
+  place-items: center; border: 0; border-radius: 50%; color: white;
+  background: rgb(25 25 25 / 76%); cursor: pointer;
 }
 .compact .image-grid { grid-template-columns: repeat(2, minmax(0, 132px)); }
 .compact .image-grid.count-1 { grid-template-columns: minmax(110px, 200px); }
