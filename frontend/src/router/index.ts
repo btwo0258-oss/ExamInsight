@@ -15,6 +15,8 @@ const router = createRouter({
     { path: '/library', name: 'library-home', component: () => import('@/views/student/library/LibraryHomeView.vue'), meta: requiresAuth },
     { path: '/library/:id', name: 'library-detail', component: () => import('@/views/student/library/LibraryDetailView.vue'), props: true, meta: requiresAuth },
     { path: '/resources/:resourceId/preview', name: 'resource-preview', component: () => import('@/views/student/resource/ResourcePreviewView.vue'), props: true, meta: requiresAuth },
+    { path: '/learning', name: 'learning-projects', component: () => import('@/views/student/learning/SmartLearningProjectsView.vue'), meta: requiresAuth },
+    { path: '/learning/:id/setup', name: 'learning-setup', component: () => import('@/views/student/learning/SmartLearningSetupView.vue'), props: true, meta: requiresAuth },
     { path: '/knowledge', redirect: '/library' },
     { path: '/knowledge/:id', redirect: (to) => `/library/${String(to.params.id)}` },
     { path: '/:pathMatch(.*)*', redirect: '/chat' },

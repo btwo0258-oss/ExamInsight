@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Folder,
+  GraduationCap,
   LogIn,
   LogOut,
   Menu,
@@ -62,7 +63,8 @@ let resizeStartWidth = DEFAULT_SIDEBAR_WIDTH
 
 const activeWidth = computed(() => collapsed.value ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth.value)
 const displayName = computed(() => authStore.user?.nickname || authStore.user?.email?.split('@')[0] || '登录')
-const activeConversationId = computed(() => String(route.params.id || ''))
+const activeConversationId = computed(() =>
+  route.name === 'chat-detail' ? String(route.params.id || '') : '')
 const pinnedConversations = computed(() => chatStore.conversations.filter(item => Boolean(item.pinnedAt)))
 const recentConversations = computed(() => chatStore.conversations.filter(item => !item.pinnedAt))
 
@@ -227,6 +229,13 @@ onBeforeUnmount(() => {
       >
         <Folder :size="19" />
         <span v-if="!collapsed">资料库</span>
+      </RouterLink>
+      <RouterLink
+        to="/learning"
+        :class="{ active: String(route.name).startsWith('learning') }"
+      >
+        <GraduationCap :size="19" />
+        <span v-if="!collapsed">智能学习</span>
       </RouterLink>
     </nav>
 
