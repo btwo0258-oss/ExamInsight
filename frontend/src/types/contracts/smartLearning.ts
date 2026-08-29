@@ -37,6 +37,10 @@ export type SmartLearningProject = {
   diagnosisVersion: number
   planVersion: number
   resourceConfigVersion: number
+  learningProgress: number
+  completedTaskCount: number
+  totalTaskCount: number
+  pinnedAt: string | null
   updatedAt: string
 }
 
@@ -91,6 +95,25 @@ export type SmartLearningExecution = {
   pausedAt: string | null
   completedAt: string | null
   updatedAt: string
+  grading?: SmartLearningExerciseGrade | null
+}
+
+export type SmartLearningExerciseQuestionGrade = {
+  questionId: string
+  index: number
+  answered: boolean
+  correct: boolean
+  answer: string
+  correctAnswer: string
+  explanation: string
+}
+
+export type SmartLearningExerciseGrade = {
+  total: number
+  answered: number
+  correct: number
+  accuracy: number
+  items: SmartLearningExerciseQuestionGrade[]
 }
 
 export type SmartLearningTask = {
@@ -114,8 +137,55 @@ export type SmartLearningWorkspace = {
   projectName: string
   stage: SmartLearningStage
   progress: number
+  completedTaskCount: number
+  totalTaskCount: number
+  wrongItemCount: number
+  pendingWrongItemCount: number
+  profile: Record<string, unknown>
   tasks: SmartLearningTask[]
   resources: SmartLearningResource[]
   activeExecution: SmartLearningExecution | null
+  updatedAt: string
+}
+
+export type SmartLearningWrongItem = {
+  wrongItemId: string
+  projectId: string
+  taskId: string
+  questionId: string
+  stem: string
+  userAnswer: string
+  correctAnswer: string
+  explanation: string
+  knowledgeKey: string
+  status: 'TO_REVIEW' | 'MASTERED' | string
+  updatedAt: string
+}
+
+export type SmartLearningTutorThread = {
+  threadId: string
+  conversationId: string
+  projectId: string
+  taskId: string | null
+  contextType: 'PROJECT' | 'TASK' | string
+}
+
+export type SmartLearningTutorConversation = {
+  conversationId: string
+  title: string
+  taskId: string | null
+  taskTitle: string | null
+  contextType: 'PROJECT' | 'TASK' | string
+  updatedAt: string
+}
+
+export type SmartLearningSidebarProject = {
+  projectId: string
+  name: string
+  icon: string
+  iconColor: string
+  stage: SmartLearningStage
+  pinnedAt: string | null
+  conversations: SmartLearningTutorConversation[]
   updatedAt: string
 }

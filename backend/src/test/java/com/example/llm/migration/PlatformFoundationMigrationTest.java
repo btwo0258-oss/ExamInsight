@@ -259,8 +259,8 @@ class PlatformFoundationMigrationTest {
         Flyway remainingMigrationsFlyway = configureFlyway(null);
         MigrateResult remaining = remainingMigrationsFlyway.migrate();
         MigrateResult secondRun = remainingMigrationsFlyway.migrate();
-        // V007.1 plus V008..V021 (including the smart-learning workbench schema).
-        assertThat(remaining.migrationsExecuted).isEqualTo(15);
+        // V007.1 plus V008..V023 (including smart-learning execution and navigation state).
+        assertThat(remaining.migrationsExecuted).isEqualTo(17);
         assertThat(secondRun.migrationsExecuted).isZero();
         assertThat(remainingMigrationsFlyway.validateWithResult().validationSuccessful).isTrue();
 

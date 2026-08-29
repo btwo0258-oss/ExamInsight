@@ -1,5 +1,5 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { onBeforeRouteLeave, onBeforeRouteUpdate, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
 import * as api from '@/api/smartLearning'
 import { listAssets, listKnowledgeBases, retryAssetProcessing } from '@/api/assetLibraryV2'
 import type { KnowledgeBase, LibraryAsset } from '@/types/contracts/assetLibraryV2'
@@ -30,6 +30,7 @@ export function localDate() { const d = new Date(); return `${d.getFullYear()}-$
 
 export function useLearningPreparation(projectId: string) {
   const router = useRouter()
+  const route = useRoute()
   const accountId = useAuthStore().user?.id || 'anonymous'
   const storageKey = `examinsight.learning.draft.${accountId}.${projectId}`
   const stepKey = `examinsight.learning.step.${accountId}.${projectId}`
@@ -104,6 +105,13 @@ export function useLearningPreparation(projectId: string) {
       drafts.initialize(() => hydrate(project), restoreSection)
       let saved = Math.min(5, stageIndex.value)
       try { const raw = sessionStorage.getItem(stepKey); if (raw != null && /^\d$/.test(raw)) saved = Number(raw) } catch { /* optional preference */ }
+      const requestedStep = typeof route.query.step === 'string' && /^[0-5]$/.test(route.query.step) ? Number(route.query.step) : null
+      if (requestedStep != null) saved = requestedStep
+      if (route.query.extend === '1') {
+        saved = 4
+        planMeta.value = { ...planMeta.value, extensionMode: true, basePlanVersion: project.planVersion }
+        drafts.touch('plan')
+      }
       rememberStep(Math.max(0, Math.min(5, stageIndex.value, saved)))
       if (project.activeJob && ['QUEUED', 'RUNNING'].includes(project.activeJob.status)) resumeJob(project.activeJob.jobId)
       else if (project.activeJob && ['FAILED', 'UNKNOWN', 'CANCELLED'].includes(project.activeJob.status)) {
@@ -173,10 +181,14 @@ export function useLearningPreparation(projectId: string) {
       if (!mounted) return
       drafts.replace(() => hydrate(project))
       if (section === 'resources') {
-        // Start the server-side preparation before leaving setup.  The
-        // workbench reads the job/resource rows as the source of truth.
-        await api.prepareSmartLearningResources(projectId)
-        await router.push(`/learning/${projectId}`)
+        // The confirmed state is enough to enter the workbench. Resource
+        // preparation continues there and is safe to resume after refresh.
+        busy.value = false
+        const returnTo = typeof route.query.returnTo === 'string' && route.query.returnTo.startsWith('/')
+          ? route.query.returnTo
+          : `/learning/${projectId}`
+        await router.replace(returnTo)
+        void api.prepareSmartLearningResources(projectId).catch(() => undefined)
         return
       }
       rememberStep(Math.min(5, stageIndex.value))

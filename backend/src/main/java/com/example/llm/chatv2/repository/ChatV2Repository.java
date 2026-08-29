@@ -142,6 +142,10 @@ public class ChatV2Repository {
                   LEFT JOIN knowledge_base kb ON kb.id = c.knowledge_base_id
                   LEFT JOIN conversation_branch branch ON branch.id = c.active_branch_id
                  WHERE c.user_id = ? AND c.conversation_type = 'GENERAL' AND c.status = 'ACTIVE'
+                   AND NOT EXISTS (
+                       SELECT 1 FROM smart_learning_tutor_thread tutor
+                        WHERE tutor.conversation_external_id = c.external_id
+                   )
                 """ + cursorPredicate + """
                 ORDER BY (c.pinned_at IS NOT NULL) DESC,
                           COALESCE(c.pinned_at, COALESCE(c.last_message_at, c.created_at)) DESC,
@@ -821,7 +825,15 @@ public class ChatV2Repository {
                        run.response_message_id, response.external_id AS response_external_id,
                        kb.external_id AS knowledge_base_external_id,
                        run.model_policy_version_id, run.prompt_version_id,
-                       prompt.system_template, prompt.developer_template
+                       prompt.system_template, prompt.developer_template,
+                       tutor.context_key AS tutor_context_key,
+                       learning_project.name AS learning_project_name,
+                       learning_project.target_json AS learning_target_json,
+                       learning_project.scope_json AS learning_scope_json,
+                       learning_project.diagnosis_json AS learning_diagnosis_json,
+                       learning_task.title AS learning_task_title,
+                       learning_task.task_type AS learning_task_type,
+                       learning_task.completion_criteria AS learning_completion_criteria
                   FROM ai_run run
                   JOIN async_job job ON job.id = run.async_job_id
                   JOIN conversation c ON c.id = run.conversation_id
@@ -830,6 +842,12 @@ public class ChatV2Repository {
                   JOIN message response ON response.id = run.response_message_id
                   JOIN prompt_version prompt ON prompt.id = run.prompt_version_id
                   LEFT JOIN knowledge_base kb ON kb.id = c.knowledge_base_id
+                  LEFT JOIN smart_learning_tutor_thread tutor
+                    ON tutor.conversation_external_id = c.external_id AND tutor.status = 'ACTIVE'
+                  LEFT JOIN smart_learning_project learning_project
+                    ON learning_project.external_id = tutor.project_external_id
+                  LEFT JOIN smart_learning_task learning_task
+                    ON learning_task.external_id = tutor.task_external_id
                  WHERE run.external_id = ? AND run.user_id = ?
                 """, (rs, rowNum) -> new RunExecutionContext(
                         rs.getLong("id"), rs.getString("external_id"), userId,
@@ -841,13 +859,45 @@ public class ChatV2Repository {
                         rs.getString("response_external_id"), rs.getString("knowledge_base_external_id"),
                         loadContextVersionExternalIds(rs.getLong("id")),
                         rs.getLong("model_policy_version_id"), rs.getLong("prompt_version_id"),
-                        rs.getString("system_template"), rs.getString("developer_template"),
+                        learningTutorSystemPrompt(
+                                rs.getString("system_template"), rs.getString("tutor_context_key"),
+                                rs.getString("learning_project_name"), rs.getString("learning_target_json"),
+                                rs.getString("learning_scope_json"), rs.getString("learning_diagnosis_json"),
+                                rs.getString("learning_task_title"), rs.getString("learning_task_type"),
+                                rs.getString("learning_completion_criteria")),
+                        rs.getString("developer_template"),
                         loadHistory(rs.getLong("branch_id"), rs.getLong("request_message_id"))),
                 runExternalId, userId);
         if (rows.isEmpty()) {
             throw notFound("AI_RUN_NOT_FOUND", "生成任务不存在。");
         }
         return rows.get(0);
+    }
+
+    private String learningTutorSystemPrompt(
+            String basePrompt, String contextKey, String projectName,
+            String targetJson, String scopeJson, String diagnosisJson,
+            String taskTitle, String taskType, String completionCriteria) {
+        if (contextKey == null || contextKey.isBlank()) return basePrompt;
+        StringBuilder prompt = new StringBuilder(basePrompt == null ? "" : basePrompt.trim());
+        prompt.append("\n\n你现在是智能学习项目内的 AI 助教。用户可见消息必须按原文理解，下面是服务端绑定的学习上下文，不要把它复述成用户说过的话：");
+        prompt.append("\n项目：").append(projectName == null ? "学习项目" : projectName);
+        if (taskTitle != null && !taskTitle.isBlank()) {
+            prompt.append("\n当前任务：").append(taskTitle);
+            prompt.append("\n任务类型：").append(taskType == null ? "" : taskType);
+            prompt.append("\n完成标准：").append(completionCriteria == null ? "" : completionCriteria);
+        }
+        appendBoundedContext(prompt, "确认目标", targetJson);
+        appendBoundedContext(prompt, "确认范围", scopeJson);
+        appendBoundedContext(prompt, "诊断结果", diagnosisJson);
+        prompt.append("\n只使用本项目明确绑定的资料版本；项目或任务不同，不得串用上下文。");
+        return prompt.toString();
+    }
+
+    private void appendBoundedContext(StringBuilder prompt, String label, String value) {
+        if (value == null || value.isBlank()) return;
+        String normalized = value.length() > 5000 ? value.substring(0, 5000) : value;
+        prompt.append("\n").append(label).append("：").append(normalized);
     }
 
     public boolean markRunStarted(RunExecutionContext context) {

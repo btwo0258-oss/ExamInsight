@@ -23,16 +23,23 @@ import {
 } from 'lucide-vue-next'
 
 import UserProfileModal from '@/components/auth/UserProfileModal.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import PromptModal from '@/components/common/PromptModal.vue'
+import LearningProjectModal from '@/components/learning/LearningProjectModal.vue'
+import AppIcon from '@/components/common/AppIcon.vue'
 import logoUrl from '@/assets/icons/ExamInsight-Logo.png'
 import { useAuthStore } from '@/stores/auth'
 import { useChatV2Store } from '@/stores/chatV2'
+import { useSmartLearningStore } from '@/stores/smartLearning'
 import { useThemeStore } from '@/stores/theme'
+import type { SmartLearningSidebarProject } from '@/types/contracts/smartLearning'
 
 const SIDEBAR_WIDTH_STORAGE_KEY = 'examinsight.ui.student-sidebar-width'
 const DEFAULT_SIDEBAR_WIDTH = 276
 const MIN_SIDEBAR_WIDTH = 232
 const MAX_SIDEBAR_WIDTH = 420
 const COLLAPSED_SIDEBAR_WIDTH = 72
+const GROUP_STATE_KEY = 'examinsight.ui.student-sidebar-groups'
 
 const props = defineProps<{ compactOnMobile?: boolean }>()
 const mobileViewport = typeof window.matchMedia === 'function' ? window.matchMedia('(max-width: 640px)') : null
@@ -42,6 +49,7 @@ const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const chatStore = useChatV2Store()
+const learningStore = useSmartLearningStore()
 const themeStore = useThemeStore()
 
 function clampSidebarWidth(value: number) {
@@ -56,10 +64,23 @@ function readSidebarWidth() {
 const sidebarWidth = ref(readSidebarWidth())
 const collapsed = ref(Boolean(props.compactOnMobile && mobileViewport?.matches))
 const isResizing = ref(false)
-const recentExpanded = ref(true)
+function readGroupState() {
+  try { return { pinned: true, learning: true, recent: true, ...JSON.parse(localStorage.getItem(GROUP_STATE_KEY) || '{}') } }
+  catch { return { pinned: true, learning: true, recent: true } }
+}
+const initialGroupState = readGroupState()
+const pinnedExpanded = ref(Boolean(initialGroupState.pinned))
+const learningExpanded = ref(Boolean(initialGroupState.learning))
+const recentExpanded = ref(Boolean(initialGroupState.recent))
+const expandedProjectIds = ref<Set<string>>(new Set())
 const profileOpen = ref(false)
 const accountMenuOpen = ref(false)
 const activeMenuId = ref('')
+const sidebarEditingProject = ref<SmartLearningSidebarProject | null>(null)
+const sidebarDeletingProject = ref<SmartLearningSidebarProject | null>(null)
+const conversationRenameTarget = ref<{ id: string; title: string } | null>(null)
+const sidebarProjectBusy = ref(false)
+const sidebarProjectError = ref('')
 const loadingMoreConversations = ref(false)
 const sidebarRoot = ref<HTMLElement | null>(null)
 let resizeStartX = 0
@@ -70,13 +91,24 @@ const displayName = computed(() => authStore.user?.nickname || authStore.user?.e
 const activeConversationId = computed(() =>
   route.name === 'chat-detail' ? String(route.params.id || '') : '')
 const pinnedConversations = computed(() => chatStore.conversations.filter(item => Boolean(item.pinnedAt)))
-const recentConversations = computed(() => chatStore.conversations.filter(item => !item.pinnedAt))
+const tutorConversationIds = computed(() => new Set(learningProjects.value.flatMap(project => project.conversations.map(item => item.conversationId))))
+const recentConversations = computed(() => chatStore.conversations.filter(item => !item.pinnedAt && !tutorConversationIds.value.has(item.id)))
+const learningProjects = computed(() => learningStore.sidebarProjects)
+const pinnedProjects = computed(() => learningProjects.value.filter(project => Boolean(project.pinnedAt)))
+const unpinnedProjects = computed(() => learningProjects.value.filter(project => !project.pinnedAt))
+const hasPinned = computed(() => pinnedConversations.value.length > 0 || pinnedProjects.value.length > 0)
 
 watch(activeWidth, value => emit('widthChange', value), { immediate: true })
 watch(sidebarWidth, value => localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(value)))
+watch([pinnedExpanded, learningExpanded, recentExpanded], ([pinned, learning, recent]) => {
+  localStorage.setItem(GROUP_STATE_KEY, JSON.stringify({ pinned, learning, recent }))
+})
 watch(() => route.fullPath, () => {
   activeMenuId.value = ''
   accountMenuOpen.value = false
+  if (authStore.isAuthed && (String(route.name).startsWith('learning') || route.query.tutor === '1')) {
+    void learningStore.fetchSidebarProjects().catch(() => undefined)
+  }
 })
 
 async function startNewChat() {
@@ -84,10 +116,20 @@ async function startNewChat() {
   await router.push({ name: 'chat' })
 }
 
-async function renameConversation(id: string, currentTitle: string) {
+function requestRenameConversation(id: string, currentTitle: string) {
   activeMenuId.value = ''
-  const title = window.prompt('修改对话标题', currentTitle)?.trim()
-  if (title && title !== currentTitle) await chatStore.rename(id, title)
+  conversationRenameTarget.value = { id, title: currentTitle }
+}
+
+async function confirmRenameConversation(title: string) {
+  const target = conversationRenameTarget.value
+  if (!target) return
+  try {
+    if (title !== target.title) await chatStore.rename(target.id, title)
+    conversationRenameTarget.value = null
+  } catch (cause) {
+    window.alert(cause instanceof Error ? cause.message : '重命名对话失败。')
+  }
 }
 
 async function deleteConversation(id: string) {
@@ -104,6 +146,67 @@ async function togglePinConversation(id: string, pinned: boolean) {
   } catch (cause) {
     window.alert(cause instanceof Error ? cause.message : '保存置顶状态失败。')
   }
+}
+
+function toggleProject(projectId: string) {
+  const next = new Set(expandedProjectIds.value)
+  if (next.has(projectId)) next.delete(projectId)
+  else next.add(projectId)
+  expandedProjectIds.value = next
+}
+
+async function togglePinProject(projectId: string, pinned: boolean) {
+  activeMenuId.value = ''
+  try { await learningStore.setPinned(projectId, pinned) }
+  catch (cause) { window.alert(cause instanceof Error ? cause.message : '保存学习项目置顶状态失败。') }
+}
+
+function projectPath(project: SmartLearningSidebarProject) {
+  return project.stage === 'READY' ? `/learning/${project.projectId}` : `/learning/${project.projectId}/setup`
+}
+
+function openProject(project: SmartLearningSidebarProject) {
+  activeMenuId.value = ''
+  void router.push(projectPath(project))
+}
+
+function requestRenameProject(project: SmartLearningSidebarProject) {
+  activeMenuId.value = ''
+  sidebarProjectError.value = ''
+  sidebarEditingProject.value = project
+}
+
+function requestDeleteProject(project: SmartLearningSidebarProject) {
+  activeMenuId.value = ''
+  sidebarProjectError.value = ''
+  sidebarDeletingProject.value = project
+}
+
+async function saveSidebarProject(payload: { name: string; icon: string; iconColor: string }) {
+  if (!sidebarEditingProject.value) return
+  sidebarProjectBusy.value = true
+  sidebarProjectError.value = ''
+  try {
+    await learningStore.rename(sidebarEditingProject.value.projectId, payload)
+    await learningStore.fetchSidebarProjects()
+    sidebarEditingProject.value = null
+  } catch (cause) {
+    sidebarProjectError.value = cause instanceof Error ? cause.message : '保存学习项目失败。'
+  } finally { sidebarProjectBusy.value = false }
+}
+
+async function confirmDeleteProject() {
+  if (!sidebarDeletingProject.value) return
+  sidebarProjectBusy.value = true
+  sidebarProjectError.value = ''
+  try {
+    const projectId = sidebarDeletingProject.value.projectId
+    await learningStore.deletePermanently(projectId)
+    sidebarDeletingProject.value = null
+    if (String(route.params.id || '') === projectId) await router.push('/learning')
+  } catch (cause) {
+    sidebarProjectError.value = cause instanceof Error ? cause.message : '删除学习项目失败。'
+  } finally { sidebarProjectBusy.value = false }
 }
 
 async function requestMoreConversations() {
@@ -181,6 +284,7 @@ onMounted(() => {
   mobileViewport?.addEventListener('change', syncMobileSidebar)
   authStore.init()
   if (authStore.isAuthed && !chatStore.conversations.length) void chatStore.loadList().catch(() => undefined)
+  if (authStore.isAuthed) void learningStore.fetchSidebarProjects().catch(() => undefined)
   document.addEventListener('pointerdown', closeTransientMenus)
   document.addEventListener('keydown', closeMenusOnEscape)
 })
@@ -225,7 +329,7 @@ onBeforeUnmount(() => {
     </header>
 
     <nav class="primary-nav" aria-label="主要导航">
-      <button type="button" :class="{ active: route.name === 'chat' || route.name === 'chat-detail' }" @click="startNewChat">
+      <button type="button" :class="{ active: route.name === 'chat' }" @click="startNewChat">
         <SquarePen :size="19" />
         <span v-if="!collapsed">新对话</span>
       </button>
@@ -258,65 +362,42 @@ onBeforeUnmount(() => {
     </nav>
 
     <section v-if="!collapsed && authStore.isAuthed" class="conversation-section">
-      <button class="section-title" type="button" @click="recentExpanded = !recentExpanded">
-        <span>最近</span>
-        <ChevronDown :size="14" :class="{ folded: !recentExpanded }" />
-      </button>
-      <div v-show="recentExpanded" class="conversation-list" @scroll.passive="handleConversationScroll">
-        <div v-if="pinnedConversations.length" class="conversation-group-label">已置顶</div>
-        <div
-          v-for="item in pinnedConversations"
-          :key="item.id"
-          class="conversation-item"
-          :class="{ active: activeConversationId === item.id }"
-        >
-          <RouterLink :to="`/chat/${item.id}`" :title="item.title">
-            <MessageSquare :size="15" />
-            <span>{{ item.title }}</span>
-          </RouterLink>
-          <button
-            class="conversation-more"
-            type="button"
-            aria-label="对话操作"
-            @click.stop="activeMenuId = activeMenuId === item.id ? '' : item.id"
-          >
-            <MoreHorizontal :size="16" />
-          </button>
-          <div v-if="activeMenuId === item.id" class="conversation-menu">
-            <button type="button" @click="renameConversation(item.id, item.title)">重命名</button>
-            <button type="button" @click="togglePinConversation(item.id, false)"><PinOff :size="15" />取消置顶</button>
-            <button class="danger" type="button" @click="deleteConversation(item.id)"><Trash2 :size="15" />删除</button>
+      <div class="conversation-list" @scroll.passive="handleConversationScroll">
+        <section v-if="hasPinned" class="sidebar-group">
+          <button class="section-title" type="button" @click="pinnedExpanded = !pinnedExpanded"><span>已置顶</span><ChevronDown :size="14" :class="{ folded: !pinnedExpanded }" /></button>
+          <div v-show="pinnedExpanded" class="sidebar-group-content">
+            <div v-for="item in pinnedConversations" :key="item.id" class="conversation-item" :class="{ active: activeConversationId === item.id }"><RouterLink :to="`/chat/${item.id}`" :title="item.title"><MessageSquare :size="15" /><span>{{ item.title }}</span></RouterLink><button class="conversation-more" type="button" aria-label="对话操作" @click.stop="activeMenuId = activeMenuId === item.id ? '' : item.id"><MoreHorizontal :size="16" /></button><div v-if="activeMenuId === item.id" class="conversation-menu"><button type="button" @click="togglePinConversation(item.id, false)"><PinOff :size="15" />取消置顶</button><button type="button" @click="requestRenameConversation(item.id, item.title)"><SquarePen :size="15" />重命名</button><button class="danger" type="button" @click="deleteConversation(item.id)"><Trash2 :size="15" />删除</button></div></div>
+            <div v-for="project in pinnedProjects" :key="`pinned:${project.projectId}`" class="learning-project-item">
+              <div class="learning-project-row" :class="{ active: String(route.params.id || '') === project.projectId && String(route.name).startsWith('learning'), 'has-expand': project.conversations.length > 0 }">
+                <button class="learning-project-link" type="button" :title="project.name" @click="openProject(project)"><AppIcon :name="project.icon || 'notebook'" :size="15" :color="project.iconColor" /><span>{{ project.name }}</span></button>
+                <button v-if="project.conversations.length" class="project-expand" type="button" :aria-label="expandedProjectIds.has(project.projectId) ? '收起项目对话' : '展开项目对话'" @click="toggleProject(project.projectId)"><ChevronDown :size="14" :class="{ folded: !expandedProjectIds.has(project.projectId) }" /></button>
+                <button class="conversation-more project-more" type="button" aria-label="学习项目操作" @click.stop="activeMenuId = activeMenuId === `project:${project.projectId}` ? '' : `project:${project.projectId}`"><MoreHorizontal :size="16" /></button>
+                <div v-if="activeMenuId === `project:${project.projectId}`" class="conversation-menu"><button type="button" @click="togglePinProject(project.projectId, false)"><PinOff :size="15" />取消置顶</button><button type="button" @click="requestRenameProject(project)"><SquarePen :size="15" />重命名</button><button class="danger" type="button" @click="requestDeleteProject(project)"><Trash2 :size="15" />删除</button></div>
+              </div>
+              <div v-show="expandedProjectIds.has(project.projectId)" class="project-conversations"><RouterLink v-for="conversation in project.conversations" :key="conversation.conversationId" :to="{ path: `/chat/${conversation.conversationId}`, query: { tutor: '1', projectId: project.projectId, taskId: conversation.taskId || undefined } }" :class="{ active: activeConversationId === conversation.conversationId }"><MessageSquare :size="13" /><span>{{ conversation.contextType === 'TASK' ? (conversation.taskTitle || conversation.title) : conversation.title }}</span></RouterLink></div>
+            </div>
           </div>
-        </div>
-        <div v-if="pinnedConversations.length" class="conversation-group-label">最近</div>
-        <div
-          v-for="item in recentConversations"
-          :key="item.id"
-          class="conversation-item"
-          :class="{ active: activeConversationId === item.id }"
-        >
-          <RouterLink :to="`/chat/${item.id}`" :title="item.title">
-            <MessageSquare :size="15" />
-            <span>{{ item.title }}</span>
-          </RouterLink>
-          <button
-            class="conversation-more"
-            type="button"
-            aria-label="对话操作"
-            @click.stop="activeMenuId = activeMenuId === item.id ? '' : item.id"
-          >
-            <MoreHorizontal :size="16" />
-          </button>
-          <div v-if="activeMenuId === item.id" class="conversation-menu">
-            <button type="button" @click="renameConversation(item.id, item.title)">重命名</button>
-            <button type="button" @click="togglePinConversation(item.id, true)"><Pin :size="15" />置顶</button>
-            <button class="danger" type="button" @click="deleteConversation(item.id)"><Trash2 :size="15" />删除</button>
+        </section>
+
+        <section class="sidebar-group learning-group">
+          <button class="section-title" type="button" @click="learningExpanded = !learningExpanded"><span>学习项目</span><ChevronDown :size="14" :class="{ folded: !learningExpanded }" /></button>
+          <div v-show="learningExpanded" class="sidebar-group-content">
+            <div v-for="project in unpinnedProjects" :key="project.projectId" class="learning-project-item">
+              <div class="learning-project-row" :class="{ active: String(route.params.id || '') === project.projectId && String(route.name).startsWith('learning'), 'has-expand': project.conversations.length > 0 }"><button class="learning-project-link" type="button" :title="project.name" @click="openProject(project)"><AppIcon :name="project.icon || 'notebook'" :size="15" :color="project.iconColor" /><span>{{ project.name }}</span></button><button v-if="project.conversations.length" class="project-expand" type="button" :aria-label="expandedProjectIds.has(project.projectId) ? '收起项目对话' : '展开项目对话'" @click="toggleProject(project.projectId)"><ChevronDown :size="14" :class="{ folded: !expandedProjectIds.has(project.projectId) }" /></button><button class="conversation-more project-more" type="button" aria-label="学习项目操作" @click.stop="activeMenuId = activeMenuId === `project:${project.projectId}` ? '' : `project:${project.projectId}`"><MoreHorizontal :size="16" /></button><div v-if="activeMenuId === `project:${project.projectId}`" class="conversation-menu"><button type="button" @click="togglePinProject(project.projectId, true)"><Pin :size="15" />置顶项目</button><button type="button" @click="requestRenameProject(project)"><SquarePen :size="15" />重命名</button><button class="danger" type="button" @click="requestDeleteProject(project)"><Trash2 :size="15" />删除</button></div></div>
+              <div v-show="expandedProjectIds.has(project.projectId)" class="project-conversations"><RouterLink v-for="conversation in project.conversations" :key="conversation.conversationId" :to="{ path: `/chat/${conversation.conversationId}`, query: { tutor: '1', projectId: project.projectId, taskId: conversation.taskId || undefined } }" :class="{ active: activeConversationId === conversation.conversationId }"><MessageSquare :size="13" /><span>{{ conversation.contextType === 'TASK' ? (conversation.taskTitle || conversation.title) : conversation.title }}</span></RouterLink></div>
+            </div>
+            <p v-if="!unpinnedProjects.length" class="group-empty">暂无未置顶学习项目</p>
           </div>
-        </div>
-        <p v-if="!chatStore.conversations.length">暂无对话</p>
-        <button v-if="chatStore.hasMoreConversations" class="load-more-conversations" type="button" :disabled="chatStore.listLoading || loadingMoreConversations" @click="requestMoreConversations">
-          {{ chatStore.listLoading || loadingMoreConversations ? '加载中…' : '加载更多' }}
-        </button>
+        </section>
+
+        <section class="sidebar-group">
+          <button class="section-title" type="button" @click="recentExpanded = !recentExpanded"><span>最近</span><ChevronDown :size="14" :class="{ folded: !recentExpanded }" /></button>
+          <div v-show="recentExpanded" class="sidebar-group-content">
+            <div v-for="item in recentConversations" :key="item.id" class="conversation-item" :class="{ active: activeConversationId === item.id }"><RouterLink :to="`/chat/${item.id}`" :title="item.title"><MessageSquare :size="15" /><span>{{ item.title }}</span></RouterLink><button class="conversation-more" type="button" aria-label="对话操作" @click.stop="activeMenuId = activeMenuId === item.id ? '' : item.id"><MoreHorizontal :size="16" /></button><div v-if="activeMenuId === item.id" class="conversation-menu"><button type="button" @click="togglePinConversation(item.id, true)"><Pin :size="15" />置顶</button><button type="button" @click="requestRenameConversation(item.id, item.title)"><SquarePen :size="15" />重命名</button><button class="danger" type="button" @click="deleteConversation(item.id)"><Trash2 :size="15" />删除</button></div></div>
+            <p v-if="!recentConversations.length" class="group-empty">暂无最近对话</p>
+            <button v-if="chatStore.hasMoreConversations" class="load-more-conversations" type="button" :disabled="chatStore.listLoading || loadingMoreConversations" @click="requestMoreConversations">{{ chatStore.listLoading || loadingMoreConversations ? '加载中…' : '加载更多' }}</button>
+          </div>
+        </section>
       </div>
     </section>
 
@@ -368,6 +449,35 @@ onBeforeUnmount(() => {
     </footer>
   </aside>
   <UserProfileModal :open="profileOpen" @close="profileOpen = false" />
+  <PromptModal
+    :open="Boolean(conversationRenameTarget)"
+    title="重命名对话"
+    label="对话名称"
+    placeholder="请输入对话名称"
+    confirm-text="保存"
+    :default-value="conversationRenameTarget?.title || ''"
+    @close="conversationRenameTarget = null"
+    @confirm="confirmRenameConversation"
+  />
+  <LearningProjectModal
+    v-if="sidebarEditingProject"
+    :project="sidebarEditingProject"
+    :knowledge-bases="[]"
+    :busy="sidebarProjectBusy"
+    :error="sidebarProjectError"
+    @close="sidebarEditingProject = null"
+    @submit="saveSidebarProject"
+  />
+  <ConfirmDialog
+    :open="Boolean(sidebarDeletingProject)"
+    title="删除学习项目"
+    :message="sidebarDeletingProject ? `确定删除“${sidebarDeletingProject.name}”吗？项目中的准备记录、任务和助教对话都会被删除。` : ''"
+    confirm-text="删除项目"
+    cancel-text="取消"
+    confirm-variant="danger"
+    @close="sidebarDeletingProject = null"
+    @confirm="confirmDeleteProject"
+  />
 </template>
 
 <style scoped>
@@ -462,7 +572,8 @@ onBeforeUnmount(() => {
 .primary-nav-row.active { background: var(--ui-hover-bg, var(--color-hover)); }
 .primary-nav-row .primary-nav-link { flex: 1; }
 .primary-nav-row .primary-nav-link:hover { background: transparent; }
-.primary-nav-add { display: grid !important; width: 32px !important; min-height: 32px !important; margin-right: 4px; padding: 0 !important; place-items: center; border-radius: 7px !important; color: var(--color-text-muted) !important; }
+.primary-nav-add { display: grid !important; width: 32px !important; min-height: 32px !important; margin-right: 4px; padding: 0 !important; place-items: center; border-radius: 7px !important; color: color-mix(in srgb, var(--color-text-muted) 62%, transparent) !important; opacity: 0; pointer-events: none; transition: opacity .16s ease, color .16s ease, background .16s ease; }
+.primary-nav-row:hover .primary-nav-add, .primary-nav-row:focus-within .primary-nav-add { opacity: 1; pointer-events: auto; }
 .primary-nav-add:hover, .primary-nav-add:focus-visible { background: var(--ui-hover-strong-bg, var(--color-hover)) !important; color: var(--color-text) !important; }
 .student-sidebar--collapsed .primary-nav { width: 100%; justify-items: center; }
 .student-sidebar--collapsed .primary-nav button,
@@ -480,7 +591,7 @@ onBeforeUnmount(() => {
 .section-title { display: flex; width: 100%; height: 30px; align-items: center; justify-content: space-between; padding: 0 8px; border: 0; color: var(--color-text-muted); background: transparent; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
 .section-title svg { opacity: .58; transition: transform .18s ease; }
 .section-title svg.folded { transform: rotate(-90deg); }
-.conversation-list { height: calc(100% - 30px); overflow: auto; scrollbar-width: thin; }
+.conversation-list { height: 100%; overflow: auto; scrollbar-width: thin; }
 .conversation-list > p { margin: 12px 8px; color: var(--color-text-muted); font-size: 12px; }
 .conversation-group-label { margin: 10px 8px 4px; color: var(--color-text-muted); font-size: 11px; font-weight: 650; }
 .conversation-item { position: relative; display: flex; align-items: center; border-radius: 8px; }
@@ -498,6 +609,7 @@ onBeforeUnmount(() => {
 .load-more-conversations { display: block; width: calc(100% - 16px); min-height: 30px; margin: 8px; padding: 0 8px; border: 1px solid var(--color-border); border-radius: 8px; color: var(--color-text-muted); background: transparent; font: inherit; font-size: 11px; cursor: pointer; }
 .load-more-conversations:hover:not(:disabled) { color: var(--color-text); background: var(--ui-hover-bg, var(--color-hover)); }
 .load-more-conversations:disabled { cursor: wait; opacity: .65; }
+.sidebar-group + .sidebar-group { margin-top: 8px; }.sidebar-group-content { display: grid; gap: 1px; }.group-empty { margin: 5px 8px 8px !important; color: var(--color-text-muted); font-size: 11px !important; }.learning-project-item { min-width: 0; }.learning-project-row { position: relative; display: flex; min-width: 0; align-items: center; border-radius: 8px; }.learning-project-row:hover, .learning-project-row.active { background: var(--ui-hover-bg, var(--color-hover)); }.learning-project-link { display: flex; min-width: 0; height: 36px; flex: 1; align-items: center; gap: 8px; padding: 0 58px 0 8px; border: 0; color: inherit; background: transparent; font: inherit; font-size: 13px; text-align: left; cursor: pointer; }.learning-project-link span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.project-expand { position: absolute; right: 3px; width: 26px; height: 26px; display: grid; padding: 0; place-items: center; border: 0; border-radius: 7px; color: var(--color-text-muted); background: transparent; cursor: pointer; }.project-expand:hover { color: var(--color-text); background: var(--ui-hover-strong-bg); }.project-expand svg { transition: transform .18s ease; }.project-expand svg.folded { transform: rotate(-90deg); }.learning-project-row:hover > .project-more, .learning-project-row:focus-within > .project-more { display: grid; }.project-more { right: 29px; }.learning-project-row:not(.has-expand) > .project-more { right: 3px; }.project-conversations { display: grid; margin: 2px 0 5px 20px; padding-left: 8px; border-left: 1px solid var(--color-border); }.project-conversations a { display: flex; min-width: 0; height: 32px; align-items: center; gap: 8px; padding: 0 8px; border-radius: 7px; color: var(--color-text-muted); font-size: 12px; text-decoration: none; }.project-conversations a:hover, .project-conversations a.active { color: var(--color-text); background: var(--ui-hover-bg); }.project-conversations span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .sidebar-footer { display: grid; flex: 0 0 auto; gap: 12px; margin-top: auto; padding-top: 12px; border-top: 1px solid var(--color-border); }
 .theme-toggle-row { display: flex; min-height: 46px; align-items: center; justify-content: space-between; padding: 0 12px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface); font-size: 14px; font-weight: 700; }

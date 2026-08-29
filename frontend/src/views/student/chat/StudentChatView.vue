@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowUp, FileText, Image, LoaderCircle, Network, Paperclip,
-  Plus, Presentation, RotateCcw, Square,
+  MessageSquare, Plus, Presentation, RotateCcw, Square,
 } from 'lucide-vue-next'
 
 import ChatArtifactCard from '@/components/artifact/ChatArtifactCard.vue'
@@ -738,6 +738,12 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
         <section v-if="chatStore.loading" class="center-state">
           <LoaderCircle class="spin" :size="24" />
           <span>正在加载对话</span>
+        </section>
+
+        <section v-else-if="routeConversationId && !hasMessages" class="center-state conversation-empty-state">
+          <MessageSquare :size="24" />
+          <strong>这段对话还没有消息</strong>
+          <span>可以在下方继续向 AI 助教提问。</span>
         </section>
 
         <section v-else-if="!hasMessages" class="chat-home">

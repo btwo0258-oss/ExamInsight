@@ -64,7 +64,7 @@ public class SmartLearningRepository {
                        knowledge_base_external_id, stage,
                        target_version, source_version, scope_version,
                        diagnosis_version, plan_version, resource_config_version,
-                       updated_at
+                       pinned_at, updated_at
                   FROM smart_learning_project
                  WHERE user_id = ? AND stage <> 'ARCHIVED'
                  ORDER BY updated_at DESC, id DESC
@@ -82,6 +82,7 @@ public class SmartLearningRepository {
                 rs.getInt("diagnosis_version"),
                 rs.getInt("plan_version"),
                 rs.getInt("resource_config_version"),
+                rs.getObject("pinned_at", LocalDateTime.class),
                 rs.getObject("updated_at", LocalDateTime.class),
                 Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of()), userId);
     }
@@ -96,7 +97,7 @@ public class SmartLearningRepository {
                        diagnosis_version, diagnosis_json, diagnosis_candidate_json, diagnosis_answers_draft_json,
                        plan_version, plan_json, plan_candidate_json,
                        resource_config_version, resource_config_json, resource_config_draft_json,
-                       updated_at
+                       pinned_at, updated_at
                   FROM smart_learning_project
                  WHERE user_id = ? AND external_id = ? AND stage <> 'ARCHIVED'
                 """, this::mapProject, userId, projectExternalId);
@@ -115,12 +116,69 @@ public class SmartLearningRepository {
                 """, name, icon, iconColor, userId, projectExternalId);
     }
 
+    public void setProjectPinned(long userId, String projectExternalId, boolean pinned) {
+        int updated = jdbc.update("""
+                UPDATE smart_learning_project
+                   SET pinned_at = CASE WHEN ? THEN COALESCE(pinned_at, CURRENT_TIMESTAMP(3)) ELSE NULL END,
+                       row_version = row_version + 1
+                 WHERE user_id = ? AND external_id = ? AND stage <> 'ARCHIVED'
+                """, pinned, userId, projectExternalId);
+        if (updated == 0) throw new IllegalArgumentException("学习项目不存在或无法置顶。");
+    }
+
+    public List<String> findTutorConversationIds(long userId, String projectExternalId) {
+        return jdbc.queryForList("""
+                SELECT conversation_external_id
+                  FROM smart_learning_tutor_thread
+                 WHERE user_id = ? AND project_external_id = ?
+                """, String.class, userId, projectExternalId);
+    }
+
+    public void deleteProjectPermanently(long userId, String projectExternalId) {
+        int deleted = jdbc.update("""
+                DELETE FROM smart_learning_project
+                 WHERE user_id = ? AND external_id = ?
+                """, userId, projectExternalId);
+        if (deleted == 0) throw new IllegalArgumentException("学习项目不存在或已被删除。");
+    }
+
+    public List<TutorSidebarRecord> findTutorConversations(long userId) {
+        return jdbc.query("""
+                SELECT tutor.project_external_id, tutor.conversation_external_id,
+                       c.title, tutor.task_external_id, task.title AS task_title,
+                       CASE WHEN tutor.task_external_id IS NULL THEN 'PROJECT' ELSE 'TASK' END AS context_type,
+                       c.updated_at
+                  FROM smart_learning_tutor_thread tutor
+                  JOIN smart_learning_project project
+                    ON project.external_id = tutor.project_external_id
+                   AND project.user_id = tutor.user_id
+                  JOIN conversation c
+                    ON c.external_id = tutor.conversation_external_id
+                   AND c.user_id = tutor.user_id
+                  LEFT JOIN smart_learning_task task
+                    ON task.external_id = tutor.task_external_id
+                 WHERE tutor.user_id = ? AND tutor.status = 'ACTIVE'
+                   AND project.stage <> 'ARCHIVED' AND c.status = 'ACTIVE'
+                 ORDER BY c.updated_at DESC, c.id DESC
+                """, (rs, rowNum) -> new TutorSidebarRecord(
+                rs.getString("project_external_id"), rs.getString("conversation_external_id"),
+                rs.getString("title"), rs.getString("task_external_id"), rs.getString("task_title"),
+                rs.getString("context_type"), rs.getObject("updated_at", LocalDateTime.class)), userId);
+    }
+
     public void archiveProject(long userId, String projectExternalId) {
         jdbc.update("""
                 UPDATE smart_learning_project
                    SET archived_previous_stage = stage,
                        stage = 'ARCHIVED', row_version = row_version + 1
                  WHERE user_id = ? AND external_id = ? AND stage <> 'ARCHIVED'
+                """, userId, projectExternalId);
+        jdbc.update("""
+                UPDATE conversation c
+                  JOIN smart_learning_tutor_thread tutor ON tutor.conversation_external_id = c.external_id
+                   SET c.status = 'ARCHIVED', c.archived_at = CURRENT_TIMESTAMP(3),
+                       c.row_version = c.row_version + 1, tutor.status = 'ARCHIVED'
+                 WHERE tutor.user_id = ? AND tutor.project_external_id = ? AND c.status = 'ACTIVE'
                 """, userId, projectExternalId);
     }
 
@@ -130,6 +188,13 @@ public class SmartLearningRepository {
                    SET stage = COALESCE(archived_previous_stage, 'TARGET_REQUIRED'),
                        archived_previous_stage = NULL, row_version = row_version + 1
                  WHERE user_id = ? AND external_id = ? AND stage = 'ARCHIVED'
+                """, userId, projectExternalId);
+        jdbc.update("""
+                UPDATE conversation c
+                  JOIN smart_learning_tutor_thread tutor ON tutor.conversation_external_id = c.external_id
+                   SET c.status = 'ACTIVE', c.archived_at = NULL,
+                       c.row_version = c.row_version + 1, tutor.status = 'ACTIVE'
+                 WHERE tutor.user_id = ? AND tutor.project_external_id = ? AND c.status = 'ARCHIVED'
                 """, userId, projectExternalId);
     }
 
@@ -143,7 +208,7 @@ public class SmartLearningRepository {
                        diagnosis_version, diagnosis_json, diagnosis_candidate_json, diagnosis_answers_draft_json,
                        plan_version, plan_json, plan_candidate_json,
                        resource_config_version, resource_config_json, resource_config_draft_json,
-                       updated_at
+                       pinned_at, updated_at
                   FROM smart_learning_project
                  WHERE user_id = ? AND external_id = ? AND stage = 'ARCHIVED'
                 """, this::mapProject, userId, projectExternalId);
@@ -362,11 +427,19 @@ public class SmartLearningRepository {
         for (Map<String, Object> planTask : planTasks) {
             String sourceTaskId = String.valueOf(planTask.getOrDefault("id", "task-" + order));
             String taskExternalId = crypto.newExternalId();
-            String type = taskType(String.valueOf(planTask.getOrDefault("type", "READING")));
+            String type = inferredTaskType(planTask, order);
+            String title = textValue(planTask.getOrDefault("title", "学习任务"));
+            String description = textValue(planTask.getOrDefault("reason", "按确认的学习计划完成本任务。"));
+            String completionCriteria = textValue(planTask.getOrDefault("completionCriteria", "完成本任务并提交结果。"));
             String scheduled = textValue(planTask.get("date"));
             Integer duration = intValue(planTask.get("durationMinutes"), 30);
             String initialStatus = scheduled.isBlank() || !LocalDate.parse(scheduled).isAfter(LocalDate.now())
                     ? "AVAILABLE" : "PLANNED";
+            TaskCarryRecord carry = findTaskCarry(userId, projectId, planVersion, sourceTaskId).orElse(null);
+            boolean equivalent = carry != null
+                    && type.equals(carry.taskType())
+                    && completionCriteria.equals(carry.completionCriteria());
+            String effectiveStatus = equivalent ? carry.status() : initialStatus;
             jdbc.update("""
                     INSERT INTO smart_learning_task (
                         external_id, project_external_id, user_id, plan_version, source_task_id,
@@ -379,11 +452,9 @@ public class SmartLearningRepository {
                         scheduled_date = VALUES(scheduled_date), duration_minutes = VALUES(duration_minutes),
                         payload_json = VALUES(payload_json), updated_at = CURRENT_TIMESTAMP(3)
                     """, taskExternalId, projectId, userId, planVersion, sourceTaskId,
-                    textValue(planTask.getOrDefault("title", "学习任务")), type,
-                    textValue(planTask.getOrDefault("reason", "按确认的学习计划完成本任务。")),
-                    textValue(planTask.getOrDefault("completionCriteria", "完成本任务并提交结果。")),
+                    title, type, description, completionCriteria,
                     scheduled.isBlank() ? null : LocalDate.parse(scheduled),
-                    Math.max(15, Math.min(180, duration)), initialStatus, order,
+                    Math.max(15, Math.min(180, duration)), effectiveStatus, order,
                     writeJson(planTask));
             String actualTaskId = jdbc.queryForObject("""
                     SELECT external_id FROM smart_learning_task
@@ -395,49 +466,234 @@ public class SmartLearningRepository {
                         external_id, project_external_id, task_external_id, user_id, kind, title, status
                     ) VALUES (?, ?, ?, ?, ?, ?, 'QUEUED')
                     """, crypto.newExternalId(), projectId, actualTaskId, userId, resourceKind,
-                    textValue(planTask.getOrDefault("title", "学习资料")));
+                    title);
+            if (equivalent) {
+                carryExecution(userId, projectId, carry.taskExternalId(), actualTaskId);
+                carryResource(userId, carry.taskExternalId(), actualTaskId, resourceKind);
+            }
             order++;
         }
     }
 
+    private Optional<TaskCarryRecord> findTaskCarry(
+            long userId, String projectId, int planVersion, String sourceTaskId) {
+        return jdbc.query("""
+                SELECT external_id, task_type, completion_criteria, status
+                  FROM smart_learning_task
+                 WHERE user_id = ? AND project_external_id = ?
+                   AND plan_version < ? AND source_task_id = ? AND status <> 'CANCELLED'
+                 ORDER BY plan_version DESC, id DESC
+                 LIMIT 1
+                """, (rs, rowNum) -> new TaskCarryRecord(
+                rs.getString("external_id"), rs.getString("task_type"),
+                rs.getString("completion_criteria"), rs.getString("status")),
+                userId, projectId, planVersion, sourceTaskId).stream().findFirst();
+    }
+
+    private void carryExecution(long userId, String projectId, String previousTaskId, String taskId) {
+        Integer count = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM smart_learning_execution
+                 WHERE user_id = ? AND task_external_id = ?
+                """, Integer.class, userId, taskId);
+        if (count != null && count > 0) return;
+        jdbc.update("""
+                INSERT INTO smart_learning_execution (
+                    external_id, project_external_id, task_external_id, user_id, status,
+                    progress, accumulated_seconds, position_json, answers_json, score,
+                    last_heartbeat_seq, started_at, paused_at, completed_at
+                )
+                SELECT ?, ?, ?, user_id, status, progress, accumulated_seconds,
+                       position_json, answers_json, score, last_heartbeat_seq,
+                       started_at, paused_at, completed_at
+                  FROM smart_learning_execution
+                 WHERE user_id = ? AND task_external_id = ?
+                 ORDER BY updated_at DESC, id DESC
+                 LIMIT 1
+                """, crypto.newExternalId(), projectId, taskId, userId, previousTaskId);
+    }
+
+    private void carryResource(long userId, String previousTaskId, String taskId, String kind) {
+        jdbc.update("""
+                UPDATE smart_learning_resource current_resource
+                  JOIN smart_learning_resource previous_resource
+                    ON previous_resource.user_id = current_resource.user_id
+                   AND previous_resource.task_external_id = ?
+                   AND previous_resource.kind = current_resource.kind
+                   SET current_resource.status = previous_resource.status,
+                       current_resource.content_json = previous_resource.content_json,
+                       current_resource.error_message = previous_resource.error_message,
+                       current_resource.updated_at = CURRENT_TIMESTAMP(3)
+                 WHERE current_resource.user_id = ? AND current_resource.task_external_id = ?
+                   AND current_resource.kind = ? AND previous_resource.status = 'READY'
+                """, previousTaskId, userId, taskId, kind);
+    }
+
+    public Optional<TutorThreadRecord> findTutorThread(
+            long userId, String projectId, String contextKey) {
+        return jdbc.query("""
+                SELECT external_id, conversation_external_id, project_external_id,
+                       task_external_id, context_key
+                  FROM smart_learning_tutor_thread
+                 WHERE user_id = ? AND project_external_id = ? AND context_key = ?
+                   AND status = 'ACTIVE'
+                """, (rs, rowNum) -> new TutorThreadRecord(
+                rs.getString("external_id"), rs.getString("conversation_external_id"),
+                rs.getString("project_external_id"), rs.getString("task_external_id"),
+                rs.getString("context_key")), userId, projectId, contextKey).stream().findFirst();
+    }
+
+    public TutorThreadRecord linkTutorThread(
+            long userId, String projectId, String taskId, String contextKey,
+            String conversationId) {
+        jdbc.update("""
+                INSERT INTO smart_learning_tutor_thread (
+                    external_id, project_external_id, task_external_id, user_id,
+                    context_key, conversation_external_id, status
+                ) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE')
+                ON DUPLICATE KEY UPDATE status = 'ACTIVE', updated_at = CURRENT_TIMESTAMP(3)
+                """, crypto.newExternalId(), projectId, taskId, userId, contextKey, conversationId);
+        return findTutorThread(userId, projectId, contextKey).orElseThrow();
+    }
+
+    public void upsertWrongItem(
+            long userId, String projectId, String taskId, String executionId,
+            String questionId, String stem, String userAnswer, String correctAnswer,
+            String explanation, String knowledgeKey) {
+        int updated = jdbc.update("""
+                UPDATE smart_learning_wrong_item
+                   SET execution_external_id = ?, stem = ?, user_answer = ?,
+                       correct_answer = ?, explanation = ?, knowledge_key = ?,
+                       status = 'TO_REVIEW', updated_at = CURRENT_TIMESTAMP(3)
+                 WHERE user_id = ? AND project_external_id = ?
+                   AND task_external_id = ? AND question_id = ?
+                """, executionId, stem, userAnswer, correctAnswer, explanation,
+                knowledgeKey, userId, projectId, taskId, questionId);
+        if (updated > 0) return;
+        jdbc.update("""
+                INSERT INTO smart_learning_wrong_item (
+                    external_id, project_external_id, task_external_id,
+                    execution_external_id, user_id, question_id, stem,
+                    user_answer, correct_answer, explanation, knowledge_key, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'TO_REVIEW')
+                ON DUPLICATE KEY UPDATE
+                    stem = VALUES(stem), user_answer = VALUES(user_answer),
+                    correct_answer = VALUES(correct_answer), explanation = VALUES(explanation),
+                    knowledge_key = VALUES(knowledge_key), status = 'TO_REVIEW',
+                    updated_at = CURRENT_TIMESTAMP(3)
+                """, crypto.newExternalId(), projectId, taskId, executionId, userId,
+                questionId, stem, userAnswer, correctAnswer, explanation, knowledgeKey);
+    }
+
+    public void markWrongItemMastered(
+            long userId, String projectId, String taskId, String questionId) {
+        jdbc.update("""
+                UPDATE smart_learning_wrong_item
+                   SET status = 'MASTERED', updated_at = CURRENT_TIMESTAMP(3)
+                 WHERE user_id = ? AND project_external_id = ?
+                   AND task_external_id = ? AND question_id = ?
+                """, userId, projectId, taskId, questionId);
+    }
+
+    public List<WrongItemRecord> findWrongItems(long userId, String projectId) {
+        return jdbc.query("""
+                SELECT external_id, project_external_id, task_external_id, question_id,
+                       stem, user_answer, correct_answer, explanation, knowledge_key,
+                       status, updated_at
+                  FROM smart_learning_wrong_item
+                 WHERE user_id = ? AND project_external_id = ?
+                 ORDER BY (status = 'TO_REVIEW') DESC, updated_at DESC, id DESC
+                """, (rs, rowNum) -> new WrongItemRecord(
+                rs.getString("external_id"), rs.getString("project_external_id"),
+                rs.getString("task_external_id"), rs.getString("question_id"),
+                rs.getString("stem"), rs.getString("user_answer"),
+                rs.getString("correct_answer"), rs.getString("explanation"),
+                rs.getString("knowledge_key"), rs.getString("status"),
+                rs.getObject("updated_at", LocalDateTime.class)), userId, projectId);
+    }
+
+    public Optional<WrongItemRecord> findWrongItem(long userId, String projectId, String wrongItemId) {
+        return jdbc.query("""
+                SELECT external_id, project_external_id, task_external_id, question_id,
+                       stem, user_answer, correct_answer, explanation, knowledge_key,
+                       status, updated_at
+                  FROM smart_learning_wrong_item
+                 WHERE user_id = ? AND project_external_id = ? AND external_id = ?
+                """, (rs, rowNum) -> new WrongItemRecord(
+                rs.getString("external_id"), rs.getString("project_external_id"),
+                rs.getString("task_external_id"), rs.getString("question_id"),
+                rs.getString("stem"), rs.getString("user_answer"),
+                rs.getString("correct_answer"), rs.getString("explanation"),
+                rs.getString("knowledge_key"), rs.getString("status"),
+                rs.getObject("updated_at", LocalDateTime.class)), userId, projectId, wrongItemId)
+                .stream().findFirst();
+    }
+
+    public void reviewWrongItem(
+            long userId, String projectId, String wrongItemId, String answer, boolean correct) {
+        int updated = jdbc.update("""
+                UPDATE smart_learning_wrong_item
+                   SET user_answer = ?, status = ?, updated_at = CURRENT_TIMESTAMP(3)
+                 WHERE user_id = ? AND project_external_id = ? AND external_id = ?
+                """, answer, correct ? "MASTERED" : "TO_REVIEW", userId, projectId, wrongItemId);
+        if (updated == 0) throw new IllegalArgumentException("错题不存在或无权访问。");
+    }
+
     public List<TaskRecord> findTasks(long userId, String projectId) {
         return jdbc.query("""
-                SELECT external_id, project_external_id, plan_version, source_task_id, title,
-                       task_type, description, completion_criteria, scheduled_date,
-                       duration_minutes, status, sort_order, payload_json, updated_at
-                  FROM smart_learning_task
-                 WHERE user_id = ? AND project_external_id = ? AND status <> 'CANCELLED'
-                 ORDER BY sort_order ASC, id ASC
+                SELECT task.external_id, task.project_external_id, task.plan_version, task.source_task_id, task.title,
+                       task.task_type, task.description, task.completion_criteria, task.scheduled_date,
+                       task.duration_minutes, task.status, task.sort_order, task.payload_json, task.updated_at
+                  FROM smart_learning_task task
+                  JOIN smart_learning_project project
+                    ON project.external_id = task.project_external_id
+                   AND project.user_id = task.user_id
+                 WHERE task.user_id = ? AND task.project_external_id = ?
+                   AND task.plan_version = project.plan_version AND task.status <> 'CANCELLED'
+                 ORDER BY task.sort_order ASC, task.id ASC
                 """, this::mapTask, userId, projectId);
     }
 
     public Optional<TaskRecord> findTask(long userId, String projectId, String taskId) {
         return jdbc.query("""
-                SELECT external_id, project_external_id, plan_version, source_task_id, title,
-                       task_type, description, completion_criteria, scheduled_date,
-                       duration_minutes, status, sort_order, payload_json, updated_at
-                  FROM smart_learning_task
-                 WHERE user_id = ? AND project_external_id = ? AND external_id = ?
+                SELECT task.external_id, task.project_external_id, task.plan_version, task.source_task_id, task.title,
+                       task.task_type, task.description, task.completion_criteria, task.scheduled_date,
+                       task.duration_minutes, task.status, task.sort_order, task.payload_json, task.updated_at
+                  FROM smart_learning_task task
+                  JOIN smart_learning_project project
+                    ON project.external_id = task.project_external_id
+                   AND project.user_id = task.user_id
+                 WHERE task.user_id = ? AND task.project_external_id = ? AND task.external_id = ?
+                   AND task.plan_version = project.plan_version
                 """, this::mapTask, userId, projectId, taskId).stream().findFirst();
     }
 
     public List<ResourceRecord> findResources(long userId, String projectId) {
         return jdbc.query("""
-                SELECT external_id, task_external_id, kind, title, status, content_json,
-                       error_message, updated_at
-                  FROM smart_learning_resource
-                 WHERE user_id = ? AND project_external_id = ?
-                 ORDER BY id ASC
+                SELECT resource.external_id, resource.task_external_id, resource.kind, resource.title,
+                       resource.status, resource.content_json, resource.error_message, resource.updated_at
+                  FROM smart_learning_resource resource
+                  JOIN smart_learning_task task ON task.external_id = resource.task_external_id
+                  JOIN smart_learning_project project
+                    ON project.external_id = task.project_external_id
+                   AND project.user_id = task.user_id
+                 WHERE resource.user_id = ? AND resource.project_external_id = ?
+                   AND task.plan_version = project.plan_version
+                 ORDER BY resource.id ASC
                 """, this::mapResource, userId, projectId);
     }
 
     public List<ResourceRecord> findResourcesForTask(long userId, String projectId, String taskId) {
         return jdbc.query("""
-                SELECT external_id, task_external_id, kind, title, status, content_json,
-                       error_message, updated_at
-                  FROM smart_learning_resource
-                 WHERE user_id = ? AND project_external_id = ? AND task_external_id = ?
-                 ORDER BY id ASC
+                SELECT resource.external_id, resource.task_external_id, resource.kind, resource.title,
+                       resource.status, resource.content_json, resource.error_message, resource.updated_at
+                  FROM smart_learning_resource resource
+                  JOIN smart_learning_task task ON task.external_id = resource.task_external_id
+                  JOIN smart_learning_project project
+                    ON project.external_id = task.project_external_id
+                   AND project.user_id = task.user_id
+                 WHERE resource.user_id = ? AND resource.project_external_id = ?
+                   AND resource.task_external_id = ? AND task.plan_version = project.plan_version
+                 ORDER BY resource.id ASC
                 """, this::mapResource, userId, projectId, taskId);
     }
 
@@ -461,11 +717,17 @@ public class SmartLearningRepository {
 
     public List<ResourceRecord> findPendingResources(long userId, String projectId) {
         return jdbc.query("""
-                SELECT external_id, task_external_id, kind, title, status, content_json,
-                       error_message, updated_at
-                  FROM smart_learning_resource
-                 WHERE user_id = ? AND project_external_id = ? AND status IN ('QUEUED', 'FAILED')
-                 ORDER BY id ASC
+                SELECT resource.external_id, resource.task_external_id, resource.kind, resource.title,
+                       resource.status, resource.content_json, resource.error_message, resource.updated_at
+                  FROM smart_learning_resource resource
+                  JOIN smart_learning_task task ON task.external_id = resource.task_external_id
+                  JOIN smart_learning_project project
+                    ON project.external_id = task.project_external_id
+                   AND project.user_id = task.user_id
+                 WHERE resource.user_id = ? AND resource.project_external_id = ?
+                   AND task.plan_version = project.plan_version
+                   AND resource.status IN ('QUEUED', 'FAILED')
+                 ORDER BY resource.id ASC
                 """, this::mapResource, userId, projectId);
     }
 
@@ -478,6 +740,17 @@ public class SmartLearningRepository {
                  WHERE user_id = ? AND project_external_id = ? AND task_external_id = ?
                    AND status IN ('IN_PROGRESS', 'PAUSED', 'COMPLETION_PENDING')
                  ORDER BY id DESC LIMIT 1
+                """, this::mapExecution, userId, projectId, taskId).stream().findFirst();
+    }
+
+    public Optional<ExecutionRecord> findLatestExecution(long userId, String projectId, String taskId) {
+        return jdbc.query("""
+                SELECT external_id, project_external_id, task_external_id, status, progress,
+                       accumulated_seconds, position_json, answers_json, score,
+                       last_heartbeat_seq, started_at, paused_at, completed_at, updated_at
+                  FROM smart_learning_execution
+                 WHERE user_id = ? AND project_external_id = ? AND task_external_id = ?
+                 ORDER BY updated_at DESC, id DESC LIMIT 1
                 """, this::mapExecution, userId, projectId, taskId).stream().findFirst();
     }
 
@@ -711,7 +984,8 @@ public class SmartLearningRepository {
                 rs.getString("knowledge_base_external_id"), rs.getString("stage"),
                 rs.getInt("target_version"), rs.getInt("source_version"), rs.getInt("scope_version"),
                 rs.getInt("diagnosis_version"), rs.getInt("plan_version"),
-                rs.getInt("resource_config_version"), rs.getObject("updated_at", LocalDateTime.class),
+                rs.getInt("resource_config_version"), rs.getObject("pinned_at", LocalDateTime.class),
+                rs.getObject("updated_at", LocalDateTime.class),
                 readMap(rs.getString("target_json")), readMap(rs.getString("target_draft_json")),
                 readMap(rs.getString("sources_json")), readMap(rs.getString("sources_draft_json")),
                 readMap(rs.getString("scope_json")), readMap(rs.getString("scope_candidate_json")),
@@ -753,6 +1027,25 @@ public class SmartLearningRepository {
             case "练习", "exercise", "quiz", "测验" -> "EXERCISE";
             case "复盘", "review" -> "REVIEW";
             case "讲解", "explanation" -> "EXPLANATION";
+            default -> "READING";
+        };
+    }
+
+    private String inferredTaskType(Map<String, Object> task, int order) {
+        String explicit = textValue(task.get("type"));
+        if (!explicit.isBlank()) return taskType(explicit);
+        String searchable = (textValue(task.get("title")) + " "
+                + textValue(task.get("reason")) + " "
+                + textValue(task.get("completionCriteria"))).toLowerCase();
+        if (searchable.matches(".*(练习|测验|习题|quiz|exercise|作答).*")) return "EXERCISE";
+        if (searchable.matches(".*(复盘|复习|回顾|review|错题).*")) return "REVIEW";
+        if (searchable.matches(".*(讲解|理解|解析|explanation|原理).*")) return "EXPLANATION";
+        // Old confirmed plans did not have a type field. A stable pattern gives
+        // those projects a useful mix without asking the user to redo setup.
+        return switch (Math.floorMod(order, 4)) {
+            case 1 -> "EXPLANATION";
+            case 2 -> "EXERCISE";
+            case 3 -> "REVIEW";
             default -> "READING";
         };
     }
@@ -803,7 +1096,7 @@ public class SmartLearningRepository {
             String externalId, long userId, String name, String icon, String iconColor,
             String knowledgeBaseExternalId, String stage,
             int targetVersion, int sourceVersion, int scopeVersion, int diagnosisVersion,
-            int planVersion, int resourceConfigVersion, LocalDateTime updatedAt,
+            int planVersion, int resourceConfigVersion, LocalDateTime pinnedAt, LocalDateTime updatedAt,
             Map<String, Object> target, Map<String, Object> targetDraft,
             Map<String, Object> sources, Map<String, Object> sourcesDraft,
             Map<String, Object> scope, Map<String, Object> scopeCandidate,
@@ -833,6 +1126,10 @@ public class SmartLearningRepository {
             Map<String, Object> payload, LocalDateTime updatedAt) {
     }
 
+    private record TaskCarryRecord(
+            String taskExternalId, String taskType, String completionCriteria, String status) {
+    }
+
     public record ResourceRecord(
             String externalId, String taskExternalId, String kind, String title, String status,
             Map<String, Object> content, String errorMessage, LocalDateTime updatedAt) {
@@ -843,6 +1140,24 @@ public class SmartLearningRepository {
             double progress, int accumulatedSeconds, Map<String, Object> position,
             Map<String, Object> answers, Double score, long lastHeartbeatSeq,
             LocalDateTime startedAt, LocalDateTime pausedAt, LocalDateTime completedAt,
+            LocalDateTime updatedAt) {
+    }
+
+    public record TutorThreadRecord(
+            String externalId, String conversationExternalId, String projectExternalId,
+            String taskExternalId, String contextKey) {
+    }
+
+    public record TutorSidebarRecord(
+            String projectExternalId, String conversationExternalId, String title,
+            String taskExternalId, String taskTitle, String contextType,
+            LocalDateTime updatedAt) {
+    }
+
+    public record WrongItemRecord(
+            String externalId, String projectExternalId, String taskExternalId,
+            String questionId, String stem, String userAnswer, String correctAnswer,
+            String explanation, String knowledgeKey, String status,
             LocalDateTime updatedAt) {
     }
 }

@@ -7,6 +7,9 @@ import type {
   SmartLearningWorkspace,
   SmartLearningTask,
   SmartLearningExecution,
+  SmartLearningWrongItem,
+  SmartLearningTutorThread,
+  SmartLearningSidebarProject,
 } from '@/types/contracts/smartLearning'
 
 type Json = Record<string, unknown>
@@ -36,8 +39,20 @@ export function renameSmartLearningProject(projectId: string, payload: string | 
   return request.patch<SmartLearningProjectDetail>(`/api/v2/learning/projects/${projectId}`, typeof payload === 'string' ? { name: payload } : payload).then(unwrap)
 }
 
+export function setSmartLearningProjectPinned(projectId: string, pinned: boolean) {
+  return request.patch<SmartLearningProjectDetail>(`/api/v2/learning/projects/${projectId}/pin`, { pinned }).then(unwrap)
+}
+
+export function listSmartLearningSidebarProjects() {
+  return request.get<SmartLearningSidebarProject[]>('/api/v2/learning/sidebar').then(unwrap)
+}
+
 export function archiveSmartLearningProject(projectId: string) {
   return request.delete(`/api/v2/learning/projects/${projectId}`)
+}
+
+export function deleteSmartLearningProject(projectId: string) {
+  return request.delete(`/api/v2/learning/projects/${projectId}/permanent`)
 }
 
 export function restoreSmartLearningProject(projectId: string) {
@@ -122,6 +137,24 @@ export function getSmartLearningWorkspace(projectId: string) {
 
 export function getSmartLearningTask(projectId: string, taskId: string) {
   return request.get<SmartLearningTask>(`/api/v2/learning/projects/${projectId}/tasks/${taskId}`).then(unwrap)
+}
+
+export function listSmartLearningWrongItems(projectId: string) {
+  return request.get<SmartLearningWrongItem[]>(`/api/v2/learning/projects/${projectId}/wrong-items`).then(unwrap)
+}
+
+export function reviewSmartLearningWrongItem(projectId: string, wrongItemId: string, answer: string) {
+  return request.post<SmartLearningWrongItem>(
+    `/api/v2/learning/projects/${projectId}/wrong-items/${wrongItemId}/review`,
+    { answer },
+  ).then(unwrap)
+}
+
+export function getOrCreateSmartLearningTutorThread(projectId: string, taskId?: string | null) {
+  return request.post<SmartLearningTutorThread>(
+    `/api/v2/learning/projects/${projectId}/tutor-thread`,
+    taskId ? { taskId } : {},
+  ).then(unwrap)
 }
 
 export function startSmartLearningExecution(projectId: string, taskId: string) {

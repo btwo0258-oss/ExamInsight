@@ -24,7 +24,8 @@ class SmartLearningDraftTest {
     @BeforeEach void setup() {
         repository = mock(SmartLearningRepository.class);
         when(repository.writeJson(any())).thenAnswer(invocation -> new ObjectMapper().writeValueAsString(invocation.getArgument(0)));
-        service = new SmartLearningApplicationService(repository, mock(AiCapabilityRouter.class), new ObjectMapper(), mock(AuthCrypto.class));
+        service = new SmartLearningApplicationService(repository, mock(AiCapabilityRouter.class), new ObjectMapper(),
+                mock(AuthCrypto.class), mock(com.example.llm.chatv2.repository.ChatV2Repository.class));
         when(repository.findLatestJob(1L, "project")).thenReturn(Optional.empty());
     }
     @AfterEach void close() { service.shutdown(); }

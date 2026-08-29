@@ -1,6 +1,7 @@
 package com.example.llm.learning.service;
 
 import com.example.llm.auth.security.AuthCrypto;
+import com.example.llm.chatv2.repository.ChatV2Repository;
 import com.example.llm.integration.ai.AiCapabilityRouter;
 import com.example.llm.integration.ai.AiChatMessage;
 import com.example.llm.learning.api.SmartLearningDtos;
@@ -11,15 +12,20 @@ import com.example.llm.learning.repository.SmartLearningRepository.ProjectRecord
 import com.example.llm.learning.repository.SmartLearningRepository.TaskRecord;
 import com.example.llm.learning.repository.SmartLearningRepository.ResourceRecord;
 import com.example.llm.learning.repository.SmartLearningRepository.ExecutionRecord;
+import com.example.llm.learning.repository.SmartLearningRepository.TutorThreadRecord;
+import com.example.llm.learning.repository.SmartLearningRepository.TutorSidebarRecord;
+import com.example.llm.learning.repository.SmartLearningRepository.WrongItemRecord;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import jakarta.annotation.PreDestroy;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -28,6 +34,8 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Service
 public class SmartLearningApplicationService {
@@ -38,6 +46,7 @@ public class SmartLearningApplicationService {
     private final AiCapabilityRouter ai;
     private final ObjectMapper objectMapper;
     private final AuthCrypto crypto;
+    private final ChatV2Repository chatRepository;
     private final ExecutorService executor = Executors.newFixedThreadPool(2, runnable -> {
         Thread thread = new Thread(runnable, "smart-learning-job");
         thread.setDaemon(true);
@@ -49,11 +58,13 @@ public class SmartLearningApplicationService {
             SmartLearningRepository repository,
             AiCapabilityRouter ai,
             ObjectMapper objectMapper,
-            AuthCrypto crypto) {
+            AuthCrypto crypto,
+            ChatV2Repository chatRepository) {
         this.repository = repository;
         this.ai = ai;
         this.objectMapper = objectMapper;
         this.crypto = crypto;
+        this.chatRepository = chatRepository;
     }
 
     @PreDestroy
@@ -62,7 +73,7 @@ public class SmartLearningApplicationService {
     }
 
     public List<SmartLearningDtos.ProjectSummary> list(long userId) {
-        return repository.findProjects(userId).stream().map(this::summary).toList();
+        return repository.findProjects(userId).stream().map(project -> summary(userId, project)).toList();
     }
 
     public SmartLearningDtos.ProjectDetail create(
@@ -102,6 +113,44 @@ public class SmartLearningApplicationService {
         requireProject(userId, projectId);
         repository.updateProjectAppearance(userId, projectId, name, checkedIcon(request.icon()), checkedColor(request.iconColor()));
         return detail(userId, projectId);
+    }
+
+    public SmartLearningDtos.ProjectDetail pin(
+            long userId, String projectId, SmartLearningDtos.PinRequest request) {
+        requireProject(userId, projectId);
+        repository.setProjectPinned(userId, projectId, request.pinned());
+        return detail(userId, projectId);
+    }
+
+    public List<SmartLearningDtos.SidebarProjectView> sidebar(long userId) {
+        Map<String, List<SmartLearningDtos.TutorConversationView>> conversations = new LinkedHashMap<>();
+        for (TutorSidebarRecord item : repository.findTutorConversations(userId)) {
+            conversations.computeIfAbsent(item.projectExternalId(), ignored -> new ArrayList<>())
+                    .add(new SmartLearningDtos.TutorConversationView(
+                            item.conversationExternalId(), defaultText(item.title(), "AI 助教"),
+                            item.taskExternalId(), item.taskTitle(), item.contextType(), item.updatedAt()));
+        }
+        List<ProjectRecord> projects = new ArrayList<>(repository.findProjects(userId));
+        projects.sort(Comparator
+                .comparing((ProjectRecord project) -> project.pinnedAt() == null)
+                .thenComparing(ProjectRecord::pinnedAt,
+                        Comparator.nullsLast(Comparator.reverseOrder()))
+                .thenComparing(ProjectRecord::updatedAt, Comparator.reverseOrder()));
+        return projects.stream().map(project -> new SmartLearningDtos.SidebarProjectView(
+                project.externalId(), project.name(), project.icon(), project.iconColor(), project.stage(), project.pinnedAt(),
+                conversations.getOrDefault(project.externalId(), List.of()), project.updatedAt())).toList();
+    }
+
+    public void deletePermanently(long userId, String projectId) {
+        requireProject(userId, projectId);
+        for (String conversationId : repository.findTutorConversationIds(userId, projectId)) {
+            try {
+                chatRepository.moveConversationToTrash(userId, conversationId);
+            } catch (RuntimeException exception) {
+                throw new IllegalStateException("该项目仍有 AI 助教回答正在生成，请停止生成后再删除。", exception);
+            }
+        }
+        repository.deleteProjectPermanently(userId, projectId);
     }
 
     public void archive(long userId, String projectId) {
@@ -283,22 +332,30 @@ public class SmartLearningApplicationService {
 
     public SmartLearningDtos.JobAccepted generatePlan(long userId, String projectId) {
         ProjectRecord project = requireProject(userId, projectId);
-        expectStage(project, "PLAN_REQUIRED");
+        expectStageAtOrAfter(project, "PLAN_REQUIRED");
+        boolean extensionMode = Boolean.TRUE.equals(project.planCandidate().get("extensionMode"));
         Map<String, Object> input = Map.of(
                 "target", project.target(), "scope", project.scope(),
-                "diagnosis", project.diagnosis(), "versions", Map.of(
+                "diagnosis", project.diagnosis(), "currentPlan", project.plan(),
+                "requestedDraft", project.planCandidate(), "extensionMode", extensionMode,
+                "versions", Map.of(
                         "target", project.targetVersion(), "scope", project.scopeVersion(),
                         "diagnosis", project.diagnosisVersion()));
         return startJob(userId, project, "PLAN_GENERATION", input, () -> {
+            String adjustmentInstruction = extensionMode
+                    ? "这是扩展计划：保留 currentPlan 中现有任务及其稳定 id，只在后面追加新的阅读、讲解、练习和复盘任务；返回包含原任务和新增任务的完整计划。"
+                    : "如果 currentPlan 已存在，这是调整计划：未改变的任务必须保留原 id；只修改确实需要调整的任务，并返回完整计划。";
             Map<String, Object> generated = parseModel(callModel(
-                    "你是学习计划规划助手。只返回 JSON 对象，格式为 {\"tasks\":[{\"id\":\"t1\",\"title\":\"任务\",\"conceptIds\":[\"n1\"],\"reason\":\"安排原因\",\"durationMinutes\":30,\"completionCriteria\":\"完成标准\",\"date\":null,\"dependencies\":[]}]}. " +
+                    "你是学习计划规划助手。只返回 JSON 对象，格式为 {\"tasks\":[{\"id\":\"t1\",\"type\":\"READING|EXPLANATION|EXERCISE|REVIEW\",\"title\":\"任务\",\"conceptIds\":[\"n1\"],\"reason\":\"安排原因\",\"durationMinutes\":30,\"completionCriteria\":\"完成标准\",\"date\":null,\"dependencies\":[]}]}. " +
+                            "计划必须混合阅读、讲解、练习和复盘四类任务，并让练习出现在相关讲解之后、复盘出现在练习之后。" + adjustmentInstruction +
                             "根据目标可用时间、确认范围和诊断结果安排任务；不要生成资源文件，不要声称用户已经掌握。\n计划输入：" + json(input),
                     userId));
             ensureList(generated, "tasks", "模型没有返回有效的计划任务。");
+            normalizePlanTaskTypes(generated);
             generated.put("inputVersions", input.get("versions"));
             generated.put("generatedAt", LocalDateTime.now(ZoneOffset.UTC).toString());
             validatePlan(generated, project.target());
-            ensureJobInputsUnchanged(userId, project, "PLAN_REQUIRED");
+            ensureJobInputsUnchanged(userId, project, project.stage());
             repository.savePlanCandidate(userId, project.externalId(), json(generated));
             return generated;
         });
@@ -339,10 +396,20 @@ public class SmartLearningApplicationService {
         repository.confirmResourceConfig(userId, projectId);
         // Materialize the confirmed plan into executable rows now.  The rows
         // are idempotent and can therefore survive a retry or a page refresh.
+        int configuredQuestionCount = number(project.resourceConfigDraft().get("questionCount"));
         List<Map<String, Object>> tasks = new ArrayList<>();
         if (project.plan().get("tasks") instanceof List<?> raw) {
-            tasks = raw.stream().filter(value -> value instanceof Map<?, ?>)
-                    .map(value -> (Map<String, Object>) value).toList();
+            for (Object value : raw) {
+                if (!(value instanceof Map<?, ?> source)) continue;
+                Map<String, Object> task = new LinkedHashMap<>();
+                source.forEach((key, item) -> task.put(String.valueOf(key), item));
+                if ("EXERCISE".equals(planTaskType(task, tasks.size()))) {
+                    int count = Math.max(1, Math.min(200, configuredQuestionCount));
+                    task.put("questionCount", count);
+                    task.put("completionCriteria", "完成 " + count + " 道练习题并提交判卷。");
+                }
+                tasks.add(task);
+            }
         }
         repository.provisionTasks(userId, projectId, project.planVersion(), tasks);
         return detail(userId, projectId);
@@ -351,10 +418,15 @@ public class SmartLearningApplicationService {
     public SmartLearningDtos.JobAccepted prepareResources(long userId, String projectId) {
         ProjectRecord project = requireProject(userId, projectId);
         expectStageAtOrAfter(project, "READY");
+        List<ResourceRecord> requestedResources = repository.findPendingResources(userId, projectId);
         Map<String, Object> input = Map.of(
                 "planVersion", project.planVersion(),
                 "resourceConfig", project.resourceConfig(),
-                "sources", project.sources());
+                "sources", project.sources(),
+                "pendingResources", requestedResources.stream().map(item -> Map.of(
+                        "resourceId", item.externalId(),
+                        "status", item.status(),
+                        "updatedAt", item.updatedAt().toString())).toList());
         return startJob(userId, project, "RESOURCE_PREPARATION", input, () -> {
             List<ResourceRecord> pending = repository.findPendingResources(userId, projectId);
             int total = Math.max(1, pending.size());
@@ -377,36 +449,83 @@ public class SmartLearningApplicationService {
     }
 
     public SmartLearningDtos.Workspace workspace(long userId, String projectId) {
-        ProjectRecord project = requireProject(userId, projectId);
-        List<TaskRecord> tasks = repository.findTasks(userId, projectId);
-        if (tasks.isEmpty() && project.plan().get("tasks") instanceof List<?> raw) {
+        ProjectRecord project = requireReadyProject(userId, projectId);
+        if (project.plan().get("tasks") instanceof List<?> raw) {
             List<Map<String, Object>> planTasks = raw.stream().filter(value -> value instanceof Map<?, ?>)
                     .map(value -> (Map<String, Object>) value).toList();
             if (!planTasks.isEmpty()) {
+                // This is intentionally idempotent. It also repairs task types
+                // for plans confirmed before Phase 2 stored an explicit type.
                 repository.provisionTasks(userId, projectId, project.planVersion(), planTasks);
-                tasks = repository.findTasks(userId, projectId);
             }
         }
+        List<TaskRecord> tasks = repository.findTasks(userId, projectId);
         List<ResourceRecord> resources = repository.findResources(userId, projectId);
-        List<SmartLearningDtos.TaskView> taskViews = tasks.stream().map(task -> taskView(userId, projectId, task, resources)).toList();
+        List<WrongItemRecord> wrongItems = repository.findWrongItems(userId, projectId);
+        List<SmartLearningDtos.TaskView> taskViews = tasks.stream().map(task -> taskView(userId, projectId, project, task, resources)).toList();
         long completed = tasks.stream().filter(task -> "COMPLETED".equals(task.status())).count();
         int progress = tasks.isEmpty() ? 0 : (int) Math.round(completed * 100d / tasks.size());
         ExecutionRecord active = tasks.stream()
                 .map(task -> repository.findActiveExecution(userId, projectId, task.externalId()).orElse(null))
                 .filter(Objects::nonNull).findFirst().orElse(null);
+        int pendingWrongItems = (int) wrongItems.stream().filter(item -> "TO_REVIEW".equals(item.status())).count();
+        Map<String, Object> profile = new LinkedHashMap<>();
+        profile.put("target", project.target());
+        profile.put("diagnosis", project.diagnosis());
+        profile.put("scope", project.scope());
         return new SmartLearningDtos.Workspace(project.externalId(), project.name(), project.stage(), progress,
+                (int) completed, tasks.size(), wrongItems.size(), pendingWrongItems, profile,
                 taskViews, resources.stream().map(this::resourceView).toList(), active == null ? null : executionView(active), project.updatedAt());
     }
 
-    public SmartLearningDtos.TaskView task(long userId, String projectId, String taskId) {
+    public List<SmartLearningDtos.WrongItemView> wrongItems(long userId, String projectId) {
         requireProject(userId, projectId);
+        return repository.findWrongItems(userId, projectId).stream().map(this::wrongItemView).toList();
+    }
+
+    public SmartLearningDtos.WrongItemView reviewWrongItem(
+            long userId, String projectId, String wrongItemId,
+            SmartLearningDtos.ReviewWrongItemRequest request) {
+        requireProject(userId, projectId);
+        WrongItemRecord item = repository.findWrongItem(userId, projectId, wrongItemId)
+                .orElseThrow(() -> new IllegalArgumentException("错题不存在或无权访问。"));
+        String answer = text(request.answer());
+        if (answer.isBlank()) throw new IllegalArgumentException("请先填写答案。");
+        boolean correct = normalize(answer).equals(normalize(item.correctAnswer()));
+        repository.reviewWrongItem(userId, projectId, wrongItemId, answer, correct);
+        return wrongItemView(repository.findWrongItem(userId, projectId, wrongItemId).orElseThrow());
+    }
+
+    public SmartLearningDtos.TutorThreadView tutorThread(long userId, String projectId, String taskId) {
+        ProjectRecord project = requireProject(userId, projectId);
+        String normalizedTaskId = blankToNull(taskId);
+        if (normalizedTaskId != null) {
+            repository.findTask(userId, projectId, normalizedTaskId)
+                    .orElseThrow(() -> new IllegalArgumentException("学习任务不存在或无权访问。"));
+        }
+        String contextKey = normalizedTaskId == null ? "PROJECT" : normalizedTaskId;
+        TutorThreadRecord linked = repository.findTutorThread(userId, projectId, contextKey).orElse(null);
+        if (linked == null) {
+            String title = project.name() + (normalizedTaskId == null ? " · AI 助教" : " · 任务助教");
+            var conversation = chatRepository.createConversation(
+                    userId, null, title, project.knowledgeBaseExternalId());
+            linked = repository.linkTutorThread(
+                    userId, projectId, normalizedTaskId, contextKey, conversation.id());
+        }
+        return new SmartLearningDtos.TutorThreadView(
+                linked.externalId(), linked.conversationExternalId(), projectId,
+                linked.taskExternalId(), normalizedTaskId == null ? "PROJECT" : "TASK");
+    }
+
+    public SmartLearningDtos.TaskView task(long userId, String projectId, String taskId) {
+        ProjectRecord project = requireReadyProject(userId, projectId);
         TaskRecord task = repository.findTask(userId, projectId, taskId)
                 .orElseThrow(() -> new IllegalArgumentException("学习任务不存在或无权访问。"));
-        return taskView(userId, projectId, task, repository.findResourcesForTask(userId, projectId, taskId));
+        return taskView(userId, projectId, project, task, repository.findResourcesForTask(userId, projectId, taskId));
     }
 
     public SmartLearningDtos.ExecutionView startExecution(long userId, String projectId, String taskId) {
-        requireProject(userId, projectId);
+        requireReadyProject(userId, projectId);
         TaskRecord task = repository.findTask(userId, projectId, taskId)
                 .orElseThrow(() -> new IllegalArgumentException("学习任务不存在或无权访问。"));
         if ("CANCELLED".equals(task.status()) || "SKIPPED".equals(task.status())) {
@@ -433,37 +552,68 @@ public class SmartLearningApplicationService {
         return repository.findExecution(userId, executionId).map(this::executionView).orElseThrow();
     }
 
+    @Transactional(transactionManager = "v2TransactionManager", rollbackFor = Exception.class)
     public SmartLearningDtos.ExecutionView submitExecution(long userId, String executionId) {
         ExecutionRecord execution = repository.findExecution(userId, executionId)
                 .orElseThrow(() -> new IllegalArgumentException("学习记录不存在或无权访问。"));
+        ProjectRecord project = requireProject(userId, execution.projectExternalId());
         TaskRecord task = repository.findTask(userId, execution.projectExternalId(), execution.taskExternalId())
                 .orElseThrow(() -> new IllegalArgumentException("学习任务不存在或无权访问。"));
         List<ResourceRecord> resources = repository.findResourcesForTask(userId, execution.projectExternalId(), execution.taskExternalId());
-        double score = 100;
         ResourceRecord exercise = resources.stream().filter(item -> "EXERCISE_SET".equals(item.kind()) && "READY".equals(item.status())).findFirst().orElse(null);
-        if (exercise != null && exercise.content().get("items") instanceof List<?> items && !items.isEmpty()) {
+        SmartLearningDtos.ExerciseGrade grade = null;
+        if ("EXERCISE".equals(task.taskType()) && exercise == null) {
+            throw new IllegalStateException("练习题还在准备中，生成完成后才能提交判卷。");
+        }
+        if (exercise != null) {
+            List<Map<String, Object>> items = exerciseItems(exercise, project, task);
+            if (items.isEmpty()) throw new IllegalStateException("当前练习题无有效内容，请返回工作台重试资源准备。");
+            int configuredCount = configuredExerciseCount(project, task);
+            if (configuredCount > 0 && items.size() != configuredCount) {
+                throw new IllegalStateException("练习题数量与当前计划不一致，请返回工作台重新准备资源。");
+            }
             Map<String, Object> answers = execution.answers();
-            int correct = 0;
-            int answered = 0;
-            for (Object raw : items) {
-                if (!(raw instanceof Map<?, ?> item)) continue;
-                String id = text(item.get("id"));
-                Object value = answers.get(id);
-                if (value != null && !text(value).isBlank()) {
-                    answered++;
-                    if (normalize(value).equals(normalize(item.get("answer")))) correct++;
-                }
+            List<Object> values = new ArrayList<>();
+            for (int index = 0; index < items.size(); index++) {
+                Map<String, Object> item = items.get(index);
+                values.add(answerFor(answers, text(item.get("id")), index));
             }
-            score = items.isEmpty() ? 100 : Math.round(correct * 10000d / items.size()) / 100d;
+            int answered = (int) values.stream().filter(value -> value != null && !text(value).isBlank()).count();
             if (answered < items.size()) {
-                throw new IllegalStateException("请先完成全部练习题，再提交本次任务。 ");
+                throw new IllegalStateException("还有 " + (items.size() - answered) + " 道题未作答，请完成后再提交判卷。 ");
             }
+            int correct = 0;
+            List<SmartLearningDtos.ExerciseQuestionGrade> results = new ArrayList<>();
+            for (int index = 0; index < items.size(); index++) {
+                Map<String, Object> item = items.get(index);
+                String id = text(item.get("id"));
+                Object value = values.get(index);
+                boolean isCorrect = normalize(value).equals(normalize(item.get("answer")));
+                if (isCorrect) {
+                    correct++;
+                    repository.markWrongItemMastered(userId, execution.projectExternalId(), task.externalId(), id);
+                } else {
+                    repository.upsertWrongItem(
+                            userId, execution.projectExternalId(), task.externalId(), execution.externalId(), id,
+                            limit(text(item.get("stem")), 4000), limit(text(value), 4000),
+                            limit(text(item.get("answer")), 4000), limit(text(item.get("explanation")), 8000),
+                            limit(defaultText(text(item.get("knowledgeKey")), task.title()), 240));
+                }
+                results.add(new SmartLearningDtos.ExerciseQuestionGrade(
+                        id, index, true, isCorrect, limit(text(value), 4000),
+                        limit(text(item.get("answer")), 4000), limit(text(item.get("explanation")), 8000)));
+            }
+            double accuracy = items.isEmpty() ? 100 : Math.round(correct * 10000d / items.size()) / 100d;
+            grade = new SmartLearningDtos.ExerciseGrade(items.size(), answered, correct, accuracy, results);
+            repository.updateExecutionScore(userId, executionId, accuracy);
         } else if (execution.progress() < 100 && "READING".equals(task.taskType())) {
             throw new IllegalStateException("请先完成阅读内容，再提交本次任务。 ");
+        } else {
+            repository.updateExecutionScore(userId, executionId, 100);
         }
-        repository.updateExecutionScore(userId, executionId, score);
         repository.updateExecutionStatus(userId, executionId, "COMPLETED");
-        return repository.findExecution(userId, executionId).map(this::executionView).orElseThrow();
+        ExecutionRecord completed = repository.findExecution(userId, executionId).orElseThrow();
+        return executionView(completed, grade);
     }
 
     public SmartLearningDtos.ExecutionView saveExecutionProgress(long userId, String executionId, double progress, int secondsDelta) {
@@ -494,13 +644,17 @@ public class SmartLearningApplicationService {
         return repository.findExecution(userId, executionId).map(this::executionView).orElseThrow();
     }
 
-    private SmartLearningDtos.TaskView taskView(long userId, String projectId, TaskRecord task, List<ResourceRecord> allResources) {
-        List<SmartLearningDtos.ResourceView> resources = allResources.stream()
-                .filter(resource -> resource.taskExternalId().equals(task.externalId())).map(this::resourceView).toList();
-        ExecutionRecord execution = repository.findActiveExecution(userId, projectId, task.externalId()).orElse(null);
+    private SmartLearningDtos.TaskView taskView(long userId, String projectId, ProjectRecord project, TaskRecord task, List<ResourceRecord> allResources) {
+        List<ResourceRecord> taskResources = allResources.stream()
+                .filter(resource -> resource.taskExternalId().equals(task.externalId())).toList();
+        ExecutionRecord execution = repository.findLatestExecution(userId, projectId, task.externalId()).orElse(null);
+        List<SmartLearningDtos.ResourceView> resources = taskResources.stream().map(this::resourceView).toList();
+        SmartLearningDtos.ExerciseGrade grading = execution != null && "COMPLETED".equals(execution.status())
+                ? exerciseGrade(taskResources.stream().filter(item -> "EXERCISE_SET".equals(item.kind()) && "READY".equals(item.status())).findFirst().orElse(null), project, task, execution)
+                : null;
         return new SmartLearningDtos.TaskView(task.externalId(), task.title(), task.taskType(), task.description(),
                 task.completionCriteria(), task.scheduledDate(), task.durationMinutes(), task.status(), task.sortOrder(),
-                task.payload(), resources, execution == null ? null : executionView(execution), task.updatedAt());
+                task.payload(), resources, execution == null ? null : executionView(execution, grading), task.updatedAt());
     }
 
     private SmartLearningDtos.ResourceView resourceView(ResourceRecord resource) {
@@ -509,22 +663,181 @@ public class SmartLearningApplicationService {
     }
 
     private SmartLearningDtos.ExecutionView executionView(ExecutionRecord execution) {
+        return executionView(execution, null);
+    }
+
+    private SmartLearningDtos.ExecutionView executionView(
+            ExecutionRecord execution, SmartLearningDtos.ExerciseGrade grading) {
         return new SmartLearningDtos.ExecutionView(execution.externalId(), execution.projectExternalId(), execution.taskExternalId(),
                 execution.status(), execution.progress(), execution.accumulatedSeconds(), execution.position(), execution.answers(),
-                execution.score(), execution.lastHeartbeatSeq(), execution.startedAt(), execution.pausedAt(), execution.completedAt(), execution.updatedAt());
+                execution.score(), execution.lastHeartbeatSeq(), execution.startedAt(), execution.pausedAt(), execution.completedAt(), execution.updatedAt(), grading);
+    }
+
+    private String planTaskType(Map<String, Object> task, int order) {
+        String explicit = text(task.get("type")).toUpperCase();
+        if (Set.of("READING", "EXPLANATION", "EXERCISE", "REVIEW").contains(explicit)) return explicit;
+        return switch (Math.floorMod(order, 4)) {
+            case 1 -> "EXPLANATION";
+            case 2 -> "EXERCISE";
+            case 3 -> "REVIEW";
+            default -> "READING";
+        };
+    }
+
+    private List<Map<String, Object>> exerciseItems(
+            ResourceRecord resource, ProjectRecord project, TaskRecord task) {
+        if (resource == null || !(resource.content().get("items") instanceof List<?> raw)) return List.of();
+        int expected = expectedExerciseCount(project, task, raw.size());
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Object value : raw) {
+            if (!(value instanceof Map<?, ?> source)) continue;
+            Map<String, Object> item = new LinkedHashMap<>();
+            source.forEach((key, itemValue) -> item.put(String.valueOf(key), itemValue));
+            String id = text(item.get("id"));
+            item.put("id", id.isBlank() ? "q" + (result.size() + 1) : id);
+            result.add(item);
+            if (result.size() >= expected) break;
+        }
+        return result;
+    }
+
+    private int expectedExerciseCount(ProjectRecord project, TaskRecord task, int available) {
+        int configured = configuredExerciseCount(project, task);
+        return configured > 0 ? Math.min(configured, available) : available;
+    }
+
+    private int configuredExerciseCount(ProjectRecord project, TaskRecord task) {
+        int payloadCount = number(task.payload().get("questionCount"));
+        if (payloadCount > 0) return payloadCount;
+        Matcher matcher = Pattern.compile("(\\d+)\\s*(?:道|题)").matcher(task.completionCriteria());
+        if (matcher.find()) return Math.max(1, Integer.parseInt(matcher.group(1)));
+        return number(project.resourceConfig().get("questionCount"));
+    }
+
+    private Object answerFor(Map<String, Object> answers, String id, int index) {
+        Object value = answers.get(id + "__" + index);
+        return value == null ? answers.get(id) : value;
+    }
+
+    private SmartLearningDtos.ExerciseGrade exerciseGrade(
+            ResourceRecord resource, ProjectRecord project, TaskRecord task, ExecutionRecord execution) {
+        if (resource == null) return null;
+        // A completed execution is the only state in which this method is exposed.
+        List<Map<String, Object>> items = exerciseItems(resource, project, task);
+        List<SmartLearningDtos.ExerciseQuestionGrade> results = new ArrayList<>();
+        int correct = 0;
+        int answered = 0;
+        for (int index = 0; index < items.size(); index++) {
+            Map<String, Object> item = items.get(index);
+            String id = text(item.get("id"));
+            Object answer = answerFor(execution.answers(), id, index);
+            boolean hasAnswer = answer != null && !text(answer).isBlank();
+            boolean isCorrect = hasAnswer && normalize(answer).equals(normalize(item.get("answer")));
+            if (hasAnswer) answered++;
+            if (isCorrect) correct++;
+            results.add(new SmartLearningDtos.ExerciseQuestionGrade(id, index, hasAnswer, isCorrect,
+                    limit(text(answer), 4000), limit(text(item.get("answer")), 4000),
+                    limit(text(item.get("explanation")), 8000)));
+        }
+        double accuracy = items.isEmpty() ? 100 : Math.round(correct * 10000d / items.size()) / 100d;
+        return new SmartLearningDtos.ExerciseGrade(items.size(), answered, correct, accuracy, results);
     }
 
     private Map<String, Object> buildResource(long userId, ProjectRecord project, TaskRecord task, ResourceRecord resource) {
         List<ChunkRecord> chunks = repository.findSourceChunks(userId, project.sources());
         String source = chunks.stream().limit(8).map(chunk -> "[" + chunk.assetName() + "]\n" + limit(chunk.content(), 1800)).reduce("", (a, b) -> a + "\n" + b);
         if ("EXERCISE_SET".equals(resource.kind())) {
-            String prompt = "为学习任务生成练习题。只返回 JSON：{\"items\":[{\"id\":\"q1\",\"stem\":\"\",\"options\":[\"\"],\"answer\":\"\",\"explanation\":\"\"}]}。题目必须基于资料，不要编造。任务：" + task.title() + "\n资料：" + limit(source, 16000);
-            return parseModel(callModel(prompt, userId));
+            int configuredCount = number(task.payload().get("questionCount"));
+            if (configuredCount <= 0) configuredCount = number(project.resourceConfig().get("questionCount"));
+            int questionCount = Math.max(1, Math.min(200, configuredCount));
+            String prompt = "为学习任务生成恰好 " + questionCount + " 道单选题。只返回 JSON：{\"items\":[{\"id\":\"q1\",\"stem\":\"题干，可包含 Markdown 代码块\",\"options\":[\"A\",\"B\"],\"answer\":\"A\",\"explanation\":\"解析\",\"knowledgeKey\":\"知识点\"}]}。id 必须从 q1 递增且不能重复；每题必须有唯一题干、至少两个选项，answer 必须是 options 中的一个值；代码必须放在 stem 或 explanation 的 Markdown 代码块中。题目必须基于资料，不要编造。任务：" + task.title() + "\n资料：" + limit(source, 16000);
+            Map<String, Object> generated = parseModel(callModel(prompt, userId));
+            List<Map<String, Object>> items = normalizeExerciseItems(generated, questionCount);
+            return Map.of("items", items, "questionCount", items.size());
         }
+        String prompt = "为学习任务生成结构清晰的教学讲义。只返回 JSON：{\"markdown\":\"完整 Markdown\"}。" +
+                "讲义必须包含学习目标、核心讲解、示例、易错点和小结。代码必须使用带语言标识且成对闭合的代码围栏；表格必须是合法 Markdown 表格；不要把整篇讲义包进代码围栏；不要原样拼接资料片段；没有资料证据时要明确说明。" +
+                "\n任务类型：" + task.taskType() + "\n任务：" + task.title() + "\n说明：" + task.description() +
+                "\n完成标准：" + task.completionCriteria() + "\n资料：" + limit(source, 18000);
+        Map<String, Object> generated = parseModel(callModel(prompt, userId));
+        String markdown = sanitizeLearningMarkdown(text(generated.get("markdown")), task.title());
         Map<String, Object> content = new LinkedHashMap<>();
-        content.put("markdown", "# " + task.title() + "\n\n" + task.description() + "\n\n## 学习重点\n\n" + limit(source, 12000));
+        content.put("markdown", markdown);
         content.put("citations", chunks.stream().limit(8).map(chunk -> Map.of("assetId", chunk.assetExternalId(), "assetName", chunk.assetName(), "versionId", chunk.versionExternalId(), "chunkId", chunk.chunkExternalId(), "pageFrom", chunk.pageFrom() == null ? 0 : chunk.pageFrom(), "pageTo", chunk.pageTo() == null ? 0 : chunk.pageTo())).toList());
         return content;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> normalizeExerciseItems(Map<String, Object> generated, int expected) {
+        Object rawItems = generated.get("items");
+        if (!(rawItems instanceof List<?> raw) || raw.size() < expected) {
+            throw new IllegalStateException("模型生成的练习题数量不足，请重试。");
+        }
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (Object value : raw) {
+            if (!(value instanceof Map<?, ?> source)) continue;
+            Map<String, Object> item = new LinkedHashMap<>();
+            source.forEach((key, itemValue) -> item.put(String.valueOf(key), itemValue));
+            String stem = text(item.get("stem"));
+            if (stem.isBlank()) continue;
+            List<String> options = new ArrayList<>();
+            if (item.get("options") instanceof List<?> rawOptions) {
+                for (Object option : rawOptions) if (!text(option).isBlank()) options.add(text(option));
+            }
+            String answer = text(item.get("answer"));
+            if (options.size() < 2 || answer.isBlank() || !options.contains(answer)) continue;
+            item.put("id", "q" + (items.size() + 1));
+            item.put("stem", limit(stem, 12000));
+            item.put("options", options.stream().map(option -> limit(option, 2000)).toList());
+            item.put("answer", limit(answer, 2000));
+            item.put("explanation", limit(text(item.get("explanation")), 8000));
+            item.put("knowledgeKey", limit(text(item.get("knowledgeKey")), 240));
+            items.add(item);
+            if (items.size() >= expected) break;
+        }
+        if (items.size() < expected) throw new IllegalStateException("模型生成的练习题无法满足题目格式，请重试。");
+        return items;
+    }
+
+    private String sanitizeLearningMarkdown(String raw, String title) {
+        String value = raw == null ? "" : raw.replace("\r\n", "\n").replace('\r', '\n').trim();
+        if (value.isBlank()) throw new IllegalStateException("模型没有返回有效的学习讲义，请重试。");
+        if (value.matches("(?s)^```(?:markdown|md)\\s*\\n.*\\n```$")) {
+            value = value.replaceFirst("(?s)^```(?:markdown|md)\\s*\\n", "")
+                    .replaceFirst("(?s)\\n```$", "").trim();
+        }
+        long fences = value.lines().filter(line -> line.trim().startsWith("```")).count();
+        if (fences % 2 != 0) value += "\n```";
+        if (!value.matches("(?s)^\\s*#.*")) value = "# " + title + "\n\n" + value;
+        return limit(value, 60_000);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void normalizePlanTaskTypes(Map<String, Object> plan) {
+        if (!(plan.get("tasks") instanceof List<?> tasks)) return;
+        int index = 0;
+        for (Object raw : tasks) {
+            if (!(raw instanceof Map<?, ?> source)) continue;
+            Map<String, Object> task = (Map<String, Object>) source;
+            String type = text(task.get("type")).toUpperCase();
+            if (!Set.of("READING", "EXPLANATION", "EXERCISE", "REVIEW").contains(type)) {
+                type = switch (Math.floorMod(index, 4)) {
+                    case 1 -> "EXPLANATION";
+                    case 2 -> "EXERCISE";
+                    case 3 -> "REVIEW";
+                    default -> "READING";
+                };
+            }
+            task.put("type", type);
+            index++;
+        }
+    }
+
+    private SmartLearningDtos.WrongItemView wrongItemView(WrongItemRecord item) {
+        return new SmartLearningDtos.WrongItemView(
+                item.externalId(), item.projectExternalId(), item.taskExternalId(),
+                item.questionId(), item.stem(), item.userAnswer(), item.correctAnswer(),
+                item.explanation(), item.knowledgeKey(), item.status(), item.updatedAt());
     }
 
     public SmartLearningDtos.JobView job(long userId, String jobId) {
@@ -628,13 +941,20 @@ public class SmartLearningApplicationService {
         return result;
     }
 
-    private SmartLearningDtos.ProjectSummary summary(ProjectRecord project) {
+    private SmartLearningDtos.ProjectSummary summary(long userId, ProjectRecord project) {
+        List<TaskRecord> tasks = repository.findTasks(userId, project.externalId());
+        int totalTaskCount = tasks.size();
+        int completedTaskCount = (int) tasks.stream().filter(task -> "COMPLETED".equals(task.status())).count();
+        int learningProgress = totalTaskCount == 0
+                ? 0
+                : (int) Math.round(completedTaskCount * 100d / totalTaskCount);
         return new SmartLearningDtos.ProjectSummary(
                 project.externalId(), project.name(), project.icon(), project.iconColor(),
                 project.knowledgeBaseExternalId(), project.stage(), nextStep(project.stage()),
                 project.targetVersion(), project.sourceVersion(), project.scopeVersion(),
                 project.diagnosisVersion(), project.planVersion(), project.resourceConfigVersion(),
-                project.updatedAt());
+                learningProgress, completedTaskCount, totalTaskCount,
+                project.pinnedAt(), project.updatedAt());
     }
 
     private SmartLearningDtos.ProjectDetail toDetail(ProjectRecord p, JobRecord activeJob) {
@@ -645,7 +965,8 @@ public class SmartLearningApplicationService {
                 p.plan(), p.planCandidate(), p.resourceConfig(), p.resourceConfigDraft(),
                 Map.of("target", p.targetVersion(), "sources", p.sourceVersion(), "scope", p.scopeVersion(),
                         "diagnosis", p.diagnosisVersion(), "plan", p.planVersion(),
-                        "resourceConfig", p.resourceConfigVersion()), activeJob == null ? null : jobView(activeJob), p.updatedAt());
+                        "resourceConfig", p.resourceConfigVersion()), activeJob == null ? null : jobView(activeJob),
+                p.pinnedAt(), p.updatedAt());
     }
 
     private SmartLearningDtos.JobView jobView(JobRecord job) {
@@ -1026,6 +1347,14 @@ public class SmartLearningApplicationService {
         if (projectId == null || projectId.isBlank()) throw new IllegalArgumentException("项目不存在。");
         return repository.findProject(userId, projectId)
                 .orElseThrow(() -> new IllegalArgumentException("项目不存在或无权访问。"));
+    }
+
+    private ProjectRecord requireReadyProject(long userId, String projectId) {
+        ProjectRecord project = requireProject(userId, projectId);
+        if (!"READY".equals(project.stage())) {
+            throw new IllegalStateException("学习项目还在准备阶段，请先完成准备后再进入工作台。");
+        }
+        return project;
     }
 
     private SmartLearningDtos.JobAccepted accepted(JobRecord job) {

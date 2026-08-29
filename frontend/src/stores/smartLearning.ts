@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { learningErrorMessage } from '@/utils/learningErrors'
 import {
   archiveSmartLearningProject,
+  deleteSmartLearningProject,
   confirmSmartLearningPlan,
   confirmSmartLearningResourceConfig,
   confirmSmartLearningScope,
@@ -11,7 +12,9 @@ import {
   getSmartLearningJob,
   getSmartLearningProject,
   listSmartLearningProjects,
+  listSmartLearningSidebarProjects,
   renameSmartLearningProject,
+  setSmartLearningProjectPinned,
   saveSmartLearningPlan,
   saveSmartLearningDiagnosisAnswers,
   saveSmartLearningResourceConfig,
@@ -36,7 +39,7 @@ import {
   saveSmartLearningExecutionAnswers,
   heartbeatSmartLearningExecution,
 } from '@/api/smartLearning'
-import type { SmartLearningExecution, SmartLearningJob, SmartLearningProject, SmartLearningProjectDetail, SmartLearningTask, SmartLearningWorkspace } from '@/types/contracts/smartLearning'
+import type { SmartLearningExecution, SmartLearningJob, SmartLearningProject, SmartLearningProjectDetail, SmartLearningSidebarProject, SmartLearningTask, SmartLearningWorkspace } from '@/types/contracts/smartLearning'
 
 type Json = Record<string, unknown>
 
@@ -45,6 +48,7 @@ const messageOf = learningErrorMessage
 export const useSmartLearningStore = defineStore('smartLearning', {
   state: () => ({
     projects: [] as SmartLearningProject[],
+    sidebarProjects: [] as SmartLearningSidebarProject[],
     current: null as SmartLearningProjectDetail | null,
     loading: false,
     saving: false,
@@ -80,6 +84,10 @@ export const useSmartLearningStore = defineStore('smartLearning', {
         this.loading = false
       }
     },
+    async fetchSidebarProjects() {
+      this.sidebarProjects = await listSmartLearningSidebarProjects()
+      return this.sidebarProjects
+    },
     async create(payload: { name: string; icon?: string; iconColor?: string; knowledgeBaseId?: string | null }) {
       this.saving = true
       this.errorMessage = ''
@@ -102,6 +110,25 @@ export const useSmartLearningStore = defineStore('smartLearning', {
     async archive(projectId: string) {
       await archiveSmartLearningProject(projectId)
       await this.fetchProjects()
+    },
+    async deletePermanently(projectId: string) {
+      this.errorMessage = ''
+      try {
+        await deleteSmartLearningProject(projectId)
+        if (this.current?.projectId === projectId) this.current = null
+        this.projects = this.projects.filter(project => project.projectId !== projectId)
+        this.sidebarProjects = this.sidebarProjects.filter(project => project.projectId !== projectId)
+      } catch (error) {
+        this.errorMessage = messageOf(error, '删除学习项目失败。')
+        throw error
+      }
+    },
+    async setPinned(projectId: string, pinned: boolean) {
+      const updated = await setSmartLearningProjectPinned(projectId, pinned)
+      const project = this.projects.find(item => item.projectId === projectId)
+      if (project) project.pinnedAt = updated.pinnedAt
+      await this.fetchSidebarProjects()
+      return updated
     },
     async saveTarget(projectId: string, target: Json) { this.current = await saveSmartLearningTarget(projectId, target); return this.current },
     async confirmTarget(projectId: string) { this.current = await confirmSmartLearningTarget(projectId); return this.current },

@@ -48,9 +48,26 @@ public class SmartLearningController {
         return learning.rename(UserContext.requireSession().userId(), projectId, request);
     }
 
+    @PatchMapping("/projects/{projectId}/pin")
+    public SmartLearningDtos.ProjectDetail pinProject(
+            @PathVariable String projectId,
+            @RequestBody SmartLearningDtos.PinRequest request) {
+        return learning.pin(UserContext.requireSession().userId(), projectId, request);
+    }
+
+    @GetMapping("/sidebar")
+    public List<SmartLearningDtos.SidebarProjectView> getSidebarProjects() {
+        return learning.sidebar(UserContext.requireSession().userId());
+    }
+
     @DeleteMapping("/projects/{projectId}")
     public void archiveProject(@PathVariable String projectId) {
         learning.archive(UserContext.requireSession().userId(), projectId);
+    }
+
+    @DeleteMapping("/projects/{projectId}/permanent")
+    public void deleteProjectPermanently(@PathVariable String projectId) {
+        learning.deletePermanently(UserContext.requireSession().userId(), projectId);
     }
 
     @PostMapping("/projects/{projectId}/restore")
@@ -166,6 +183,30 @@ public class SmartLearningController {
     @GetMapping("/projects/{projectId}/workspace")
     public SmartLearningDtos.Workspace getWorkspace(@PathVariable String projectId) {
         return learning.workspace(UserContext.requireSession().userId(), projectId);
+    }
+
+    @GetMapping("/projects/{projectId}/wrong-items")
+    public List<SmartLearningDtos.WrongItemView> getWrongItems(@PathVariable String projectId) {
+        return learning.wrongItems(UserContext.requireSession().userId(), projectId);
+    }
+
+    @PostMapping("/projects/{projectId}/wrong-items/{wrongItemId}/review")
+    public SmartLearningDtos.WrongItemView reviewWrongItem(
+            @PathVariable String projectId,
+            @PathVariable String wrongItemId,
+            @RequestBody SmartLearningDtos.ReviewWrongItemRequest request) {
+        return learning.reviewWrongItem(
+                UserContext.requireSession().userId(), projectId, wrongItemId, request);
+    }
+
+    @PostMapping("/projects/{projectId}/tutor-thread")
+    public SmartLearningDtos.TutorThreadView getOrCreateTutorThread(
+            @PathVariable String projectId,
+            @RequestBody(required = false) Map<String, Object> body) {
+        Object taskId = body == null ? null : body.get("taskId");
+        return learning.tutorThread(
+                UserContext.requireSession().userId(), projectId,
+                taskId == null ? null : String.valueOf(taskId));
     }
 
     @GetMapping("/projects/{projectId}/tasks/{taskId}")

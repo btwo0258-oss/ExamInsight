@@ -1,0 +1,52 @@
+-- Phase 2 completion: persistent learning tutor threads and the base wrong-book loop.
+
+CREATE TABLE smart_learning_tutor_thread (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    external_id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    project_external_id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    task_external_id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NULL,
+    user_id BIGINT UNSIGNED NOT NULL,
+    context_key VARCHAR(80) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    conversation_external_id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    status VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'ACTIVE',
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    CONSTRAINT pk_smart_learning_tutor_thread PRIMARY KEY (id),
+    CONSTRAINT uq_smart_learning_tutor_thread__external UNIQUE (external_id),
+    CONSTRAINT uq_smart_learning_tutor_thread__context UNIQUE (user_id, project_external_id, context_key),
+    CONSTRAINT uq_smart_learning_tutor_thread__conversation UNIQUE (conversation_external_id),
+    CONSTRAINT fk_smart_learning_tutor_thread__project FOREIGN KEY (project_external_id) REFERENCES smart_learning_project (external_id) ON DELETE CASCADE,
+    CONSTRAINT fk_smart_learning_tutor_thread__task FOREIGN KEY (task_external_id) REFERENCES smart_learning_task (external_id) ON DELETE CASCADE,
+    CONSTRAINT fk_smart_learning_tutor_thread__user FOREIGN KEY (user_id) REFERENCES app_user (id) ON DELETE CASCADE,
+    CONSTRAINT fk_smart_learning_tutor_thread__conversation FOREIGN KEY (conversation_external_id) REFERENCES conversation (external_id) ON DELETE CASCADE,
+    CONSTRAINT ck_smart_learning_tutor_thread__status CHECK (status IN ('ACTIVE', 'ARCHIVED')),
+    INDEX idx_smart_learning_tutor_thread__project (project_external_id, status, updated_at)
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+
+CREATE TABLE smart_learning_wrong_item (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    external_id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    project_external_id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    task_external_id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    execution_external_id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    user_id BIGINT UNSIGNED NOT NULL,
+    question_id VARCHAR(80) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    stem TEXT NOT NULL,
+    user_answer TEXT NULL,
+    correct_answer TEXT NOT NULL,
+    explanation TEXT NULL,
+    knowledge_key VARCHAR(240) NULL,
+    status VARCHAR(20) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'TO_REVIEW',
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    CONSTRAINT pk_smart_learning_wrong_item PRIMARY KEY (id),
+    CONSTRAINT uq_smart_learning_wrong_item__external UNIQUE (external_id),
+    CONSTRAINT uq_smart_learning_wrong_item__execution_question UNIQUE (execution_external_id, question_id),
+    CONSTRAINT fk_smart_learning_wrong_item__project FOREIGN KEY (project_external_id) REFERENCES smart_learning_project (external_id) ON DELETE CASCADE,
+    CONSTRAINT fk_smart_learning_wrong_item__task FOREIGN KEY (task_external_id) REFERENCES smart_learning_task (external_id) ON DELETE CASCADE,
+    CONSTRAINT fk_smart_learning_wrong_item__execution FOREIGN KEY (execution_external_id) REFERENCES smart_learning_execution (external_id) ON DELETE CASCADE,
+    CONSTRAINT fk_smart_learning_wrong_item__user FOREIGN KEY (user_id) REFERENCES app_user (id) ON DELETE CASCADE,
+    CONSTRAINT ck_smart_learning_wrong_item__status CHECK (status IN ('TO_REVIEW', 'MASTERED')),
+    INDEX idx_smart_learning_wrong_item__project_status (project_external_id, status, updated_at),
+    INDEX idx_smart_learning_wrong_item__user_status (user_id, status, updated_at)
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;

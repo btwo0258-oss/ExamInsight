@@ -5,7 +5,8 @@ import AppSelectMenu from '@/components/common/AppSelectMenu.vue'
 import ProjectAppearancePicker from './ProjectAppearancePicker.vue'
 import type { SmartLearningProject } from '@/types/contracts/smartLearning'
 import type { KnowledgeBase } from '@/types/contracts/assetLibraryV2'
-const props = defineProps<{ project?: SmartLearningProject | null; knowledgeBases: KnowledgeBase[]; busy: boolean; error: string; kbError?: string; kbLoading?: boolean; hasMoreKnowledgeBases?: boolean }>()
+type EditableProject = Pick<SmartLearningProject, 'name' | 'icon' | 'iconColor'>
+const props = defineProps<{ project?: EditableProject | null; knowledgeBases: KnowledgeBase[]; busy: boolean; error: string; kbError?: string; kbLoading?: boolean; hasMoreKnowledgeBases?: boolean }>()
 const emit = defineEmits<{ close: []; submit: [payload: { name: string; icon: string; iconColor: string; knowledgeBaseId?: string | null }]; retryKnowledgeBases: []; moreKnowledgeBases: [] }>()
 const name = ref(props.project?.name || ''), icon = ref(props.project?.icon || 'notebook'), iconColor = ref(props.project?.iconColor || '#667085'), knowledgeBaseId = ref<string | null>(null)
 const panel = ref<HTMLElement | null>(null), nameInput = ref<HTMLInputElement | null>(null)

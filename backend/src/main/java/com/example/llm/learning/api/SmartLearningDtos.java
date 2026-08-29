@@ -30,6 +30,10 @@ public final class SmartLearningDtos {
             int diagnosisVersion,
             int planVersion,
             int resourceConfigVersion,
+            int learningProgress,
+            int completedTaskCount,
+            int totalTaskCount,
+            LocalDateTime pinnedAt,
             LocalDateTime updatedAt) {
     }
 
@@ -56,6 +60,7 @@ public final class SmartLearningDtos {
             Map<String, Object> resourceConfigDraft,
             Map<String, Integer> versions,
             JobView activeJob,
+            LocalDateTime pinnedAt,
             LocalDateTime updatedAt) {
     }
 
@@ -87,15 +92,68 @@ public final class SmartLearningDtos {
         public RenameRequest(String name) { this(name, null, null); }
     }
 
+    public record PinRequest(boolean pinned) {
+    }
+
+    public record SidebarProjectView(
+            String projectId,
+            String name,
+            String icon,
+            String iconColor,
+            String stage,
+            LocalDateTime pinnedAt,
+            List<TutorConversationView> conversations,
+            LocalDateTime updatedAt) {
+    }
+
+    public record TutorConversationView(
+            String conversationId,
+            String title,
+            String taskId,
+            String taskTitle,
+            String contextType,
+            LocalDateTime updatedAt) {
+    }
+
     public record Workspace(
             String projectId,
             String projectName,
             String stage,
             int progress,
+            int completedTaskCount,
+            int totalTaskCount,
+            int wrongItemCount,
+            int pendingWrongItemCount,
+            Map<String, Object> profile,
             List<TaskView> tasks,
             List<ResourceView> resources,
             ExecutionView activeExecution,
             LocalDateTime updatedAt) {
+    }
+
+    public record WrongItemView(
+            String wrongItemId,
+            String projectId,
+            String taskId,
+            String questionId,
+            String stem,
+            String userAnswer,
+            String correctAnswer,
+            String explanation,
+            String knowledgeKey,
+            String status,
+            LocalDateTime updatedAt) {
+    }
+
+    public record ReviewWrongItemRequest(String answer) {
+    }
+
+    public record TutorThreadView(
+            String threadId,
+            String conversationId,
+            String projectId,
+            String taskId,
+            String contextType) {
     }
 
     public record TaskView(
@@ -125,6 +183,24 @@ public final class SmartLearningDtos {
             LocalDateTime updatedAt) {
     }
 
+    public record ExerciseQuestionGrade(
+            String questionId,
+            int index,
+            boolean answered,
+            boolean correct,
+            String answer,
+            String correctAnswer,
+            String explanation) {
+    }
+
+    public record ExerciseGrade(
+            int total,
+            int answered,
+            int correct,
+            double accuracy,
+            List<ExerciseQuestionGrade> items) {
+    }
+
     public record ExecutionView(
             String executionId,
             String projectId,
@@ -139,7 +215,28 @@ public final class SmartLearningDtos {
             LocalDateTime startedAt,
             LocalDateTime pausedAt,
             LocalDateTime completedAt,
-            LocalDateTime updatedAt) {
+            LocalDateTime updatedAt,
+            ExerciseGrade grading) {
+
+        public ExecutionView(
+                String executionId,
+                String projectId,
+                String taskId,
+                String status,
+                double progress,
+                int accumulatedSeconds,
+                Map<String, Object> position,
+                Map<String, Object> answers,
+                Double score,
+                long lastHeartbeatSeq,
+                LocalDateTime startedAt,
+                LocalDateTime pausedAt,
+                LocalDateTime completedAt,
+                LocalDateTime updatedAt) {
+            this(executionId, projectId, taskId, status, progress, accumulatedSeconds,
+                    position, answers, score, lastHeartbeatSeq, startedAt, pausedAt,
+                    completedAt, updatedAt, null);
+        }
     }
 
     public record StartExecutionRequest(String idempotencyKey) {
