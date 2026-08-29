@@ -17,6 +17,8 @@ const router = createRouter({
     { path: '/resources/:resourceId/preview', name: 'resource-preview', component: () => import('@/views/student/resource/ResourcePreviewView.vue'), props: true, meta: requiresAuth },
     { path: '/learning', name: 'learning-projects', component: () => import('@/views/student/learning/SmartLearningProjectsView.vue'), meta: requiresAuth },
     { path: '/learning/:id/setup', name: 'learning-setup', component: () => import('@/views/student/learning/SmartLearningSetupView.vue'), props: true, meta: requiresAuth },
+    { path: '/learning/:id/task/:taskId', name: 'learning-task', component: () => import('@/views/student/learning/SmartLearningTaskView.vue'), props: true, meta: requiresAuth },
+    { path: '/learning/:id', name: 'learning-workbench', component: () => import('@/views/student/learning/SmartLearningWorkbenchView.vue'), props: true, meta: requiresAuth },
     { path: '/knowledge', redirect: '/library' },
     { path: '/knowledge/:id', redirect: (to) => `/library/${String(to.params.id)}` },
     { path: '/:pathMatch(.*)*', redirect: '/chat' },

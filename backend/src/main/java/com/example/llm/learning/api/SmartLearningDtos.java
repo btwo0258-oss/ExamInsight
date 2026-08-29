@@ -1,6 +1,7 @@
 package com.example.llm.learning.api;
 
 import java.time.LocalDateTime;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
@@ -82,6 +83,71 @@ public final class SmartLearningDtos {
     public record DiagnosisAnswer(String questionId, Object answer) {
     }
 
-    public record RenameRequest(String name) {
+    public record RenameRequest(String name, String icon, String iconColor) {
+        public RenameRequest(String name) { this(name, null, null); }
+    }
+
+    public record Workspace(
+            String projectId,
+            String projectName,
+            String stage,
+            int progress,
+            List<TaskView> tasks,
+            List<ResourceView> resources,
+            ExecutionView activeExecution,
+            LocalDateTime updatedAt) {
+    }
+
+    public record TaskView(
+            String taskId,
+            String title,
+            String taskType,
+            String description,
+            String completionCriteria,
+            LocalDate scheduledDate,
+            int durationMinutes,
+            String status,
+            int sortOrder,
+            Map<String, Object> payload,
+            List<ResourceView> resources,
+            ExecutionView execution,
+            LocalDateTime updatedAt) {
+    }
+
+    public record ResourceView(
+            String resourceId,
+            String taskId,
+            String kind,
+            String title,
+            String status,
+            Map<String, Object> content,
+            String errorMessage,
+            LocalDateTime updatedAt) {
+    }
+
+    public record ExecutionView(
+            String executionId,
+            String projectId,
+            String taskId,
+            String status,
+            double progress,
+            int accumulatedSeconds,
+            Map<String, Object> position,
+            Map<String, Object> answers,
+            Double score,
+            long lastHeartbeatSeq,
+            LocalDateTime startedAt,
+            LocalDateTime pausedAt,
+            LocalDateTime completedAt,
+            LocalDateTime updatedAt) {
+    }
+
+    public record StartExecutionRequest(String idempotencyKey) {
+    }
+
+    public record ExecutionProgressRequest(double progress, int secondsDelta) {
+    }
+
+    public record ExecutionHeartbeatRequest(long sequence, int secondsDelta) {
     }
 }

@@ -180,7 +180,12 @@ class PlatformFoundationMigrationTest {
                     "ai_context_source",
                     "artifact_draft",
                     "artifact_revision",
-                    "conversation_memory_checkpoint"
+                    "conversation_memory_checkpoint",
+                    "smart_learning_project",
+                    "smart_learning_job",
+                    "smart_learning_task",
+                    "smart_learning_resource",
+                    "smart_learning_execution"
             )
     );
 
@@ -254,7 +259,8 @@ class PlatformFoundationMigrationTest {
         Flyway remainingMigrationsFlyway = configureFlyway(null);
         MigrateResult remaining = remainingMigrationsFlyway.migrate();
         MigrateResult secondRun = remainingMigrationsFlyway.migrate();
-        assertThat(remaining.migrationsExecuted).isEqualTo(13);
+        // V007.1 plus V008..V021 (including the smart-learning workbench schema).
+        assertThat(remaining.migrationsExecuted).isEqualTo(15);
         assertThat(secondRun.migrationsExecuted).isZero();
         assertThat(remainingMigrationsFlyway.validateWithResult().validationSuccessful).isTrue();
 

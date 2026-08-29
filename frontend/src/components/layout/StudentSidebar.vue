@@ -13,6 +13,7 @@ import {
   MessageSquare,
   Moon,
   MoreHorizontal,
+  SquarePen,
   Pin,
   PinOff,
   Plus,
@@ -33,6 +34,9 @@ const MIN_SIDEBAR_WIDTH = 232
 const MAX_SIDEBAR_WIDTH = 420
 const COLLAPSED_SIDEBAR_WIDTH = 72
 
+const props = defineProps<{ compactOnMobile?: boolean }>()
+const mobileViewport = typeof window.matchMedia === 'function' ? window.matchMedia('(max-width: 640px)') : null
+function syncMobileSidebar() { if (props.compactOnMobile) collapsed.value = Boolean(mobileViewport?.matches) }
 const emit = defineEmits<{ widthChange: [width: number] }>()
 const route = useRoute()
 const router = useRouter()
@@ -50,7 +54,7 @@ function readSidebarWidth() {
 }
 
 const sidebarWidth = ref(readSidebarWidth())
-const collapsed = ref(false)
+const collapsed = ref(Boolean(props.compactOnMobile && mobileViewport?.matches))
 const isResizing = ref(false)
 const recentExpanded = ref(true)
 const profileOpen = ref(false)
@@ -174,6 +178,7 @@ function closeMenusOnEscape(event: KeyboardEvent) {
 }
 
 onMounted(() => {
+  mobileViewport?.addEventListener('change', syncMobileSidebar)
   authStore.init()
   if (authStore.isAuthed && !chatStore.conversations.length) void chatStore.loadList().catch(() => undefined)
   document.addEventListener('pointerdown', closeTransientMenus)
@@ -181,6 +186,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  mobileViewport?.removeEventListener('change', syncMobileSidebar)
   stopResize()
   document.removeEventListener('pointerdown', closeTransientMenus)
   document.removeEventListener('keydown', closeMenusOnEscape)
@@ -220,7 +226,7 @@ onBeforeUnmount(() => {
 
     <nav class="primary-nav" aria-label="主要导航">
       <button type="button" :class="{ active: route.name === 'chat' || route.name === 'chat-detail' }" @click="startNewChat">
-        <Plus :size="19" />
+        <SquarePen :size="19" />
         <span v-if="!collapsed">新对话</span>
       </button>
       <RouterLink
@@ -230,13 +236,25 @@ onBeforeUnmount(() => {
         <Folder :size="19" />
         <span v-if="!collapsed">资料库</span>
       </RouterLink>
-      <RouterLink
-        to="/learning"
+      <div
+        class="primary-nav-row"
         :class="{ active: String(route.name).startsWith('learning') }"
       >
-        <GraduationCap :size="19" />
-        <span v-if="!collapsed">智能学习</span>
-      </RouterLink>
+        <RouterLink to="/learning" class="primary-nav-link">
+          <GraduationCap :size="19" />
+          <span v-if="!collapsed">智能学习</span>
+        </RouterLink>
+        <button
+          v-if="!collapsed"
+          class="primary-nav-add"
+          type="button"
+          aria-label="新建学习项目"
+          title="新建学习项目"
+          @click.stop="router.push({ name: 'learning-projects', query: { create: '1' } })"
+        >
+          <Plus :size="16" />
+        </button>
+      </div>
     </nav>
 
     <section v-if="!collapsed && authStore.isAuthed" class="conversation-section">
@@ -440,6 +458,12 @@ onBeforeUnmount(() => {
 .primary-nav { display: grid; gap: 6px; margin-top: 14px; }
 .primary-nav button, .primary-nav a { display: flex; width: 100%; min-height: 40px; box-sizing: border-box; align-items: center; gap: 11px; padding: 0 16px; border: 0; border-radius: 9px; color: inherit; background: transparent; font: inherit; font-size: 14px; font-weight: 700; text-decoration: none; cursor: pointer; }
 .primary-nav button:hover, .primary-nav a:hover, .primary-nav .active { background: var(--ui-hover-bg, var(--color-hover)); }
+.primary-nav-row { display: flex; width: 100%; min-height: 40px; align-items: center; border-radius: 9px; }
+.primary-nav-row.active { background: var(--ui-hover-bg, var(--color-hover)); }
+.primary-nav-row .primary-nav-link { flex: 1; }
+.primary-nav-row .primary-nav-link:hover { background: transparent; }
+.primary-nav-add { display: grid !important; width: 32px !important; min-height: 32px !important; margin-right: 4px; padding: 0 !important; place-items: center; border-radius: 7px !important; color: var(--color-text-muted) !important; }
+.primary-nav-add:hover, .primary-nav-add:focus-visible { background: var(--ui-hover-strong-bg, var(--color-hover)) !important; color: var(--color-text) !important; }
 .student-sidebar--collapsed .primary-nav { width: 100%; justify-items: center; }
 .student-sidebar--collapsed .primary-nav button,
 .student-sidebar--collapsed .primary-nav a {
@@ -449,6 +473,8 @@ onBeforeUnmount(() => {
   padding: 0;
   place-items: center;
 }
+.student-sidebar--collapsed .primary-nav-row { width: 40px; justify-content: center; }
+.student-sidebar--collapsed .primary-nav-row .primary-nav-link { width: 40px; flex: 0 0 40px; }
 
 .conversation-section { min-height: 0; flex: 1; margin-top: 22px; overflow: hidden; }
 .section-title { display: flex; width: 100%; height: 30px; align-items: center; justify-content: space-between; padding: 0 8px; border: 0; color: var(--color-text-muted); background: transparent; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }

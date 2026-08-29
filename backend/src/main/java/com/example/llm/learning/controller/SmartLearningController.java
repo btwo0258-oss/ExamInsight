@@ -158,6 +158,81 @@ public class SmartLearningController {
         return learning.confirmResourceConfig(UserContext.requireSession().userId(), projectId);
     }
 
+    @PostMapping("/projects/{projectId}/resources/prepare")
+    public SmartLearningDtos.JobAccepted prepareResources(@PathVariable String projectId) {
+        return learning.prepareResources(UserContext.requireSession().userId(), projectId);
+    }
+
+    @GetMapping("/projects/{projectId}/workspace")
+    public SmartLearningDtos.Workspace getWorkspace(@PathVariable String projectId) {
+        return learning.workspace(UserContext.requireSession().userId(), projectId);
+    }
+
+    @GetMapping("/projects/{projectId}/tasks/{taskId}")
+    public SmartLearningDtos.TaskView getTask(
+            @PathVariable String projectId,
+            @PathVariable String taskId) {
+        return learning.task(UserContext.requireSession().userId(), projectId, taskId);
+    }
+
+    @PostMapping("/projects/{projectId}/tasks/{taskId}/executions")
+    public SmartLearningDtos.ExecutionView startExecution(
+            @PathVariable String projectId,
+            @PathVariable String taskId,
+            @RequestBody(required = false) SmartLearningDtos.StartExecutionRequest ignored) {
+        return learning.startExecution(UserContext.requireSession().userId(), projectId, taskId);
+    }
+
+    @PostMapping("/executions/{executionId}/pause")
+    public SmartLearningDtos.ExecutionView pauseExecution(@PathVariable String executionId) {
+        return learning.updateExecutionStatus(UserContext.requireSession().userId(), executionId, "PAUSED");
+    }
+
+    @PostMapping("/executions/{executionId}/resume")
+    public SmartLearningDtos.ExecutionView resumeExecution(@PathVariable String executionId) {
+        return learning.updateExecutionStatus(UserContext.requireSession().userId(), executionId, "IN_PROGRESS");
+    }
+
+    @PostMapping("/executions/{executionId}/complete")
+    public SmartLearningDtos.ExecutionView completeExecution(@PathVariable String executionId) {
+        return learning.submitExecution(UserContext.requireSession().userId(), executionId);
+    }
+
+    @PostMapping("/executions/{executionId}/skip")
+    public SmartLearningDtos.ExecutionView skipExecution(@PathVariable String executionId) {
+        return learning.updateExecutionStatus(UserContext.requireSession().userId(), executionId, "SKIPPED");
+    }
+
+    @PatchMapping("/executions/{executionId}/progress")
+    public SmartLearningDtos.ExecutionView updateExecutionProgress(
+            @PathVariable String executionId,
+            @RequestBody SmartLearningDtos.ExecutionProgressRequest request) {
+        return learning.saveExecutionProgress(UserContext.requireSession().userId(), executionId,
+                request.progress(), request.secondsDelta());
+    }
+
+    @PutMapping("/executions/{executionId}/position")
+    public SmartLearningDtos.ExecutionView saveExecutionPosition(
+            @PathVariable String executionId,
+            @RequestBody Map<String, Object> position) {
+        return learning.saveExecutionPosition(UserContext.requireSession().userId(), executionId, position);
+    }
+
+    @PutMapping("/executions/{executionId}/answers")
+    public SmartLearningDtos.ExecutionView saveExecutionAnswers(
+            @PathVariable String executionId,
+            @RequestBody Map<String, Object> answers) {
+        return learning.saveExecutionAnswers(UserContext.requireSession().userId(), executionId, answers);
+    }
+
+    @PostMapping("/executions/{executionId}/heartbeat")
+    public SmartLearningDtos.ExecutionView heartbeat(
+            @PathVariable String executionId,
+            @RequestBody SmartLearningDtos.ExecutionHeartbeatRequest request) {
+        return learning.heartbeat(UserContext.requireSession().userId(), executionId,
+                request.sequence(), request.secondsDelta());
+    }
+
     @GetMapping("/jobs/{jobId}")
     public SmartLearningDtos.JobView getJob(@PathVariable String jobId) {
         return learning.job(UserContext.requireSession().userId(), jobId);

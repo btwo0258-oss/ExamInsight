@@ -2,12 +2,13 @@
 import { ref } from 'vue'
 import StudentSidebar from './StudentSidebar.vue'
 
+defineProps<{ compactOnMobile?: boolean }>()
 const sidebarWidth = ref(276)
 </script>
 
 <template>
   <div class="student-shell" :style="{ '--sidebar-width': `${sidebarWidth}px` }">
-    <StudentSidebar @width-change="sidebarWidth = $event" />
+    <StudentSidebar :compact-on-mobile="compactOnMobile" @width-change="sidebarWidth = $event" />
     <main class="student-main">
       <slot />
     </main>

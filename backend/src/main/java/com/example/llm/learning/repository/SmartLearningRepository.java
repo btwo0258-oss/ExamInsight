@@ -9,6 +9,7 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -103,11 +104,15 @@ public class SmartLearningRepository {
     }
 
     public void renameProject(long userId, String projectExternalId, String name) {
+        updateProjectAppearance(userId, projectExternalId, name, null, null);
+    }
+
+    public void updateProjectAppearance(long userId, String projectExternalId, String name, String icon, String iconColor) {
         jdbc.update("""
                 UPDATE smart_learning_project
-                   SET name = ?, row_version = row_version + 1
+                   SET name = ?, icon = COALESCE(?, icon), icon_color = COALESCE(?, icon_color), row_version = row_version + 1
                  WHERE user_id = ? AND external_id = ? AND stage <> 'ARCHIVED'
-                """, name, userId, projectExternalId);
+                """, name, icon, iconColor, userId, projectExternalId);
     }
 
     public void archiveProject(long userId, String projectExternalId) {
@@ -348,6 +353,209 @@ public class SmartLearningRepository {
                 """, userId, projectId);
     }
 
+    /** Create the executable task/resource rows for a confirmed plan.  The
+     * unique project/version/source key makes this safe to call repeatedly
+     * after refreshes or a retried confirmation. */
+    public void provisionTasks(long userId, String projectId, int planVersion,
+                               List<Map<String, Object>> planTasks) {
+        int order = 0;
+        for (Map<String, Object> planTask : planTasks) {
+            String sourceTaskId = String.valueOf(planTask.getOrDefault("id", "task-" + order));
+            String taskExternalId = crypto.newExternalId();
+            String type = taskType(String.valueOf(planTask.getOrDefault("type", "READING")));
+            String scheduled = textValue(planTask.get("date"));
+            Integer duration = intValue(planTask.get("durationMinutes"), 30);
+            String initialStatus = scheduled.isBlank() || !LocalDate.parse(scheduled).isAfter(LocalDate.now())
+                    ? "AVAILABLE" : "PLANNED";
+            jdbc.update("""
+                    INSERT INTO smart_learning_task (
+                        external_id, project_external_id, user_id, plan_version, source_task_id,
+                        title, task_type, description, completion_criteria, scheduled_date,
+                        duration_minutes, status, sort_order, payload_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON))
+                    ON DUPLICATE KEY UPDATE
+                        title = VALUES(title), task_type = VALUES(task_type),
+                        description = VALUES(description), completion_criteria = VALUES(completion_criteria),
+                        scheduled_date = VALUES(scheduled_date), duration_minutes = VALUES(duration_minutes),
+                        payload_json = VALUES(payload_json), updated_at = CURRENT_TIMESTAMP(3)
+                    """, taskExternalId, projectId, userId, planVersion, sourceTaskId,
+                    textValue(planTask.getOrDefault("title", "学习任务")), type,
+                    textValue(planTask.getOrDefault("reason", "按确认的学习计划完成本任务。")),
+                    textValue(planTask.getOrDefault("completionCriteria", "完成本任务并提交结果。")),
+                    scheduled.isBlank() ? null : LocalDate.parse(scheduled),
+                    Math.max(15, Math.min(180, duration)), initialStatus, order,
+                    writeJson(planTask));
+            String actualTaskId = jdbc.queryForObject("""
+                    SELECT external_id FROM smart_learning_task
+                     WHERE project_external_id = ? AND plan_version = ? AND source_task_id = ?
+                    """, String.class, projectId, planVersion, sourceTaskId);
+            String resourceKind = "EXERCISE".equals(type) ? "EXERCISE_SET" : "READING";
+            jdbc.update("""
+                    INSERT IGNORE INTO smart_learning_resource (
+                        external_id, project_external_id, task_external_id, user_id, kind, title, status
+                    ) VALUES (?, ?, ?, ?, ?, ?, 'QUEUED')
+                    """, crypto.newExternalId(), projectId, actualTaskId, userId, resourceKind,
+                    textValue(planTask.getOrDefault("title", "学习资料")));
+            order++;
+        }
+    }
+
+    public List<TaskRecord> findTasks(long userId, String projectId) {
+        return jdbc.query("""
+                SELECT external_id, project_external_id, plan_version, source_task_id, title,
+                       task_type, description, completion_criteria, scheduled_date,
+                       duration_minutes, status, sort_order, payload_json, updated_at
+                  FROM smart_learning_task
+                 WHERE user_id = ? AND project_external_id = ? AND status <> 'CANCELLED'
+                 ORDER BY sort_order ASC, id ASC
+                """, this::mapTask, userId, projectId);
+    }
+
+    public Optional<TaskRecord> findTask(long userId, String projectId, String taskId) {
+        return jdbc.query("""
+                SELECT external_id, project_external_id, plan_version, source_task_id, title,
+                       task_type, description, completion_criteria, scheduled_date,
+                       duration_minutes, status, sort_order, payload_json, updated_at
+                  FROM smart_learning_task
+                 WHERE user_id = ? AND project_external_id = ? AND external_id = ?
+                """, this::mapTask, userId, projectId, taskId).stream().findFirst();
+    }
+
+    public List<ResourceRecord> findResources(long userId, String projectId) {
+        return jdbc.query("""
+                SELECT external_id, task_external_id, kind, title, status, content_json,
+                       error_message, updated_at
+                  FROM smart_learning_resource
+                 WHERE user_id = ? AND project_external_id = ?
+                 ORDER BY id ASC
+                """, this::mapResource, userId, projectId);
+    }
+
+    public List<ResourceRecord> findResourcesForTask(long userId, String projectId, String taskId) {
+        return jdbc.query("""
+                SELECT external_id, task_external_id, kind, title, status, content_json,
+                       error_message, updated_at
+                  FROM smart_learning_resource
+                 WHERE user_id = ? AND project_external_id = ? AND task_external_id = ?
+                 ORDER BY id ASC
+                """, this::mapResource, userId, projectId, taskId);
+    }
+
+    public void markResourceGenerating(long userId, String resourceId) {
+        jdbc.update("""
+                UPDATE smart_learning_resource SET status = 'GENERATING', error_message = NULL
+                       WHERE user_id = ? AND external_id = ?""", userId, resourceId);
+    }
+
+    public void markResourceReady(long userId, String resourceId, String contentJson) {
+        jdbc.update("""
+                UPDATE smart_learning_resource SET status = 'READY', content_json = CAST(? AS JSON), error_message = NULL
+                       WHERE user_id = ? AND external_id = ?""", contentJson, userId, resourceId);
+    }
+
+    public void markResourceFailed(long userId, String resourceId, String message) {
+        jdbc.update("""
+                UPDATE smart_learning_resource SET status = 'FAILED', error_message = ?
+                       WHERE user_id = ? AND external_id = ?""", trimError(message), userId, resourceId);
+    }
+
+    public List<ResourceRecord> findPendingResources(long userId, String projectId) {
+        return jdbc.query("""
+                SELECT external_id, task_external_id, kind, title, status, content_json,
+                       error_message, updated_at
+                  FROM smart_learning_resource
+                 WHERE user_id = ? AND project_external_id = ? AND status IN ('QUEUED', 'FAILED')
+                 ORDER BY id ASC
+                """, this::mapResource, userId, projectId);
+    }
+
+    public Optional<ExecutionRecord> findActiveExecution(long userId, String projectId, String taskId) {
+        return jdbc.query("""
+                SELECT external_id, project_external_id, task_external_id, status, progress,
+                       accumulated_seconds, position_json, answers_json, score,
+                       last_heartbeat_seq, started_at, paused_at, completed_at, updated_at
+                  FROM smart_learning_execution
+                 WHERE user_id = ? AND project_external_id = ? AND task_external_id = ?
+                   AND status IN ('IN_PROGRESS', 'PAUSED', 'COMPLETION_PENDING')
+                 ORDER BY id DESC LIMIT 1
+                """, this::mapExecution, userId, projectId, taskId).stream().findFirst();
+    }
+
+    public Optional<ExecutionRecord> findExecution(long userId, String executionId) {
+        return jdbc.query("""
+                SELECT external_id, project_external_id, task_external_id, status, progress,
+                       accumulated_seconds, position_json, answers_json, score,
+                       last_heartbeat_seq, started_at, paused_at, completed_at, updated_at
+                  FROM smart_learning_execution
+                 WHERE user_id = ? AND external_id = ?
+                """, this::mapExecution, userId, executionId).stream().findFirst();
+    }
+
+    public String createExecution(long userId, String projectId, String taskId) {
+        String id = crypto.newExternalId();
+        jdbc.update("""
+                INSERT INTO smart_learning_execution (external_id, project_external_id, task_external_id, user_id, status)
+                VALUES (?, ?, ?, ?, 'IN_PROGRESS')
+                """, id, projectId, taskId, userId);
+        jdbc.update("""
+                UPDATE smart_learning_task SET status = 'IN_PROGRESS'
+                       WHERE user_id = ? AND project_external_id = ? AND external_id = ?
+                         AND status IN ('PLANNED', 'AVAILABLE', 'PAUSED', 'IN_PROGRESS')""", userId, projectId, taskId);
+        return id;
+    }
+
+    public void updateExecutionStatus(long userId, String executionId, String status) {
+        jdbc.update("""
+                UPDATE smart_learning_execution SET status = ?,
+                       paused_at = CASE WHEN ? = 'PAUSED' THEN CURRENT_TIMESTAMP(3) ELSE paused_at END,
+                       completed_at = CASE WHEN ? IN ('COMPLETED','SKIPPED') THEN CURRENT_TIMESTAMP(3) ELSE completed_at END,
+                       row_version = row_version + 1 WHERE user_id = ? AND external_id = ?""",
+                status, status, status, userId, executionId);
+        jdbc.update("""
+                UPDATE smart_learning_task t JOIN smart_learning_execution e ON e.task_external_id = t.external_id
+                       SET t.status = ? WHERE e.user_id = ? AND e.external_id = ?""", status, userId, executionId);
+    }
+
+    public void updateExecutionProgress(long userId, String executionId, double progress, int secondsDelta) {
+        jdbc.update("""
+                UPDATE smart_learning_execution SET progress = ?, accumulated_seconds = accumulated_seconds + ?,
+                       row_version = row_version + 1 WHERE user_id = ? AND external_id = ?""",
+                Math.max(0, Math.min(100, progress)), Math.max(0, Math.min(300, secondsDelta)), userId, executionId);
+    }
+
+    public void updateExecutionScore(long userId, String executionId, double score) {
+        jdbc.update("""
+                UPDATE smart_learning_execution SET score = ?, progress = 100, row_version = row_version + 1
+                 WHERE user_id = ? AND external_id = ?
+                """, Math.max(0, Math.min(100, score)), userId, executionId);
+    }
+
+    public void saveExecutionPosition(long userId, String executionId, String json) {
+        jdbc.update("""
+                UPDATE smart_learning_execution SET position_json = CAST(? AS JSON), row_version = row_version + 1
+                       WHERE user_id = ? AND external_id = ?""", json, userId, executionId);
+    }
+
+    public void saveExecutionAnswers(long userId, String executionId, String json) {
+        jdbc.update("""
+                UPDATE smart_learning_execution SET answers_json = CAST(? AS JSON), row_version = row_version + 1
+                       WHERE user_id = ? AND external_id = ?""", json, userId, executionId);
+    }
+
+    public boolean heartbeat(long userId, String executionId, long sequence, int secondsDelta) {
+        return jdbc.update("""
+                UPDATE smart_learning_execution
+                       SET last_heartbeat_seq = ?, accumulated_seconds = accumulated_seconds + ?, updated_at = CURRENT_TIMESTAMP(3)
+                       WHERE user_id = ? AND external_id = ? AND status = 'IN_PROGRESS' AND last_heartbeat_seq < ?""",
+                sequence, Math.max(0, Math.min(60, secondsDelta)), userId, executionId, sequence) > 0;
+    }
+
+    public void updateJobProgress(String jobId, int current, int total) {
+        jdbc.update("""
+                UPDATE smart_learning_job SET progress_current = ?, progress_total = ?, updated_at = CURRENT_TIMESTAMP(3)
+                       WHERE external_id = ? AND status = 'RUNNING'""", Math.max(0, current), Math.max(1, total), jobId);
+    }
+
     public Optional<JobRecord> findReusableJob(
             long userId,
             String projectId,
@@ -513,6 +721,51 @@ public class SmartLearningRepository {
                 readMap(rs.getString("resource_config_json")), readMap(rs.getString("resource_config_draft_json")));
     }
 
+    private TaskRecord mapTask(ResultSet rs, int rowNum) throws SQLException {
+        return new TaskRecord(
+                rs.getString("external_id"), rs.getString("project_external_id"),
+                rs.getInt("plan_version"), rs.getString("source_task_id"), rs.getString("title"),
+                rs.getString("task_type"), rs.getString("description"), rs.getString("completion_criteria"),
+                rs.getObject("scheduled_date", LocalDate.class), rs.getInt("duration_minutes"),
+                rs.getString("status"), rs.getInt("sort_order"), readMap(rs.getString("payload_json")),
+                rs.getObject("updated_at", LocalDateTime.class));
+    }
+
+    private ResourceRecord mapResource(ResultSet rs, int rowNum) throws SQLException {
+        return new ResourceRecord(
+                rs.getString("external_id"), rs.getString("task_external_id"), rs.getString("kind"),
+                rs.getString("title"), rs.getString("status"), readMap(rs.getString("content_json")),
+                rs.getString("error_message"), rs.getObject("updated_at", LocalDateTime.class));
+    }
+
+    private ExecutionRecord mapExecution(ResultSet rs, int rowNum) throws SQLException {
+        return new ExecutionRecord(
+                rs.getString("external_id"), rs.getString("project_external_id"), rs.getString("task_external_id"),
+                rs.getString("status"), rs.getDouble("progress"), rs.getInt("accumulated_seconds"),
+                readMap(rs.getString("position_json")), readMap(rs.getString("answers_json")),
+                rs.getObject("score", Double.class), rs.getLong("last_heartbeat_seq"),
+                rs.getObject("started_at", LocalDateTime.class), rs.getObject("paused_at", LocalDateTime.class),
+                rs.getObject("completed_at", LocalDateTime.class), rs.getObject("updated_at", LocalDateTime.class));
+    }
+
+    private String taskType(String raw) {
+        return switch (raw == null ? "" : raw.trim().toLowerCase()) {
+            case "练习", "exercise", "quiz", "测验" -> "EXERCISE";
+            case "复盘", "review" -> "REVIEW";
+            case "讲解", "explanation" -> "EXPLANATION";
+            default -> "READING";
+        };
+    }
+
+    private String textValue(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
+    }
+
+    private int intValue(Object value, int fallback) {
+        if (value instanceof Number number) return number.intValue();
+        try { return Integer.parseInt(textValue(value)); } catch (Exception ignored) { return fallback; }
+    }
+
     private JobRecord mapJob(ResultSet rs, int rowNum) throws SQLException {
         return new JobRecord(
                 rs.getString("external_id"), rs.getString("project_external_id"), rs.getString("kind"),
@@ -571,5 +824,25 @@ public class SmartLearningRepository {
             String assetExternalId, String assetName, String versionExternalId,
             String chunkExternalId, String content, Integer pageFrom, Integer pageTo,
             String headingPath) {
+    }
+
+    public record TaskRecord(
+            String externalId, String projectExternalId, int planVersion, String sourceTaskId,
+            String title, String taskType, String description, String completionCriteria,
+            LocalDate scheduledDate, int durationMinutes, String status, int sortOrder,
+            Map<String, Object> payload, LocalDateTime updatedAt) {
+    }
+
+    public record ResourceRecord(
+            String externalId, String taskExternalId, String kind, String title, String status,
+            Map<String, Object> content, String errorMessage, LocalDateTime updatedAt) {
+    }
+
+    public record ExecutionRecord(
+            String externalId, String projectExternalId, String taskExternalId, String status,
+            double progress, int accumulatedSeconds, Map<String, Object> position,
+            Map<String, Object> answers, Double score, long lastHeartbeatSeq,
+            LocalDateTime startedAt, LocalDateTime pausedAt, LocalDateTime completedAt,
+            LocalDateTime updatedAt) {
     }
 }

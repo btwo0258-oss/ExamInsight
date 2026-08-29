@@ -112,6 +112,7 @@ function handleDocumentPointerDown(event: PointerEvent) {
 function handleKeydown(event: KeyboardEvent) {
   if (event.key !== 'Escape' || !open.value) return
   event.preventDefault()
+  event.stopImmediatePropagation()
   open.value = false
   triggerEl.value?.focus()
 }
@@ -214,6 +215,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.app-select-menu, .app-select-menu *, .app-select-menu__panel, .app-select-menu__panel * { box-sizing: border-box; }
 .app-select-menu {
   width: 100%;
   min-width: 0;

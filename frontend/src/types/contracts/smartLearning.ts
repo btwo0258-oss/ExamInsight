@@ -64,3 +64,58 @@ export type SmartLearningJobAccepted = {
   kind: string
   status: string
 }
+
+export type SmartLearningResource = {
+  resourceId: string
+  taskId: string
+  kind: 'READING' | 'EXERCISE_SET' | string
+  title: string
+  status: 'QUEUED' | 'GENERATING' | 'READY' | 'FAILED' | string
+  content: Record<string, unknown>
+  errorMessage: string | null
+  updatedAt: string
+}
+
+export type SmartLearningExecution = {
+  executionId: string
+  projectId: string
+  taskId: string
+  status: 'IN_PROGRESS' | 'PAUSED' | 'COMPLETION_PENDING' | 'COMPLETED' | 'SKIPPED' | string
+  progress: number
+  accumulatedSeconds: number
+  position: Record<string, unknown>
+  answers: Record<string, unknown>
+  score: number | null
+  lastHeartbeatSeq: number
+  startedAt: string
+  pausedAt: string | null
+  completedAt: string | null
+  updatedAt: string
+}
+
+export type SmartLearningTask = {
+  taskId: string
+  title: string
+  taskType: 'READING' | 'EXERCISE' | 'REVIEW' | 'EXPLANATION' | string
+  description: string
+  completionCriteria: string
+  scheduledDate: string | null
+  durationMinutes: number
+  status: string
+  sortOrder: number
+  payload: Record<string, unknown>
+  resources: SmartLearningResource[]
+  execution: SmartLearningExecution | null
+  updatedAt: string
+}
+
+export type SmartLearningWorkspace = {
+  projectId: string
+  projectName: string
+  stage: SmartLearningStage
+  progress: number
+  tasks: SmartLearningTask[]
+  resources: SmartLearningResource[]
+  activeExecution: SmartLearningExecution | null
+  updatedAt: string
+}

@@ -227,7 +227,12 @@ export const useChatV2Store = defineStore('chatV2', () => {
     if (previous) window.clearTimeout(previous)
     const timer = window.setTimeout(async () => {
       titleRefreshTimers.delete(conversationId)
-      const summary = await api.getConversationSummary(conversationId).catch(() => null)
+      // Keep the delayed title refresh tolerant of partial API mocks and
+      // temporarily unavailable summary endpoints.  A missing summary must
+      // never surface as an unhandled timer rejection.
+      let getSummary: typeof api.getConversationSummary | undefined
+      try { getSummary = api.getConversationSummary } catch { /* partial test/mock module */ }
+      const summary = await Promise.resolve(getSummary ? getSummary(conversationId) : null).catch(() => null)
       if (!summary) return
       upsertConversation(summary)
       if (activeConversation.value?.id === conversationId) activeConversation.value = summary

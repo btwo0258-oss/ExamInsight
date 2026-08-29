@@ -4,6 +4,9 @@ import type {
   SmartLearningJobAccepted,
   SmartLearningProject,
   SmartLearningProjectDetail,
+  SmartLearningWorkspace,
+  SmartLearningTask,
+  SmartLearningExecution,
 } from '@/types/contracts/smartLearning'
 
 type Json = Record<string, unknown>
@@ -29,8 +32,8 @@ export function getSmartLearningProject(projectId: string) {
   return request.get<SmartLearningProjectDetail>(`/api/v2/learning/projects/${projectId}`).then(unwrap)
 }
 
-export function renameSmartLearningProject(projectId: string, name: string) {
-  return request.patch<SmartLearningProjectDetail>(`/api/v2/learning/projects/${projectId}`, { name }).then(unwrap)
+export function renameSmartLearningProject(projectId: string, payload: string | { name: string; icon?: string; iconColor?: string }) {
+  return request.patch<SmartLearningProjectDetail>(`/api/v2/learning/projects/${projectId}`, typeof payload === 'string' ? { name: payload } : payload).then(unwrap)
 }
 
 export function archiveSmartLearningProject(projectId: string) {
@@ -107,4 +110,52 @@ export function confirmSmartLearningResourceConfig(projectId: string) {
 
 export function getSmartLearningJob(jobId: string) {
   return request.get<SmartLearningJob>(`/api/v2/learning/jobs/${jobId}`).then(unwrap)
+}
+
+export function prepareSmartLearningResources(projectId: string) {
+  return request.post<SmartLearningJobAccepted>(`/api/v2/learning/projects/${projectId}/resources/prepare`).then(unwrap)
+}
+
+export function getSmartLearningWorkspace(projectId: string) {
+  return request.get<SmartLearningWorkspace>(`/api/v2/learning/projects/${projectId}/workspace`).then(unwrap)
+}
+
+export function getSmartLearningTask(projectId: string, taskId: string) {
+  return request.get<SmartLearningTask>(`/api/v2/learning/projects/${projectId}/tasks/${taskId}`).then(unwrap)
+}
+
+export function startSmartLearningExecution(projectId: string, taskId: string) {
+  return request.post<SmartLearningExecution>(`/api/v2/learning/projects/${projectId}/tasks/${taskId}/executions`, {}).then(unwrap)
+}
+
+export function pauseSmartLearningExecution(executionId: string) {
+  return request.post<SmartLearningExecution>(`/api/v2/learning/executions/${executionId}/pause`).then(unwrap)
+}
+
+export function resumeSmartLearningExecution(executionId: string) {
+  return request.post<SmartLearningExecution>(`/api/v2/learning/executions/${executionId}/resume`).then(unwrap)
+}
+
+export function completeSmartLearningExecution(executionId: string) {
+  return request.post<SmartLearningExecution>(`/api/v2/learning/executions/${executionId}/complete`).then(unwrap)
+}
+
+export function skipSmartLearningExecution(executionId: string) {
+  return request.post<SmartLearningExecution>(`/api/v2/learning/executions/${executionId}/skip`).then(unwrap)
+}
+
+export function saveSmartLearningExecutionProgress(executionId: string, progress: number, secondsDelta = 0) {
+  return request.patch<SmartLearningExecution>(`/api/v2/learning/executions/${executionId}/progress`, { progress, secondsDelta }).then(unwrap)
+}
+
+export function saveSmartLearningExecutionPosition(executionId: string, position: Record<string, unknown>) {
+  return request.put<SmartLearningExecution>(`/api/v2/learning/executions/${executionId}/position`, position).then(unwrap)
+}
+
+export function saveSmartLearningExecutionAnswers(executionId: string, answers: Record<string, unknown>) {
+  return request.put<SmartLearningExecution>(`/api/v2/learning/executions/${executionId}/answers`, answers).then(unwrap)
+}
+
+export function heartbeatSmartLearningExecution(executionId: string, sequence: number, secondsDelta = 0) {
+  return request.post<SmartLearningExecution>(`/api/v2/learning/executions/${executionId}/heartbeat`, { sequence, secondsDelta }).then(unwrap)
 }

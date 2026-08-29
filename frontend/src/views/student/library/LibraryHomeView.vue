@@ -720,14 +720,17 @@ onMounted(() => {
 onBeforeUnmount(() => window.clearInterval(refreshTimer));
 </script>
 <template>
-  <StudentShell>
+  <StudentShell class="library-shell">
     <div class="library-page" @click="closeMenus">
       <header class="library-header">
         <div class="page-title">
           <button v-if="isTrashView" type="button" aria-label="返回资料库" @click="leaveTrash">
             <AppIcon name="chevron-left" :size="20" />
           </button>
-          <h1>{{ isTrashView ? "最近删除" : "资料库" }}</h1>
+          <div class="page-title-copy">
+            <h1>{{ isTrashView ? "最近删除" : "资料库" }}</h1>
+            <p v-if="!isTrashView">管理你的文件和知识库，随时用于对话与学习。</p>
+          </div>
         </div>
 
         <div class="header-actions" @click.stop>
@@ -1148,6 +1151,10 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer));
 </template>
 
 <style scoped>
+.library-shell :deep(.student-main) {
+  background: color-mix(in srgb, var(--color-text) 3.5%, var(--color-bg));
+}
+
 .library-page {
   width: min(1180px, calc(100% - 48px));
   min-height: 100%;
@@ -1165,9 +1172,11 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer));
   gap: 24px;
 }
 
-.library-header { margin-bottom: 54px; }
-.page-title { position: relative; display: flex; align-items: center; }
+.library-header { margin-bottom: 36px; flex-wrap: wrap; }
+.page-title { position: relative; display: flex; align-items: center; min-width: 0; }
+.page-title-copy { min-width: 0; }
 .page-title h1 { margin: 0; font-size: clamp(32px, 4vw, 46px); font-weight: 700; letter-spacing: -.045em; }
+.page-title p { margin: 10px 0 0; color: var(--color-text-muted); font-size: 14px; line-height: 1.6; }
 .page-title button,
 .library-notice button {
   width: 34px;
