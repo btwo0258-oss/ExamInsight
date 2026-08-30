@@ -185,7 +185,9 @@ class PlatformFoundationMigrationTest {
                     "smart_learning_job",
                     "smart_learning_task",
                     "smart_learning_resource",
-                    "smart_learning_execution"
+                    "smart_learning_execution",
+                    "smart_learning_tutor_thread",
+                    "smart_learning_wrong_item"
             )
     );
 

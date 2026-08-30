@@ -32,7 +32,7 @@ class SmartLearningDraftTest {
     void project(String stage, Map<String, Object> scope, Map<String, Object> plan, Map<String, Object> sources) {
         when(repository.findProject(1L, "project")).thenReturn(Optional.of(new ProjectRecord(
             "project", 1L, "学习项目", "notebook", "#667085", "kb", stage,
-            1, 1, 1, 0, 0, 0, LocalDateTime.now(),
+            1, 1, 1, 0, 0, 0, null, LocalDateTime.now(),
             Map.of(), Map.of(), sources, sources, Map.of(), scope,
             Map.of(), Map.of(), Map.of(), Map.of(), plan, Map.of(), Map.of())));
     }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import StudentShell from '@/components/layout/StudentShell.vue'
 import AppIcon from '@/components/common/AppIcon.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -24,6 +24,7 @@ let progressTimer: number | undefined
 let sequence = 0
 let checkpointTimer: number | undefined
 let resourcePollTimer: number | undefined
+let routeLeaving = false
 
 const checkpointKey = `examinsight.learning.execution.${projectId}.${taskId}`
 type LocalCheckpoint = {
@@ -268,6 +269,28 @@ function scrollToQuestion(index: number) {
   document.getElementById(`exercise-question-${index}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
 
+async function pauseForNavigation() {
+  if (routeLeaving) return
+  routeLeaving = true
+  writeCheckpoint()
+  await saveProgress()
+  await saveAnswers()
+  await savePosition()
+  const current = execution.value
+  if (current?.status !== 'IN_PROGRESS') return
+  try {
+    await store.pauseExecution(current.executionId)
+  } catch {
+    // Navigation must remain available. The local checkpoint and heartbeat
+    // sequence prevent lost work or false time accumulation while offline.
+  }
+}
+
+onBeforeRouteLeave(async () => {
+  await pauseForNavigation()
+  return true
+})
+
 onMounted(async () => {
   await load()
   window.addEventListener('offline', setOffline)
@@ -286,7 +309,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('offline', setOffline)
   window.removeEventListener('online', setOnline)
   writeCheckpoint()
-  void saveProgress(); void saveAnswers(); void savePosition()
+  if (!routeLeaving) void pauseForNavigation()
 })
 </script>
 

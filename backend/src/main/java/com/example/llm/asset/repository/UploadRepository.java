@@ -152,7 +152,9 @@ public class UploadRepository {
     public void markCompleted(long uploadId, LocalDateTime completedAt) {
         jdbc.update("""
                 UPDATE upload_session
-                   SET status = 'COMPLETED', completed_at = ?, row_version = row_version + 1
+                   SET status = 'COMPLETED',
+                       completed_at = GREATEST(created_at, ?),
+                       row_version = row_version + 1
                  WHERE id = ? AND status = 'COMPLETING'
                 """, completedAt, uploadId);
     }

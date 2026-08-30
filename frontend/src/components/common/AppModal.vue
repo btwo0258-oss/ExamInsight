@@ -25,6 +25,9 @@ function onBackdrop() {
     <div v-if="open" class="modal" @click.self="onBackdrop">
       <div 
         class="modal__card" 
+        role="dialog"
+        aria-modal="true"
+        :aria-label="props.title || '对话框'"
         :style="{ width: props.width, maxWidth: props.maxWidth }"
         :class="{ 'modal__card--full': props.width === '100vw' }"
       >
