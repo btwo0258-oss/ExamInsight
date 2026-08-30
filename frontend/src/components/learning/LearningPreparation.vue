@@ -7,7 +7,7 @@ import StudentShell from '@/components/layout/StudentShell.vue'
 import { useLearningPreparation, preparationSteps as steps, asText, localDate } from '@/composables/useLearningPreparation'
 const props = defineProps<{ projectId: string }>()
 const router = useRouter()
-const { detail, loading, busy, activeStep, error, fieldErrors, stageIndex, target, sourceKnowledgeBaseId, selectedAssets, manualScope, scopeNodes, planTasks, questions, answers, skipReason, skipRequested, resourceConfig, assets, assetsLoading, assetsError, assetCursor, knowledgeBaseOptions, kbLoading, kbError, kbCursor, retryingAssets, drafts, canOpen, selectStep, loadProject, loadAssets, loadKnowledgeBases, isSelected, assetReady, assetState, toggleAsset, retryAsset, confirm, submitDiagnosis, generate, isGenerating, pendingJob, jobError, jobForStep, jobUnresolved, resumeJob, diagnosisState, addNode, removeNode, addTask, removeTask } = useLearningPreparation(props.projectId)
+const { detail, loading, busy, activeStep, error, fieldErrors, stageIndex, target, sourceKnowledgeBaseId, selectedAssets, manualScope, scopeNodes, planTasks, questions, answers, skipReason, skipRequested, resourceConfig, assets, assetsLoading, assetsError, assetCursor, knowledgeBaseOptions, kbLoading, kbError, kbCursor, retryingAssets, drafts, canOpen, selectStep, loadProject, loadAssets, loadKnowledgeBases, isSelected, assetReady, assetState, toggleAsset, retryAsset, confirm, submitDiagnosis, generate, isGenerating, generationStage, pendingJob, jobError, jobForStep, jobUnresolved, resumeJob, diagnosisState, addNode, removeNode, addTask, removeTask } = useLearningPreparation(props.projectId)
 const { state: draftState, status: draftStatus, error: draftError, backupError } = drafts
 const options = (labels: string[]) => labels.map(label => ({ value: label, label }))
 const foundationOptions = options(['尚未接触', '刚入门', '基础薄弱', '基础一般', '较熟练'])
@@ -35,7 +35,7 @@ function retryJob() { if (jobUnresolved.value && detail.value?.activeJob) resume
         <main class="step-content"><section class="step-card">
           <header><span class="step-icon"><AppIcon :name="steps[activeStep]?.icon || 'target'" :size="20" /></span><div><h2>{{ steps[activeStep]?.title }}</h2><p>{{ ['先告诉我想达到什么，以及现实中能投入多少时间。','不关联知识库也可以选择资料；只有勾选的文件会用于本项目。','这是基于已确认资料整理的候选范围，可以修改后再确认。','用一轮短诊断了解当前水平；提交前不显示答案和解析。','先调整候选任务，再确认成为当前计划。','决定后续需要准备哪些学习资源。'][activeStep] }}</p></div></header>
           <div v-if="jobError && jobForStep" class="inline-error" role="alert"><span>{{ jobError }}</span><button type="button" @click="retryJob">{{ jobUnresolved ? '查询进度' : '重试' }}</button></div>
-          <div v-if="isGenerating" class="generation-state" role="status"><div><span class="dot-spinner" />{{ activeStep === 3 ? '正在准备诊断题目…' : activeStep === 4 ? '正在整理学习计划…' : '正在分析学习范围…' }}</div><p>可以离开此页，回来后继续查看进度。</p><div class="generation-skeleton" aria-hidden="true"><i /><i /><i /></div></div>
+          <div v-if="isGenerating" class="generation-state" role="status"><div><span class="dot-spinner" />{{ generationStage === 'REPAIRING_FORMAT' ? '正在修复格式（1/1）…' : generationStage === 'VALIDATING' ? '正在校验生成结果…' : activeStep === 3 ? '正在准备诊断题目…' : activeStep === 4 ? '正在整理学习计划…' : '正在分析学习范围…' }}</div><p>可以离开此页，回来后继续查看进度。</p><div class="generation-skeleton" aria-hidden="true"><i /><i /><i /></div></div>
 
           <fieldset v-if="activeStep === 0" class="form-body" :disabled="busy">
             <div class="form-grid">

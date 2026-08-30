@@ -71,16 +71,20 @@ function currentPosition() {
 }
 
 const task = computed(() => store.currentTask)
-const execution = computed(() => task.value?.execution)
+const explicitReviewAttempt = computed(() => route.query.review === '1')
+const execution = computed(() => explicitReviewAttempt.value
+  ? task.value?.execution
+  : task.value?.completedExecution ?? task.value?.execution)
 const readingMarkdown = computed(() => {
   const resource = task.value?.resources.find(item => item.kind === 'READING' && item.status === 'READY')
   return typeof resource?.content.markdown === 'string' ? normalizeLearningMarkdown(resource.content.markdown) : ''
 })
 const exerciseItems = computed(() => {
+  const snapshotItems = execution.value?.questions
+  if (Array.isArray(snapshotItems) && snapshotItems.length) return snapshotItems
   const resource = task.value?.resources.find(item => item.kind === 'EXERCISE_SET' && item.status === 'READY')
   const items = Array.isArray(resource?.content.items) ? resource.content.items as Array<Record<string, unknown>> : []
-  const configured = Number(task.value?.payload.questionCount || store.current?.resourceConfig?.questionCount || resource?.content.questionCount || 0)
-  return configured > 0 ? items.slice(0, configured) : items
+  return items
 })
 const sourceAssetIds = computed(() => {
   const assets = store.current?.sources?.assets
@@ -116,6 +120,7 @@ const gradeByIndex = computed(() => new Map((submittedGrade.value?.items || []).
 const submitConfirmOpen = ref(false)
 const submitMessage = ref('')
 const submitting = ref(false)
+const retryingResource = ref(false)
 
 function normalizeLearningMarkdown(raw: string) {
   let value = raw.replace(/\r\n?/g, '\n').trim()
@@ -134,7 +139,7 @@ const taskTypeLabel = computed(() => ({
   EXPLANATION: '讲解与理解',
 }[task.value?.taskType || ''] ?? '学习任务'))
 const activeExecution = computed(() => ['IN_PROGRESS', 'PAUSED'].includes(execution.value?.status || ''))
-const isReviewMode = computed(() => route.query.review === '1'
+const isReviewMode = computed(() => explicitReviewAttempt.value
   || Boolean(task.value?.status === 'COMPLETED' && activeExecution.value))
 const isEarlyMode = computed(() => route.query.early === '1'
   || Boolean(task.value?.scheduledDate && task.value.scheduledDate > new Date().toISOString().slice(0, 10) && activeExecution.value))
@@ -152,7 +157,14 @@ async function load() {
       return
     }
     await store.fetchTask(projectId, taskId)
-    if (!execution.value || execution.value.status === 'PAUSED' || execution.value.status === 'COMPLETED' && route.query.review !== '1') await store.startExecution(projectId, taskId)
+    const latestExecution = task.value?.execution
+    if (explicitReviewAttempt.value) {
+      if (!latestExecution || ['PAUSED', 'COMPLETED'].includes(latestExecution.status)) {
+        await store.startExecution(projectId, taskId)
+      }
+    } else if (!task.value?.completedExecution && (!latestExecution || latestExecution.status === 'PAUSED')) {
+      await store.startExecution(projectId, taskId)
+    }
     const checkpoint = readCheckpoint()
     const usableCheckpoint = checkpoint && checkpoint.executionId === execution.value?.executionId ? checkpoint : null
     const remoteAnswers = execution.value?.answers ?? {}
@@ -265,6 +277,22 @@ async function submitExercise() {
   } finally { submitting.value = false }
 }
 
+async function retryTaskResource() {
+  const resource = task.value?.resources.find(item => item.status === 'FAILED')
+  if (!resource || retryingResource.value) return
+  retryingResource.value = true
+  actionError.value = ''
+  try {
+    await store.retryResource(projectId, resource.resourceId)
+    await store.fetchTask(projectId, taskId)
+    scheduleResourcePoll()
+  } catch (error) {
+    actionError.value = error instanceof Error ? error.message : '资源重试失败，请稍后再试。'
+  } finally {
+    retryingResource.value = false
+  }
+}
+
 function scrollToQuestion(index: number) {
   document.getElementById(`exercise-question-${index}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
@@ -321,7 +349,7 @@ onBeforeUnmount(() => {
       <p v-if="offline" class="task-offline" role="status">当前处于离线状态，修改会暂存在本机，恢复连接后自动同步。</p>
       <section v-if="loading" class="task-loading"><span class="loading-bar" /><span class="loading-bar short" /><span class="loading-block" /></section>
       <section v-else-if="task" class="task-layout">
-        <article ref="reading" class="task-content" @scroll.passive="scheduleCheckpoint"><div class="task-intro"><span>完成标准</span><p>{{ task.completionCriteria }}</p></div><MarkdownRenderer v-if="readingMarkdown" :content="readingMarkdown" /><div v-else-if="task.resources.some(item => item.status === 'GENERATING' || item.status === 'QUEUED')" class="resource-pending">学习资源正在准备，完成后会自动出现在这里。</div><div v-else-if="task.resources.some(item => item.status === 'FAILED')" class="resource-failed">资源准备失败，可以返回工作台重试。</div><section v-if="exerciseItems.length" class="exercise-list"><header class="exercise-heading"><h2>练习题</h2><span>{{ answeredCount }}/{{ exerciseItems.length }} 已作答</span></header><article v-for="(item, index) in exerciseItems" :id="`exercise-question-${index}`" :key="questionIdOf(item, index)" class="exercise-item" :class="{ answered: Boolean(answerDraft[questionIdOf(item, index)]), correct: gradeByIndex.get(index)?.correct, incorrect: exerciseSubmitted && gradeByIndex.get(index) && !gradeByIndex.get(index)?.correct }"><div class="exercise-question"><strong>{{ index + 1 }}. </strong><MarkdownRenderer v-if="questionText(item)" :content="questionText(item)" /><pre v-if="questionCode(item)" class="exercise-code"><code>{{ questionCode(item) }}</code></pre></div><label v-for="option in optionsOf(item)" :key="option"><input v-model="answerDraft[questionIdOf(item, index)]" type="radio" :name="questionName(index)" :value="option" :disabled="exerciseSubmitted" @change="saveAnswers" /> <span>{{ option }}</span></label><div v-if="gradeByIndex.get(index)" class="exercise-feedback"><span>{{ gradeByIndex.get(index)?.correct ? '回答正确' : '回答错误' }}</span><small>正确答案：{{ gradeByIndex.get(index)?.correctAnswer }}</small><MarkdownRenderer v-if="gradeByIndex.get(index)?.explanation" :content="gradeByIndex.get(index)?.explanation || ''" /></div></article></section></article>
+        <article ref="reading" class="task-content" @scroll.passive="scheduleCheckpoint"><div class="task-intro"><span>完成标准</span><p>{{ task.completionCriteria }}</p></div><MarkdownRenderer v-if="readingMarkdown" :content="readingMarkdown" /><div v-else-if="task.resources.some(item => item.status === 'GENERATING' || item.status === 'QUEUED')" class="resource-pending">{{ task.resources.some(item => item.generationStage === 'REPAIRING_FORMAT') ? '正在修复资源格式（1/1），通过校验后会自动展示。' : '学习资源正在准备，完成后会自动出现在这里。' }}</div><div v-else-if="task.resources.some(item => item.status === 'FAILED')" class="resource-failed"><span>资源准备失败，需要手动重试失败的这一项。</span><button type="button" :disabled="retryingResource" @click="retryTaskResource">{{ retryingResource ? '正在重试…' : '重试资源' }}</button></div><section v-if="exerciseItems.length" class="exercise-list"><header class="exercise-heading"><h2>练习题</h2><span>{{ answeredCount }}/{{ exerciseItems.length }} 已作答</span></header><article v-for="(item, index) in exerciseItems" :id="`exercise-question-${index}`" :key="questionIdOf(item, index)" class="exercise-item" :class="{ answered: Boolean(answerDraft[questionIdOf(item, index)]), correct: gradeByIndex.get(index)?.correct, incorrect: exerciseSubmitted && gradeByIndex.get(index) && !gradeByIndex.get(index)?.correct }"><div class="exercise-question"><strong>{{ index + 1 }}. </strong><MarkdownRenderer v-if="questionText(item)" :content="questionText(item)" /><pre v-if="questionCode(item)" class="exercise-code"><code>{{ questionCode(item) }}</code></pre></div><label v-for="option in optionsOf(item)" :key="option"><input v-model="answerDraft[questionIdOf(item, index)]" type="radio" :name="questionName(index)" :value="option" :disabled="exerciseSubmitted" @change="saveAnswers" /> <span>{{ option }}</span></label><div v-if="gradeByIndex.get(index)" class="exercise-feedback"><span>{{ gradeByIndex.get(index)?.correct ? '回答正确' : '回答错误' }}</span><small>正确答案：{{ gradeByIndex.get(index)?.correctAnswer }}</small><MarkdownRenderer v-if="gradeByIndex.get(index)?.explanation" :content="gradeByIndex.get(index)?.explanation || ''" /></div></article></section></article>
         <aside class="task-aside"><div class="progress-card"><span>当前进度</span><strong>{{ Math.round(execution?.progress || 0) }}%</strong><i><b :style="{ width: `${execution?.progress || 0}%` }" /></i><small>有效学习 {{ Math.floor((execution?.accumulatedSeconds || 0) / 60) }} 分钟</small><button class="complete-button" type="button" :disabled="execution?.status === 'COMPLETED'" @click="complete">{{ execution?.status === 'COMPLETED' ? '已提交' : task?.taskType === 'EXERCISE' ? '提交判卷' : isReviewMode ? '完成本次复习' : '完成任务' }}</button><p v-if="submitMessage" class="submit-message" role="alert">{{ submitMessage }}</p><div v-if="task?.taskType === 'EXERCISE'" class="answer-sheet"><header><strong>答题卡</strong><span>{{ answeredCount }}/{{ exerciseItems.length }}</span></header><div class="question-index-grid"><button v-for="(item, index) in exerciseItems" :key="questionIdOf(item, index)" type="button" :class="{ answered: Boolean(answerDraft[questionIdOf(item, index)]) && !gradeByIndex.has(index), correct: gradeByIndex.get(index)?.correct, incorrect: exerciseSubmitted && gradeByIndex.has(index) && !gradeByIndex.get(index)?.correct }" @click="scrollToQuestion(index)">{{ index + 1 }}</button></div><div v-if="exerciseAccuracy != null && exerciseSubmitted" class="accuracy-summary"><span>正确率</span><strong>{{ exerciseAccuracy }}%</strong><small>{{ submittedGrade?.correct || 0 }}/{{ submittedGrade?.total || exerciseItems.length }} 题正确</small></div></div></div><section class="tutor-side-card"><header><span><AppIcon name="robot" :size="18" /></span><div><strong>AI 助教</strong><small>围绕当前任务提问</small></div></header><div class="quick-questions"><button type="button" @click="tutorOpen = true">梳理这道题</button><button type="button" @click="tutorOpen = true">讲解薄弱点</button></div><button class="tutor-entry" type="button" @click="tutorOpen = true"><span>问问当前任务…</span><AppIcon name="arrow-up" :size="15" /></button></section></aside>
       </section>
     </main>
@@ -335,6 +363,7 @@ onBeforeUnmount(() => {
 .exercise-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }.exercise-heading h2 { margin:0; font-size:19px; }.exercise-heading span { color:var(--color-text-muted); font-size:12px; }.exercise-item { scroll-margin-top:24px; border:1px solid var(--color-border, #e2e2df); border-radius:12px; margin-top:10px; padding:16px; background:var(--color-surface, #fff); }.exercise-item.answered { border-color:color-mix(in srgb, var(--color-text) 25%, var(--color-border)); }.exercise-item.correct { border-color:#74b994; background:color-mix(in srgb, #74b994 7%, var(--color-surface)); }.exercise-item.incorrect { border-color:#e59a91; background:color-mix(in srgb, #e59a91 7%, var(--color-surface)); }.exercise-question { line-height:1.65; }.exercise-question strong { margin-right:3px; }.exercise-question :deep(p) { display:inline; margin:0; }.exercise-code { margin:10px 0 0; padding:12px; overflow:auto; border-radius:9px; color:var(--color-text); background:var(--color-bg); font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre-wrap; }.exercise-item label { display:flex; align-items:flex-start; gap:7px; padding:7px 9px; border:1px solid transparent; border-radius:8px; cursor:pointer; }.exercise-item label:hover { border-color:var(--color-border); background:var(--ui-hover-bg); }.exercise-item label input { margin-top:3px; }.exercise-feedback { display:grid; gap:6px; padding-top:10px; border-top:1px solid var(--color-border); }.exercise-feedback > span { color:#2d8556; font-size:12px; font-weight:700; }.exercise-item.incorrect .exercise-feedback > span { color:var(--color-danger); }.exercise-feedback small { color:var(--color-text-muted); }.submit-message { margin:10px 0 0; color:var(--color-danger); font-size:12px; line-height:1.5; }.answer-sheet { margin-top:16px; padding-top:15px; border-top:1px solid var(--color-border); }.answer-sheet header { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }.answer-sheet header span { color:var(--color-text-muted); font-size:12px; }.question-index-grid { display:grid; grid-template-columns:repeat(5, 1fr); gap:6px; }.question-index-grid button { width:100%; aspect-ratio:1; border:1px solid var(--color-border); border-radius:7px; color:var(--color-text-muted); background:transparent; cursor:pointer; }.question-index-grid button.answered { border-color:var(--color-text); color:var(--color-text); background:var(--ui-hover-strong-bg); }.question-index-grid button.correct { border-color:#5ba97c; color:#fff; background:#5ba97c; }.question-index-grid button.incorrect { border-color:#d96b5d; color:#fff; background:#d96b5d; }.accuracy-summary { display:grid; grid-template-columns:auto auto; gap:3px 8px; align-items:baseline; margin-top:14px; padding-top:12px; border-top:1px solid var(--color-border); }.accuracy-summary span,.accuracy-summary small { color:var(--color-text-muted); font-size:11px; }.accuracy-summary strong { font-size:20px; }.accuracy-summary small { grid-column:1/-1; }.tutor-side-card { display:grid; gap:11px; padding:16px; text-align:left; }.tutor-side-card > header { display:grid; grid-template-columns:34px minmax(0,1fr); gap:9px; align-items:center; }.tutor-side-card > header > span { width:32px; height:32px; display:grid; place-items:center; border-radius:9px; background:var(--ui-hover-strong-bg); }.tutor-side-card > header > div { display:grid; gap:3px; }.tutor-side-card > header small { color:var(--color-text-muted); font-size:11px; }.tutor-side-card .quick-questions { display:flex; flex-wrap:wrap; gap:6px; }.tutor-side-card .quick-questions button { padding:7px 9px; border:1px solid var(--color-border); border-radius:8px; color:inherit; background:transparent; font-size:11px; cursor:pointer; }.tutor-entry { width:100%; min-height:40px; display:flex; align-items:center; justify-content:space-between; padding:0 11px; border:1px solid var(--color-border); border-radius:9px; color:var(--color-text-muted); background:var(--color-bg); cursor:pointer; }
 @media (max-width: 780px) { .task-page { padding-inline: 16px; }.task-header { grid-template-columns: 42px 1fr; }.task-header-actions { grid-column: 1 / -1; }.task-layout { grid-template-columns: 1fr; }.task-aside { position: static; }.task-content { max-height: none; padding: 22px 18px; } }
 .question-index-grid button.answered { border-color: var(--color-text); color: var(--color-bg); background: var(--color-text); }
+.resource-failed { display:grid; justify-items:center; gap:12px; }.resource-failed button { min-height:36px; padding:0 14px; border:1px solid var(--color-border); border-radius:9px; color:inherit; background:var(--color-surface); cursor:pointer; }.resource-failed button:disabled { opacity:.55; cursor:default; }
 .tutor-side-card { grid-template-columns: 1fr; }
 .task-page { background: var(--ui-page-canvas-bg); }
 </style>

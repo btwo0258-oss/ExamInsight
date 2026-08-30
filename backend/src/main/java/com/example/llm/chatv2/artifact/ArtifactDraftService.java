@@ -17,10 +17,14 @@ import com.example.llm.chatv2.artifact.ArtifactModels.UpdateArtifactRequest;
 import com.example.llm.chatv2.repository.ChatV2Repository.RunExecutionContext;
 import com.example.llm.integration.ai.AiCallResult;
 import com.example.llm.integration.ai.AiCapabilityRouter;
+import com.example.llm.integration.ai.ProviderCallException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PreDestroy;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -29,7 +33,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
+@Slf4j
 @Service
 public class ArtifactDraftService {
     private static final int MAX_MIND_MAP_NODES = 500;
@@ -42,6 +52,12 @@ public class ArtifactDraftService {
     private final AuthCrypto crypto;
     private final ObjectMapper objectMapper;
     private final TransactionTemplate transactions;
+    private final ExecutorService imageExecutor = new ThreadPoolExecutor(2, 2, 0, TimeUnit.SECONDS,
+            new ArrayBlockingQueue<>(4), runnable -> {
+                Thread thread = new Thread(runnable, "chat-image-generation");
+                thread.setDaemon(true);
+                return thread;
+            }, new ThreadPoolExecutor.AbortPolicy());
 
     public ArtifactDraftService(
             ArtifactDraftRepository repository,
@@ -58,6 +74,18 @@ public class ArtifactDraftService {
         this.crypto = crypto;
         this.objectMapper = objectMapper;
         this.transactions = transactions;
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        imageExecutor.shutdownNow();
+    }
+
+    @Scheduled(fixedDelay = 60_000, initialDelay = 60_000)
+    public void expireInterruptedImages() {
+        // A restart cannot resume an in-flight vendor request safely (it may bill
+        // twice). Leave a retryable failure instead of an eternal loading card.
+        repository.expireStaleImageGeneration();
     }
 
     public ToolResult createDocument(RunExecutionContext context, DocumentDraftInput input) {
@@ -103,21 +131,35 @@ public class ArtifactDraftService {
                 context, Type.IMAGE, input.title(), content, "GENERATING");
         ArtifactRow row = requireOwned(context.userId(), generating.id(), false);
         try {
+            imageExecutor.execute(() -> finishImageGeneration(context, input, width, height, row));
+            return new ToolResult("GENERATING", generating.id(), Type.IMAGE, input.title(), null,
+                    "Image generation is running in the background. The card updates automatically. "
+                            + "Do not call the image tool again for this request or claim the image is ready.");
+        } catch (RejectedExecutionException exception) {
+            transactions.executeWithoutResult(status -> repository.markFailed(row.id(), "IMAGE_QUEUE_FULL"));
+            return new ToolResult("FAILED", generating.id(), Type.IMAGE, input.title(), null,
+                    "Image generation is busy. No provider request was sent; the user may retry later.");
+        }
+    }
+
+    private void finishImageGeneration(RunExecutionContext context, ImageGenerationInput input,
+                                       int width, int height, ArtifactRow row) {
+        try {
             AiCallResult<byte[]> result = ai.generateImage(input.prompt(), width, height);
-            GeneratedAssetWriter.WrittenAsset asset = assetWriter.write(
-                    context.userId(), context.runId(), fileName(input.title(), ".png"),
-                    "image", "image/png", result.value());
-            transactions.executeWithoutResult(status -> repository.markConfirmed(row.id(), asset.versionId()));
-            return new ToolResult("CONFIRMED", generating.id(), Type.IMAGE, input.title(),
-                    asset.assetExternalId(), "Image generated and saved to the user's library.");
+            transactions.executeWithoutResult(status -> {
+                ArtifactRow current = requireOwned(context.userId(), row.externalId(), true);
+                if (!"GENERATING".equals(current.status())) return;
+                GeneratedAssetWriter.WrittenAsset asset = assetWriter.write(
+                        context.userId(), context.runId(), fileName(input.title(), ".png"),
+                        "image", "image/png", result.value());
+                repository.markConfirmed(row.id(), asset.versionId());
+            });
         } catch (RuntimeException exception) {
-            transactions.executeWithoutResult(status -> repository.markFailed(row.id(), "IMAGE_GENERATION_FAILED"));
-            // Keep the failed draft visible to the chat. The caller can render an
-            // honest failure state and the user can retry from the run controls;
-            // returning a tool result also prevents a failed image from looking
-            // like a successful, but missing, asset.
-            return new ToolResult("FAILED", generating.id(), Type.IMAGE, input.title(),
-                    null, "Image generation failed. No file was saved.");
+            String code = exception instanceof ProviderCallException provider
+                    ? "IMAGE_" + provider.category().name() : "IMAGE_GENERATION_FAILED";
+            log.warn("Image generation failed: artifactId={}, code={}, exceptionType={}",
+                    row.externalId(), code, exception.getClass().getSimpleName());
+            transactions.executeWithoutResult(status -> repository.markFailed(row.id(), code));
         }
     }
 

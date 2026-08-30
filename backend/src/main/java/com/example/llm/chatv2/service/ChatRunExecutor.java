@@ -262,7 +262,8 @@ public class ChatRunExecutor {
             return "回答内容过长，请拆分问题后分段生成。";
         }
         return switch (exception.category()) {
-            case QUOTA_EXHAUSTED -> "模型免费额度已用尽，当前无法继续生成。";
+            case QUOTA_EXHAUSTED -> "模型服务额度不足，请检查模型账户的额度。";
+            case TIMEOUT -> "模型响应超时，请稍后重试。";
             case RATE_LIMITED -> "模型请求较多，请稍后重试。";
             case CONTENT_SAFETY -> "本次内容未通过安全检查，请调整问题后重试。";
             case AUTHENTICATION -> "模型服务配置异常，请联系管理员。";

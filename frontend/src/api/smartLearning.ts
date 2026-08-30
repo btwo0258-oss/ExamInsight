@@ -1,7 +1,8 @@
-import { request } from '@/api/request'
+import { request, sessionFetch } from '@/api/request'
 import type {
   SmartLearningJob,
   SmartLearningJobAccepted,
+  SmartLearningJobEvent,
   SmartLearningProject,
   SmartLearningProjectDetail,
   SmartLearningWorkspace,
@@ -127,8 +128,69 @@ export function getSmartLearningJob(jobId: string) {
   return request.get<SmartLearningJob>(`/api/v2/learning/jobs/${jobId}`).then(unwrap)
 }
 
+function parseJobEventBlock(block: string): SmartLearningJobEvent | null {
+  let id: string | null = null
+  let event = 'message'
+  const data: string[] = []
+  for (const line of block.split('\n')) {
+    if (line.startsWith('id:')) id = line.slice(3).trim()
+    else if (line.startsWith('event:')) event = line.slice(6).trim()
+    else if (line.startsWith('data:')) data.push(line.slice(5).trim())
+  }
+  if (!data.length) return null
+  try {
+    const parsed = JSON.parse(data.join('\n'))
+    return {
+      id,
+      event,
+      data: parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : { value: parsed },
+    }
+  } catch {
+    return { id, event, data: { value: data.join('\n') } }
+  }
+}
+
+export async function streamSmartLearningJobEvents(
+  jobId: string,
+  options: {
+    signal: AbortSignal
+    lastEventId?: string | null
+    onEvent: (event: SmartLearningJobEvent) => void
+  },
+) {
+  const headers: Record<string, string> = { Accept: 'text/event-stream' }
+  if (options.lastEventId) headers['Last-Event-ID'] = options.lastEventId
+  const response = await sessionFetch(`/api/v2/learning/jobs/${jobId}/events`, {
+    headers,
+    signal: options.signal,
+  })
+  if (!response.ok || !response.body) throw new Error(`资源进度连接失败（${response.status}）。`)
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  while (true) {
+    const { value, done } = await reader.read()
+    buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, '\n')
+    let boundary = buffer.indexOf('\n\n')
+    while (boundary !== -1) {
+      const event = parseJobEventBlock(buffer.slice(0, boundary))
+      buffer = buffer.slice(boundary + 2)
+      if (event) options.onEvent(event)
+      boundary = buffer.indexOf('\n\n')
+    }
+    if (done) break
+  }
+  const tail = parseJobEventBlock(buffer.trim())
+  if (tail) options.onEvent(tail)
+}
+
 export function prepareSmartLearningResources(projectId: string) {
   return request.post<SmartLearningJobAccepted>(`/api/v2/learning/projects/${projectId}/resources/prepare`).then(unwrap)
+}
+
+export function retrySmartLearningResource(projectId: string, resourceId: string) {
+  return request.post<SmartLearningJobAccepted>(`/api/v2/learning/projects/${projectId}/resources/${resourceId}/retry`).then(unwrap)
 }
 
 export function getSmartLearningWorkspace(projectId: string) {

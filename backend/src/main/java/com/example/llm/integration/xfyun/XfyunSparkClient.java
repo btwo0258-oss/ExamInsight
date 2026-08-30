@@ -31,6 +31,10 @@ public class XfyunSparkClient {
         this.objectMapper = objectMapper;
     }
 
+    public boolean isConfigured() {
+        return config.hasSparkCredentials();
+    }
+
     public String stream(List<Map<String, String>> messages, Long userId, Consumer<String> onDelta) {
         try {
             Map<String, Object> body = new LinkedHashMap<>();

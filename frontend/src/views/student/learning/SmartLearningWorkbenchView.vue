@@ -5,7 +5,7 @@ import StudentShell from '@/components/layout/StudentShell.vue'
 import AppIcon from '@/components/common/AppIcon.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import SmartLearningTutorDrawer from '@/components/learning/SmartLearningTutorDrawer.vue'
-import { getSmartLearningJob, getSmartLearningProject, getSmartLearningWorkspace, prepareSmartLearningResources } from '@/api/smartLearning'
+import { getSmartLearningProject, getSmartLearningWorkspace, prepareSmartLearningResources, retrySmartLearningResource } from '@/api/smartLearning'
 import { useSmartLearningStore } from '@/stores/smartLearning'
 import type { SmartLearningTask } from '@/types/contracts/smartLearning'
 
@@ -23,13 +23,14 @@ const continueChoiceOpen = ref(false)
 const resourceNoticeOpen = ref(false)
 const resourceNotice = ref('')
 let disposed = false
-let pollTimer: number | undefined
 let loadSequence = 0
+let activeContextEpoch = 0
 
 const workspace = computed(() => store.workspace)
 const tasks = computed(() => workspace.value?.tasks ?? [])
 const resources = computed(() => workspace.value?.resources ?? [])
 const pendingResources = computed(() => resources.value.filter(item => ['QUEUED', 'GENERATING'].includes(item.status)))
+const queuedResources = computed(() => resources.value.filter(item => item.status === 'QUEUED'))
 const failedResources = computed(() => resources.value.filter(item => item.status === 'FAILED'))
 const sourceAssetIds = computed(() => {
   const assets = store.current?.sources?.assets
@@ -54,12 +55,18 @@ const resourceGroups = computed(() => (['READING', 'EXPLANATION', 'EXERCISE', 'R
   const groupTasks = tasks.value.filter(task => task.taskType === type)
   const taskIds = new Set(groupTasks.map(task => task.taskId))
   const groupResources = resources.value.filter(resource => taskIds.has(resource.taskId))
+  const generatingResources = groupResources.filter(item => ['QUEUED', 'GENERATING'].includes(item.status))
   return {
     type,
     label: taskTypeLabel(type),
     count: groupResources.length,
     ready: groupResources.filter(item => item.status === 'READY').length,
-    pending: groupResources.filter(item => ['QUEUED', 'GENERATING'].includes(item.status)).length,
+    pending: generatingResources.length,
+    repairing: generatingResources.filter(item => item.generationStage === 'REPAIRING_FORMAT').length,
+    failed: groupResources.filter(item => item.status === 'FAILED').length,
+    generationProgress: groupResources.length
+      ? Math.round(groupResources.filter(item => item.status === 'READY').length / groupResources.length * 100)
+      : 0,
   }
 }))
 
@@ -81,12 +88,19 @@ const profileItems = computed(() => {
 const taskTypeLabel = (type: string) => ({ READING: '阅读', EXERCISE: '练习', REVIEW: '复盘', EXPLANATION: '讲解' }[type] ?? '学习')
 const taskIcon = (type: string) => ({ READING: 'file', EXERCISE: 'check', REVIEW: 'refresh-single', EXPLANATION: 'message-square' }[type] ?? 'file')
 
-function openTask(task?: SmartLearningTask) {
-  if (task) void router.push(`/learning/${projectId.value}/task/${task.taskId}`)
+function openTask(task?: SmartLearningTask, startAttempt = false) {
+  if (!task) return
+  void router.push({
+    path: `/learning/${projectId.value}/task/${task.taskId}`,
+    query: startAttempt ? { review: '1' } : undefined,
+  })
 }
 
 function continueLearning() {
-  if (continueTask.value) return openTask(continueTask.value)
+  if (continueTask.value) {
+    const hasActiveAttempt = workspace.value?.activeExecution?.taskId === continueTask.value.taskId
+    return openTask(continueTask.value, hasActiveAttempt && Boolean(continueTask.value.completedExecution))
+  }
   continueChoiceOpen.value = true
 }
 
@@ -148,6 +162,7 @@ function askTutor(question = '') {
 
 function isActiveLoad(targetProjectId: string, sequence: number) {
   return !disposed && sequence === loadSequence && targetProjectId === projectId.value
+    && store.isProjectContext(targetProjectId, activeContextEpoch)
 }
 
 async function refreshWorkspace(targetProjectId = projectId.value, sequence = loadSequence) {
@@ -157,25 +172,18 @@ async function refreshWorkspace(targetProjectId = projectId.value, sequence = lo
   return nextWorkspace
 }
 
-function schedulePoll(jobId: string, targetProjectId: string, sequence: number) {
+function followJob(jobId: string, targetProjectId: string, sequence: number) {
   if (!isActiveLoad(targetProjectId, sequence)) return
-  if (pollTimer) window.clearTimeout(pollTimer)
-  pollTimer = window.setTimeout(async () => {
-    if (!isActiveLoad(targetProjectId, sequence)) return
-    try {
-      const job = await getSmartLearningJob(jobId)
-      if (!isActiveLoad(targetProjectId, sequence)) return
-      await refreshWorkspace(targetProjectId, sequence)
-      if (!isActiveLoad(targetProjectId, sequence)) return
-      if (['QUEUED', 'RUNNING'].includes(job.status)) return schedulePoll(jobId, targetProjectId, sequence)
+  void store.waitForJob(jobId, targetProjectId).then(() => {
+    if (isActiveLoad(targetProjectId, sequence)) {
       preparing.value = false
-      if (job.status === 'FAILED') actionError.value = job.errorMessage || '学习资源准备失败，可以重新尝试。'
-    } catch (error) {
-      if (!isActiveLoad(targetProjectId, sequence)) return
+    }
+  }).catch((error) => {
+    if (isActiveLoad(targetProjectId, sequence)) {
       preparing.value = false
       actionError.value = error instanceof Error ? error.message : '资源状态同步失败，请刷新后重试。'
     }
-  }, 1200)
+  })
 }
 
 async function ensureResourcePreparation(targetProjectId = projectId.value, sequence = loadSequence) {
@@ -183,15 +191,15 @@ async function ensureResourcePreparation(targetProjectId = projectId.value, sequ
   const active = store.current.activeJob
   if (active?.kind === 'RESOURCE_PREPARATION' && ['QUEUED', 'RUNNING'].includes(active.status)) {
     preparing.value = true
-    schedulePoll(active.jobId, targetProjectId, sequence)
+    followJob(active.jobId, targetProjectId, sequence)
     return
   }
-  if (!resources.value.length || pendingResources.value.length || failedResources.value.length) {
+  if (!resources.value.length || queuedResources.value.length) {
     try {
       preparing.value = true
       const accepted = await prepareSmartLearningResources(targetProjectId)
       if (!isActiveLoad(targetProjectId, sequence)) return
-      schedulePoll(accepted.jobId, targetProjectId, sequence)
+      followJob(accepted.jobId, targetProjectId, sequence)
     } catch (error) {
       if (!isActiveLoad(targetProjectId, sequence)) return
       preparing.value = false
@@ -200,9 +208,24 @@ async function ensureResourcePreparation(targetProjectId = projectId.value, sequ
   }
 }
 
+async function retryFailedResource(resourceId: string) {
+  const targetProjectId = projectId.value
+  const sequence = loadSequence
+  if (!isActiveLoad(targetProjectId, sequence) || preparing.value) return
+  actionError.value = ''
+  try {
+    preparing.value = true
+    const accepted = await retrySmartLearningResource(targetProjectId, resourceId)
+    if (!isActiveLoad(targetProjectId, sequence)) return
+    followJob(accepted.jobId, targetProjectId, sequence)
+  } catch (error) {
+    if (!isActiveLoad(targetProjectId, sequence)) return
+    preparing.value = false
+    actionError.value = error instanceof Error ? error.message : '失败资源没有开始重试，请稍后再试。'
+  }
+}
+
 function resetWorkbenchState() {
-  if (pollTimer) window.clearTimeout(pollTimer)
-  pollTimer = undefined
   loading.value = true
   actionError.value = ''
   preparing.value = false
@@ -217,6 +240,7 @@ function resetWorkbenchState() {
 
 async function load(targetProjectId: string) {
   const sequence = ++loadSequence
+  activeContextEpoch = store.beginProjectContext(targetProjectId)
   resetWorkbenchState()
   try {
     const project = await getSmartLearningProject(targetProjectId)
@@ -244,7 +268,6 @@ watch(projectId, nextProjectId => {
 onBeforeUnmount(() => {
   disposed = true
   loadSequence += 1
-  if (pollTimer) window.clearTimeout(pollTimer)
 })
 </script>
 
@@ -279,9 +302,10 @@ onBeforeUnmount(() => {
             <header class="panel-head"><div><AppIcon name="folder" :size="21" /><h2>资源包</h2></div><span>{{ resources.filter(item => item.status === 'READY').length }}/{{ resources.length }}</span></header>
             <p class="panel-description">按学习环节分类收好，进入分组后再查看每份资料。</p>
             <div class="resource-groups">
-              <button v-for="group in resourceGroups" :key="group.type" type="button" @click="openResourceGroup(group.type)"><span class="task-icon"><AppIcon :name="taskIcon(group.type)" :size="16" /></span><span><strong>{{ group.label }}资料</strong><small>{{ group.pending ? `${group.pending} 项准备中` : group.count ? `${group.ready}/${group.count} 项已就绪` : '暂无资料' }}</small></span><AppIcon name="chevron-right" :size="15" /></button>
+              <button v-for="group in resourceGroups" :key="group.type" type="button" @click="openResourceGroup(group.type)"><span class="task-icon"><AppIcon :name="taskIcon(group.type)" :size="16" /></span><span><strong>{{ group.label }}资料</strong><small>{{ group.repairing ? `${group.repairing} 项正在修复格式（1/1）` : group.failed ? `${group.failed} 项准备失败` : group.pending ? `${group.pending} 项准备中 · ${group.ready}/${group.count} 项已就绪` : group.count ? `${group.ready}/${group.count} 项已就绪` : '暂无资料' }}</small><i v-if="group.pending" class="resource-progress"><b :style="{ width: `${group.generationProgress}%` }" /></i></span><AppIcon name="chevron-right" :size="15" /></button>
             </div>
             <div v-if="preparing && !resources.length" class="resource-group-skeleton"><i v-for="n in 4" :key="n" /></div>
+            <div v-if="failedResources.length" class="failed-resource-list"><article v-for="resource in failedResources" :key="resource.resourceId"><span><strong>{{ resource.title }}</strong><small>{{ resource.errorMessage || '资源准备失败' }}</small></span><button type="button" :disabled="preparing" @click="retryFailedResource(resource.resourceId)">{{ preparing ? '处理中' : '重试' }}</button></article></div>
             <button class="panel-action" type="button" @click="openResourceHub">进入资源</button>
           </section>
 
@@ -314,7 +338,7 @@ onBeforeUnmount(() => {
     <SmartLearningTutorDrawer v-if="tutorOpen" :open="tutorOpen" :project-id="projectId" :project-name="workspace?.projectName || store.current?.name || '学习项目'" :source-asset-ids="sourceAssetIds" :initial-question="tutorQuestion" :initial-request-id="tutorRequestId" @close="tutorOpen = false" />
     <ConfirmDialog :open="resourceNoticeOpen" title="资源暂不可查看" :message="resourceNotice" confirm-text="知道了" cancel-text="" @close="resourceNoticeOpen = false" @confirm="resourceNoticeOpen = false" />
     <div v-if="continueChoiceOpen" class="choice-backdrop" role="presentation" @click.self="continueChoiceOpen = false">
-      <section class="choice-dialog" role="dialog" aria-modal="true" aria-labelledby="continue-choice-title"><button class="choice-close" type="button" aria-label="关闭" @click="continueChoiceOpen = false">×</button><span>今日任务已完成</span><h2 id="continue-choice-title">接下来想怎么学？</h2><p>原来的完成记录不会被重置，你可以提前学习新内容，也可以复习已经学过的内容。</p><div class="choice-options"><button type="button" @click="chooseFutureLearning"><AppIcon name="arrow-right" :size="18" /><strong>{{ nextFutureTask ? '提前学习下一项' : '继续学习新内容' }}</strong><small>{{ nextFutureTask ? `将开始「${nextFutureTask.title}」，不改变原计划日期` : '生成扩展计划，确认后追加到当前项目' }}</small></button><button type="button" :disabled="!reviewTask" @click="chooseReview"><AppIcon name="refresh-single" :size="18" /><strong>复习已学内容</strong><small>{{ reviewTask ? `从「${reviewTask.title}」开始复习` : '完成至少一个任务后可以复习' }}</small></button></div></section>
+      <section class="choice-dialog" role="dialog" aria-modal="true" aria-labelledby="continue-choice-title"><button class="choice-close" type="button" aria-label="关闭" @click="continueChoiceOpen = false">×</button><span>今日任务已完成</span><h2 id="continue-choice-title">接下来想怎么学？</h2><p>原来的完成记录不会被重置，你可以提前学习新内容，也可以复习已经学过的内容。</p><div class="choice-options"><button type="button" @click="chooseFutureLearning"><AppIcon name="notebook" :size="18" /><strong>{{ nextFutureTask ? '提前学习下一项' : '继续学习新内容' }}</strong><small>{{ nextFutureTask ? `将开始「${nextFutureTask.title}」，不改变原计划日期` : '生成扩展计划，确认后追加到当前项目' }}</small></button><button type="button" :disabled="!reviewTask" @click="chooseReview"><AppIcon name="refresh-single" :size="18" /><strong>复习已学内容</strong><small>{{ reviewTask ? `从「${reviewTask.title}」开始复习` : '完成至少一个任务后可以复习' }}</small></button></div></section>
     </div>
   </StudentShell>
 </template>
@@ -329,19 +353,21 @@ onBeforeUnmount(() => {
 .header-actions { display: flex; gap: 8px; }.header-actions button, .panel-action { min-height: 36px; padding: 0 13px; border: 1px solid var(--color-border); border-radius: 9px; color: inherit; background: var(--color-surface); cursor: pointer; }.header-actions button:hover, .panel-action:hover { background: var(--ui-hover-bg); }
 .workbench-error { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 14px; padding: 11px 14px; border: 1px solid color-mix(in srgb, var(--color-danger) 35%, var(--color-border)); border-radius: 10px; color: var(--color-danger); background: var(--color-surface); }.workbench-error button { border: 0; color: inherit; background: transparent; cursor: pointer; }
 .workspace-grid { display: grid; grid-template-columns: minmax(440px, 1.55fr) minmax(280px, .82fr) minmax(300px, .9fr); align-items: start; gap: 16px; }.workspace-column { display: grid; gap: 16px; min-width: 0; }
-.panel { min-width: 0; overflow: hidden; border: 1px solid var(--color-border); border-radius: 15px; background: var(--color-surface); box-shadow: var(--shadow-sm); }.path-panel { min-height: 680px; padding: 22px; }.resource-panel, .wrong-card, .profile-panel, .tutor-card { padding: 19px; }
+.panel { min-width: 0; overflow: hidden; border: 1px solid var(--color-border); border-radius: 15px; background: var(--color-surface); box-shadow: var(--shadow-sm); }.path-panel { padding: 22px; }.resource-panel, .wrong-card, .profile-panel, .tutor-card { padding: 19px; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }.panel-head > div { display: flex; align-items: center; gap: 9px; }.panel-head h2 { margin: 0; font-size: 17px; }.panel-head > span { color: var(--color-text-muted); font-size: 12px; }
 .panel-description { margin: 7px 0 16px; color: var(--color-text-muted); font-size: 12px; line-height: 1.55; }.empty-copy { color: var(--color-text-muted); font-size: 13px; }
 .path-summary { display: grid; grid-template-columns: minmax(150px, auto) minmax(100px, 1fr) auto; align-items: center; gap: 14px; margin: 14px 0 22px; padding: 12px 14px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); }.path-summary-copy { display: grid; grid-template-columns: auto auto; align-items: baseline; gap: 2px 8px; }.path-summary-copy span, .path-summary-copy small { color: var(--color-text-muted); font-size: 11px; }.path-summary-copy strong { font-size: 19px; }.path-summary-copy small { grid-column: 1 / -1; }.path-summary > i { height: 6px; overflow: hidden; border-radius: 99px; background: var(--color-border); }.path-summary > i b { display: block; height: 100%; border-radius: inherit; background: var(--color-text); }.path-summary > button { display: flex; min-height: 34px; align-items: center; gap: 6px; padding: 0 12px; border: 0; border-radius: 9px; color: var(--color-on-primary, #fff); background: var(--color-primary, #303030); cursor: pointer; }
-.task-group + .task-group { margin-top: 24px; }.task-group h3 { margin: 0 0 10px; font-size: 13px; }.task-row { width: 100%; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 62px; padding: 9px 4px; border: 0; border-top: 1px solid var(--color-border); color: inherit; background: transparent; text-align: left; cursor: pointer; }.task-row:hover { background: var(--ui-hover-bg); }.task-icon { width: 31px; height: 31px; display: grid; place-items: center; border-radius: 9px; background: var(--ui-hover-strong-bg); }.task-copy { min-width: 0; display: grid; gap: 3px; }.task-copy strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }.task-copy small, .task-row em { color: var(--color-text-muted); font-size: 11px; font-style: normal; }.task-row em.done { color: #287756; }
+.task-group + .task-group { margin-top: 24px; }.task-group h3 { margin: 0 0 10px; font-size: 13px; }.task-row { position: relative; isolation: isolate; width: 100%; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 62px; padding: 9px 4px; border: 0; border-top: 1px solid var(--color-border); color: inherit; background: transparent; text-align: left; cursor: pointer; }.task-row::before { position: absolute; inset: 2px -2px; z-index: -1; border-radius: 10px; background: transparent; content: ''; pointer-events: none; transition: background-color .15s ease; }.task-row:hover::before { background: var(--ui-hover-bg); }.task-icon { width: 31px; height: 31px; display: grid; place-items: center; border-radius: 9px; background: var(--ui-hover-strong-bg); }.task-copy { min-width: 0; display: grid; gap: 3px; }.task-copy strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }.task-copy small, .task-row em { color: var(--color-text-muted); font-size: 11px; font-style: normal; }.task-row em.done { color: #287756; }
 .resource-list { display: grid; gap: 8px; }.resource-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 58px; padding: 9px; border: 1px solid var(--color-border); border-radius: 10px; }.resource-row > span { width: 31px; height: 31px; display: grid; place-items: center; border-radius: 8px; background: var(--ui-hover-bg); }.resource-row > div { min-width: 0; display: grid; gap: 3px; }.resource-row strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }.resource-row small, .resource-row em { color: var(--color-text-muted); font-size: 10px; font-style: normal; }.resource-row em.is-ready { color: #287756; }.resource-row em.is-failed { color: var(--color-danger); }.resource-panel .panel-action, .wrong-card .panel-action { width: 100%; margin-top: 14px; }
 .resource-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }.resource-groups > button { min-width: 0; display: grid; grid-template-columns: 32px minmax(0, 1fr) 15px; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--color-border); border-radius: 11px; color: inherit; background: transparent; text-align: left; cursor: pointer; }.resource-groups > button:hover { border-color: color-mix(in srgb, var(--color-text) 35%, var(--color-border)); background: var(--ui-hover-bg); }.resource-groups > button > span:nth-child(2) { min-width: 0; display: grid; gap: 3px; }.resource-groups strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }.resource-groups small { color: var(--color-text-muted); font-size: 10px; }.resource-group-skeleton { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }.resource-group-skeleton i { height: 58px; border-radius: 11px; background: var(--ui-hover-bg); animation: pulse 1.2s infinite; }
+.resource-progress { width:100%; height:3px; overflow:hidden; border-radius:999px; background:var(--ui-hover-strong-bg); }.resource-progress b { display:block; height:100%; border-radius:inherit; background:var(--color-text); transition:width .35s ease; }
+.failed-resource-list { display:grid; gap:7px; margin-top:10px; }.failed-resource-list article { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:9px; padding:9px 10px; border:1px solid color-mix(in srgb, var(--color-danger) 28%, var(--color-border)); border-radius:10px; }.failed-resource-list article > span { min-width:0; display:grid; gap:3px; }.failed-resource-list strong,.failed-resource-list small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.failed-resource-list strong { font-size:11px; }.failed-resource-list small { color:var(--color-danger); font-size:10px; }.failed-resource-list button { min-height:30px; padding:0 10px; border:1px solid var(--color-border); border-radius:8px; color:inherit; background:var(--color-surface); cursor:pointer; }.failed-resource-list button:disabled { opacity:.55; cursor:default; }
 .choice-backdrop { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 20px; background: rgba(0,0,0,.32); backdrop-filter: blur(2px); }.choice-dialog { position: relative; width: min(560px, 100%); padding: 24px; border: 1px solid var(--color-border); border-radius: 18px; background: var(--color-surface); box-shadow: 0 18px 60px rgba(0,0,0,.18); }.choice-dialog > span { color: var(--color-text-muted); font-size: 12px; font-weight: 700; }.choice-dialog h2 { margin: 5px 0 8px; font-size: 23px; }.choice-dialog > p { margin: 0 32px 20px 0; color: var(--color-text-muted); line-height: 1.6; }.choice-close { position: absolute; top: 14px; right: 14px; width: 32px; height: 32px; border: 0; border-radius: 8px; color: inherit; background: transparent; font-size: 24px; cursor: pointer; }.choice-close:hover { background: var(--ui-hover-bg); }.choice-options { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }.choice-options button { display: grid; grid-template-columns: 22px 1fr; gap: 5px 9px; min-height: 116px; padding: 16px; border: 1px solid var(--color-border); border-radius: 13px; color: inherit; background: transparent; text-align: left; cursor: pointer; }.choice-options button:hover { border-color: var(--color-text); background: var(--ui-hover-bg); }.choice-options strong { align-self: center; }.choice-options small { grid-column: 1 / -1; color: var(--color-text-muted); line-height: 1.5; }.choice-options button:disabled { opacity: .5; cursor: default; }
 .wrong-card .metric { display: block; margin: 8px 0 4px; font-size: 27px; }.wrong-card .metric small { color: var(--color-text-muted); font-size: 12px; }.wrong-card > p:not(.panel-description) { margin: 0; color: var(--color-text-muted); font-size: 12px; }
 .profile-list { display: grid; gap: 0; }.profile-list article { display: grid; gap: 4px; padding: 11px 0; border-top: 1px solid var(--color-border); }.profile-list span { color: var(--color-text-muted); font-size: 11px; }.profile-list strong { overflow-wrap: anywhere; font-size: 13px; }
 .quick-questions { display: flex; flex-wrap: wrap; gap: 6px; }.quick-questions button { padding: 7px 9px; border: 1px solid var(--color-border); border-radius: 8px; color: inherit; background: transparent; font-size: 11px; cursor: pointer; }.tutor-entry { width: 100%; min-height: 42px; display: flex; align-items: center; justify-content: space-between; margin-top: 12px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: 10px; color: var(--color-text-muted); background: var(--color-bg); cursor: pointer; }
-.skeleton { display: grid; gap: 13px; padding: 22px; }.skeleton i, .skeleton b, .resource-row-skeleton b, .resource-row-skeleton span { display: block; border-radius: 7px; background: linear-gradient(90deg, var(--color-hover), var(--color-surface), var(--color-hover)); background-size: 200% 100%; animation: shimmer 1.3s infinite; }.skeleton i { width: 34%; height: 17px; }.skeleton i.wide { width: 70%; height: 10px; }.skeleton b { height: 58px; }.path-skeleton { min-height: 680px; }.skeleton.small { min-height: 210px; }.resource-row-skeleton > div b:first-child { width: 80%; height: 10px; }.resource-row-skeleton > div b:last-child { width: 45%; height: 7px; margin-top: 7px; }
+.skeleton { display: grid; gap: 13px; padding: 22px; }.skeleton i, .skeleton b, .resource-row-skeleton b, .resource-row-skeleton span { display: block; border-radius: 7px; background: linear-gradient(90deg, var(--color-hover), var(--color-surface), var(--color-hover)); background-size: 200% 100%; animation: shimmer 1.3s infinite; }.skeleton i { width: 34%; height: 17px; }.skeleton i.wide { width: 70%; height: 10px; }.skeleton b { height: 58px; }.skeleton.small { min-height: 210px; }.resource-row-skeleton > div b:first-child { width: 80%; height: 10px; }.resource-row-skeleton > div b:last-child { width: 45%; height: 7px; margin-top: 7px; }
 @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 @media (max-width: 1120px) { .workspace-grid { grid-template-columns: minmax(400px, 1.35fr) minmax(280px, .9fr); }.workspace-column:last-child { grid-column: 1 / -1; grid-template-columns: 1fr 1fr; } }
-@media (max-width: 760px) { .workbench-page { padding-inline: 16px; }.workbench-header { grid-template-columns: 42px 1fr; }.header-actions { grid-column: 1 / -1; }.workspace-grid { grid-template-columns: 1fr; }.workspace-column:last-child { grid-column: auto; grid-template-columns: 1fr; }.path-panel { min-height: auto; }.path-summary { grid-template-columns: 1fr auto; }.path-summary > i { grid-column: 1 / -1; grid-row: 2; }.path-summary > button { grid-column: 2; grid-row: 1; }.choice-options, .resource-groups { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .workbench-page { padding-inline: 16px; }.workbench-header { grid-template-columns: 42px 1fr; }.header-actions { grid-column: 1 / -1; }.workspace-grid { grid-template-columns: 1fr; }.workspace-column:last-child { grid-column: auto; grid-template-columns: 1fr; }.path-summary { grid-template-columns: 1fr auto; }.path-summary > i { grid-column: 1 / -1; grid-row: 2; }.path-summary > button { grid-column: 2; grid-row: 1; }.choice-options, .resource-groups { grid-template-columns: 1fr; } }
 </style>

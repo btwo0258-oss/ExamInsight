@@ -1251,8 +1251,8 @@ public class ChatV2Repository {
         if (modelId == null) {
             return;
         }
-        long inputTokens = usageLong(result.usage(), "prompt_tokens", "input_tokens");
-        long outputTokens = usageLong(result.usage(), "completion_tokens", "output_tokens");
+        long inputTokens = usageLong(result.usage(), "prompt_tokens", "input_tokens", "promptTokens", "inputTokens");
+        long outputTokens = usageLong(result.usage(), "completion_tokens", "output_tokens", "completionTokens", "outputTokens");
         String requestId = usageString(result.usage(), "request_id", "requestId");
         Instant completedAt = Instant.now();
         jdbc.update("""

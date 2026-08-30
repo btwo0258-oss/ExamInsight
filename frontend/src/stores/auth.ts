@@ -15,6 +15,7 @@ import {
 } from '@/api/v2Auth'
 import { useAssetLibraryV2Store } from '@/stores/assetLibraryV2'
 import { useChatV2Store } from '@/stores/chatV2'
+import { useSmartLearningStore } from '@/stores/smartLearning'
 
 export type User = {
   id: string
@@ -45,6 +46,7 @@ export const useAuthStore = defineStore('auth', () => {
   function clearBusinessStores() {
     useChatV2Store().clear()
     useAssetLibraryV2Store().clear()
+    useSmartLearningStore().clear()
   }
 
   function expireLocalSession() {

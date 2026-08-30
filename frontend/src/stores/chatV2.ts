@@ -186,8 +186,11 @@ export const useChatV2Store = defineStore('chatV2', () => {
   let pendingTurn: PendingTurn | null = null
   let cancelRequested = false
   let listRequest: Promise<Awaited<ReturnType<typeof api.listConversations>>> | null = null
+  let listGeneration = 0
+  let detailGeneration = 0
   const titleRefreshTimers = new Map<string, number>()
   const artifactGenerations = new Map<string, string>()
+  const artifactPolls = new Map<string, AbortController>()
   const artifactReplacements = new Map<string, string>()
 
   function optimisticArtifact(
@@ -249,10 +252,12 @@ export const useChatV2Store = defineStore('chatV2', () => {
     }
     if (listRequest) return listRequest
     listLoading.value = true
+    const generation = listGeneration
     const request = api.listConversations(append ? nextCursor.value : null)
     listRequest = request
     try {
       const page = await request
+      if (generation !== listGeneration) return page
       const merged = append ? [...conversations.value, ...page.items] : page.items
       const unique = merged.filter((item, index, all) => (
         all.findIndex(candidate => candidate.id === item.id) === index
@@ -262,7 +267,7 @@ export const useChatV2Store = defineStore('chatV2', () => {
       return page
     } finally {
       if (listRequest === request) listRequest = null
-      listLoading.value = false
+      if (generation === listGeneration) listLoading.value = false
     }
   }
 
@@ -421,6 +426,9 @@ export const useChatV2Store = defineStore('chatV2', () => {
   }
 
   async function load(conversationId: string) {
+    const generation = ++detailGeneration
+    artifactPolls.forEach(controller => controller.abort())
+    artifactPolls.clear()
     loading.value = true
     error.value = ''
     try {
@@ -428,6 +436,7 @@ export const useChatV2Store = defineStore('chatV2', () => {
         fetchMessagesPage(conversationId),
         api.listArtifacts(conversationId),
       ])
+      if (generation !== detailGeneration) return page
       const visibleMessages = activeConversation.value?.id === conversationId ? messages.value : []
       activeConversation.value = page.conversation
       messages.value = retainCancelledContent(page.messages, visibleMessages)
@@ -446,10 +455,10 @@ export const useChatV2Store = defineStore('chatV2', () => {
       if (running?.runId) await resume(running.runId, running.id)
       return page
     } catch (cause) {
-      error.value = api.chatError(cause, '加载对话失败。').message
+      if (generation === detailGeneration) error.value = api.chatError(cause, '加载对话失败。').message
       throw cause
     } finally {
-      loading.value = false
+      if (generation === detailGeneration) loading.value = false
     }
   }
 
@@ -515,19 +524,49 @@ export const useChatV2Store = defineStore('chatV2', () => {
   }
 
   async function loadArtifactEventually(artifactId: string) {
+    const generation = detailGeneration
+    const conversationId = activeConversation.value?.id
     // The artifact.created event can arrive just before the transaction is
     // visible to the detail endpoint. Retry a few short times so the chat card
     // appears immediately instead of waiting for a later full conversation reload.
     for (let attempt = 0; attempt < 6; attempt += 1) {
       try {
         const item = await api.getArtifact(artifactId)
-        if (item.conversationId === activeConversation.value?.id) upsertArtifact(item)
+        if (generation !== detailGeneration || conversationId !== activeConversation.value?.id) return null
+        if (item.conversationId === conversationId) upsertArtifact(item)
         return item
       } catch {
         if (attempt < 5) await new Promise(resolve => window.setTimeout(resolve, 350))
       }
     }
     return null
+  }
+
+  function followArtifact(item: Artifact) {
+    if (item.status !== 'GENERATING' || item.id.startsWith('optimistic-artifact-')
+      || artifactPolls.has(item.id) || item.conversationId !== activeConversation.value?.id) return
+    const controller = new AbortController()
+    const generation = detailGeneration
+    artifactPolls.set(item.id, controller)
+    void (async () => {
+      try {
+        // Only refresh this card; the finished chat stream and messages stay put.
+        // Backend expires interrupted image jobs after 15 minutes.
+        for (let attempt = 0; attempt < 340 && !controller.signal.aborted; attempt += 1) {
+          await wait(attempt < 30 ? 1_500 : 3_000, controller.signal)
+          if (controller.signal.aborted || generation !== detailGeneration
+            || item.conversationId !== activeConversation.value?.id) return
+          const latest = await api.getArtifact(item.id).catch(() => null)
+          if (controller.signal.aborted || generation !== detailGeneration
+            || item.conversationId !== activeConversation.value?.id) return
+          if (!latest) continue
+          upsertArtifact(latest)
+          if (latest.status !== 'GENERATING') return
+        }
+      } finally {
+        if (artifactPolls.get(item.id) === controller) artifactPolls.delete(item.id)
+      }
+    })()
   }
 
   function handleEvent(event: ChatStreamEvent) {
@@ -964,6 +1003,7 @@ export const useChatV2Store = defineStore('chatV2', () => {
     if (!previous || shouldReplaceArtifact(previous, item)) {
       upsert(artifacts.value, item, value => value.id)
     }
+    followArtifact(item)
   }
 
   function replaceArtifacts(items: Artifact[]) {
@@ -978,16 +1018,20 @@ export const useChatV2Store = defineStore('chatV2', () => {
     artifacts.value = [...merged.values()].sort((left, right) => (
       right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id)
     ))
+    items.forEach(followArtifact)
   }
 
   async function refreshArtifacts(conversationId = activeConversation.value?.id) {
     if (!conversationId) return artifacts.value
+    const generation = detailGeneration
     const latest = await api.listArtifacts(conversationId)
-    replaceArtifacts(latest)
+    if (generation === detailGeneration && conversationId === activeConversation.value?.id) replaceArtifacts(latest)
     return artifacts.value
   }
 
   function clearActive() {
+    artifactPolls.forEach(controller => controller.abort())
+    artifactPolls.clear()
     streamController?.abort()
     streamController = null
     activeConversation.value = null
@@ -1012,6 +1056,10 @@ export const useChatV2Store = defineStore('chatV2', () => {
   }
 
   function clear() {
+    listGeneration += 1
+    detailGeneration += 1
+    listRequest = null
+    listLoading.value = false
     titleRefreshTimers.forEach(timer => window.clearTimeout(timer))
     titleRefreshTimers.clear()
     clearActive()

@@ -162,6 +162,15 @@ public class ArtifactDraftRepository {
                 """, draftId);
     }
 
+    public void expireStaleImageGeneration() {
+        jdbc.update("""
+                UPDATE artifact_draft
+                   SET status = 'FAILED', error_code = 'IMAGE_GENERATION_INTERRUPTED', row_version = row_version + 1
+                 WHERE artifact_type = 'IMAGE' AND status = 'GENERATING'
+                   AND updated_at < CURRENT_TIMESTAMP(3) - INTERVAL 15 MINUTE
+                """);
+    }
+
     public void markFailed(long draftId, String errorCode) {
         jdbc.update("""
                 UPDATE artifact_draft

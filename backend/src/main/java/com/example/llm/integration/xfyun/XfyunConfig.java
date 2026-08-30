@@ -68,6 +68,10 @@ public class XfyunConfig {
         return apiKey.trim() + ":" + apiSecret.trim();
     }
 
+    public boolean hasSparkCredentials() {
+        return !isBlank(sparkApiPassword) || hasApiCredentials();
+    }
+
     public void requireApiCredentials() {
         if (!hasApiCredentials()) {
             throw new IllegalStateException("讯飞服务未配置，请设置 XFYUN_APP_ID、XFYUN_API_KEY 和 XFYUN_API_SECRET");

@@ -1,7 +1,7 @@
 package com.example.llm.learning;
 
 import com.example.llm.auth.security.AuthCrypto;
-import com.example.llm.integration.ai.AiCapabilityRouter;
+import com.example.llm.learning.service.LearningGenerationService;
 import com.example.llm.learning.api.SmartLearningDtos;
 import com.example.llm.learning.repository.SmartLearningRepository;
 import com.example.llm.learning.repository.SmartLearningRepository.ProjectRecord;
@@ -24,8 +24,9 @@ class SmartLearningDraftTest {
     @BeforeEach void setup() {
         repository = mock(SmartLearningRepository.class);
         when(repository.writeJson(any())).thenAnswer(invocation -> new ObjectMapper().writeValueAsString(invocation.getArgument(0)));
-        service = new SmartLearningApplicationService(repository, mock(AiCapabilityRouter.class), new ObjectMapper(),
-                mock(AuthCrypto.class), mock(com.example.llm.chatv2.repository.ChatV2Repository.class));
+        service = new SmartLearningApplicationService(repository, mock(LearningGenerationService.class), new ObjectMapper(),
+                mock(AuthCrypto.class), mock(com.example.llm.chatv2.repository.ChatV2Repository.class),
+                mock(com.example.llm.chatv2.stream.AiRunEventBus.class));
         when(repository.findLatestJob(1L, "project")).thenReturn(Optional.empty());
     }
     @AfterEach void close() { service.shutdown(); }

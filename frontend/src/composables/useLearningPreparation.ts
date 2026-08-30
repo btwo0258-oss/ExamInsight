@@ -247,6 +247,7 @@ export function useLearningPreparation(projectId: string) {
   const jobForStep = computed(() => activeStep.value === 2 ? 'scope' : activeStep.value === 3 ? 'diagnosis' : activeStep.value === 4 ? 'plan' : '')
   const jobError = computed(() => jobIssueKind.value === jobForStep.value ? jobIssue.value : '')
   const isGenerating = computed(() => Boolean(pendingJob.value && pendingJob.value === jobForStep.value))
+  const generationStage = computed(() => detail.value?.activeJob?.status === 'RUNNING' ? asText(detail.value.activeJob.result?.generationStage) : '')
   const jobUnresolved = computed(() => Boolean(detail.value?.activeJob && ['QUEUED', 'RUNNING', 'UNKNOWN'].includes(detail.value.activeJob.status) && detail.value.activeJob.kind === jobKinds[jobForStep.value as JobKind]))
   const diagnosisState = computed(() => isGenerating.value ? 'generating' : detail.value?.diagnosis.skipped ? 'skipped' : detail.value?.diagnosis.submittedAt ? 'submitted' : questions.value.length ? 'answering' : 'idle')
   function addNode() { scopeNodes.value.push({ id: `manual-${crypto.randomUUID()}`, title: '', parentId: null, priority: '普通', reason: '用户补充' }) }
@@ -260,5 +261,5 @@ export function useLearningPreparation(projectId: string) {
   onMounted(() => { void loadProject(); void loadAssets(); void loadKnowledgeBases(); window.addEventListener('online', online) })
   onBeforeUnmount(() => { mounted = false; pollEpoch++; clearTimeout(pollTimer); drafts.dispose(); window.removeEventListener('online', online) })
 
-  return { detail, loading, busy, activeStep, error, fieldErrors, stageIndex, target, sourceKnowledgeBaseId, selectedAssets, manualScope, scopeNodes, planTasks, questions, answers, skipReason, skipRequested, resourceConfig, assets, assetsLoading, assetsError, assetCursor, knowledgeBaseOptions, kbLoading, kbError, kbCursor, retryingAssets, drafts, canOpen, selectStep, loadProject, loadAssets, loadKnowledgeBases, isSelected, assetReady, assetState, toggleAsset, retryAsset, confirm, submitDiagnosis, generate, isGenerating, pendingJob, jobError, jobForStep, jobUnresolved, resumeJob, diagnosisState, addNode, removeNode, addTask, removeTask }
+  return { detail, loading, busy, activeStep, error, fieldErrors, stageIndex, target, sourceKnowledgeBaseId, selectedAssets, manualScope, scopeNodes, planTasks, questions, answers, skipReason, skipRequested, resourceConfig, assets, assetsLoading, assetsError, assetCursor, knowledgeBaseOptions, kbLoading, kbError, kbCursor, retryingAssets, drafts, canOpen, selectStep, loadProject, loadAssets, loadKnowledgeBases, isSelected, assetReady, assetState, toggleAsset, retryAsset, confirm, submitDiagnosis, generate, isGenerating, generationStage, pendingJob, jobError, jobForStep, jobUnresolved, resumeJob, diagnosisState, addNode, removeNode, addTask, removeTask }
 }

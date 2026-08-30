@@ -110,6 +110,15 @@ watch(() => route.fullPath, () => {
     void learningStore.fetchSidebarProjects().catch(() => undefined)
   }
 })
+watch(() => authStore.user?.id || '', userId => {
+  activeMenuId.value = ''
+  accountMenuOpen.value = false
+  sidebarEditingProject.value = null
+  sidebarDeletingProject.value = null
+  conversationRenameTarget.value = null
+  expandedProjectIds.value = new Set()
+  if (userId) void learningStore.fetchSidebarProjects().catch(() => undefined)
+})
 
 async function startNewChat() {
   chatStore.clearActive()

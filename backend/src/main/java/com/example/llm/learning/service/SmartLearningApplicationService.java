@@ -2,8 +2,8 @@ package com.example.llm.learning.service;
 
 import com.example.llm.auth.security.AuthCrypto;
 import com.example.llm.chatv2.repository.ChatV2Repository;
-import com.example.llm.integration.ai.AiCapabilityRouter;
-import com.example.llm.integration.ai.AiChatMessage;
+import com.example.llm.chatv2.stream.AiRunEventBus;
+import com.example.llm.learning.service.LearningGenerationService.RepairBudget;
 import com.example.llm.learning.api.SmartLearningDtos;
 import com.example.llm.learning.repository.SmartLearningRepository;
 import com.example.llm.learning.repository.SmartLearningRepository.ChunkRecord;
@@ -19,6 +19,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import jakarta.annotation.PreDestroy;
 import java.time.LocalDate;
@@ -34,8 +35,8 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 public class SmartLearningApplicationService {
@@ -43,12 +44,18 @@ public class SmartLearningApplicationService {
     private static final String DEFAULT_PROJECT_ICON = "notebook";
     private static final String DEFAULT_PROJECT_ICON_COLOR = "#667085";
     private final SmartLearningRepository repository;
-    private final AiCapabilityRouter ai;
+    private final LearningGenerationService generation;
     private final ObjectMapper objectMapper;
     private final AuthCrypto crypto;
     private final ChatV2Repository chatRepository;
+    private final AiRunEventBus eventBus;
     private final ExecutorService executor = Executors.newFixedThreadPool(2, runnable -> {
         Thread thread = new Thread(runnable, "smart-learning-job");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private final ExecutorService resourceExecutor = Executors.newFixedThreadPool(2, runnable -> {
+        Thread thread = new Thread(runnable, "smart-learning-resource");
         thread.setDaemon(true);
         return thread;
     });
@@ -56,20 +63,23 @@ public class SmartLearningApplicationService {
 
     public SmartLearningApplicationService(
             SmartLearningRepository repository,
-            AiCapabilityRouter ai,
+            LearningGenerationService generation,
             ObjectMapper objectMapper,
             AuthCrypto crypto,
-            ChatV2Repository chatRepository) {
+            ChatV2Repository chatRepository,
+            AiRunEventBus eventBus) {
         this.repository = repository;
-        this.ai = ai;
+        this.generation = generation;
         this.objectMapper = objectMapper;
         this.crypto = crypto;
         this.chatRepository = chatRepository;
+        this.eventBus = eventBus;
     }
 
     @PreDestroy
     public void shutdown() {
         executor.shutdownNow();
+        resourceExecutor.shutdownNow();
     }
 
     public List<SmartLearningDtos.ProjectSummary> list(long userId) {
@@ -242,13 +252,14 @@ public class SmartLearningApplicationService {
             List<List<ChunkRecord>> batches = partitionScopeBatches(chunks);
             if (batches.isEmpty()) batches = List.of(List.of());
             List<Map<String, Object>> mergedNodes = new ArrayList<>();
+            RepairBudget repairBudget = new RepairBudget();
             for (int index = 0; index < batches.size(); index++) {
                 String batchManual = index == batches.size() - 1 ? limit(manual, 5000) : "";
                 String source = formatScopeSource(batches.get(index), batchManual);
-                Map<String, Object> batch = parseModel(callModel(
+                Map<String, Object> batch = generation.json(userId,
                         "你是学习范围分析助手。这是第 " + (index + 1) + " / " + batches.size() + " 个资料批次。只返回 JSON 对象，格式为 {\"nodes\":[{\"id\":\"n1\",\"title\":\"知识点\",\"parentId\":null,\"priority\":\"核心\",\"reason\":\"依据\",\"evidence\":[{\"assetId\":\"资料ID\",\"locator\":\"章节或页码\"}]}]}. " +
                                 "只根据本批资料和用户手动范围整理知识点，不得编造事实；批次资料不足时在 reason 中说明。\n资料内容：" + source,
-                        userId));
+                        LearningOutputSchemas.scope(), repairBudget, this::validateScope, this::publishJobGenerationPhase);
                 ensureList(batch, "nodes", "模型没有返回有效的学习范围。");
                 filterScopeEvidence(batch, assetIds(project.sources()));
                 validateScope(batch);
@@ -270,10 +281,13 @@ public class SmartLearningApplicationService {
         expectStage(project, "DIAGNOSTIC_REQUIRED");
         Map<String, Object> input = Map.of("scope", project.scope(), "scopeVersion", project.scopeVersion());
         return startJob(userId, project, "DIAGNOSIS_GENERATION", input, () -> {
-            Map<String, Object> generated = parseModel(callModel(
+            Map<String, Object> generated = generation.json(userId,
                     "你是学习诊断出题助手。只返回 JSON 对象，格式为 {\"questions\":[{\"id\":\"q1\",\"conceptId\":\"n1\",\"type\":\"single_choice\",\"stem\":\"题目\",\"options\":[\"A\",\"B\"],\"answer\":\"A\",\"explanation\":\"判定依据\"}]}. " +
-                            "题目必须覆盖给定范围；answer 和 explanation 仅用于服务端判分，不能放入返回给用户的题目界面。\n确认范围：" + json(project.scope()),
-                    userId));
+                            "题目应覆盖核心知识点，最多生成 10 道；answer 必须与一个选项文本完全一致，选项不得重复。answer 和 explanation 仅用于服务端判分，不能放入返回给用户的题目界面。\n确认范围：" + json(project.scope()),
+                    LearningOutputSchemas.diagnosis(), new RepairBudget(), value -> {
+                        validateDiagnosisCandidate(value);
+                        validateGeneratedDiagnosis(value, project.scope());
+                    }, this::publishJobGenerationPhase);
             ensureList(generated, "questions", "模型没有返回有效的诊断题目。");
             generated.put("scopeVersion", project.scopeVersion());
             generated.put("generatedAt", LocalDateTime.now(ZoneOffset.UTC).toString());
@@ -345,11 +359,12 @@ public class SmartLearningApplicationService {
             String adjustmentInstruction = extensionMode
                     ? "这是扩展计划：保留 currentPlan 中现有任务及其稳定 id，只在后面追加新的阅读、讲解、练习和复盘任务；返回包含原任务和新增任务的完整计划。"
                     : "如果 currentPlan 已存在，这是调整计划：未改变的任务必须保留原 id；只修改确实需要调整的任务，并返回完整计划。";
-            Map<String, Object> generated = parseModel(callModel(
+            Map<String, Object> generated = generation.json(userId,
                     "你是学习计划规划助手。只返回 JSON 对象，格式为 {\"tasks\":[{\"id\":\"t1\",\"type\":\"READING|EXPLANATION|EXERCISE|REVIEW\",\"title\":\"任务\",\"conceptIds\":[\"n1\"],\"reason\":\"安排原因\",\"durationMinutes\":30,\"completionCriteria\":\"完成标准\",\"date\":null,\"dependencies\":[]}]}. " +
                             "计划必须混合阅读、讲解、练习和复盘四类任务，并让练习出现在相关讲解之后、复盘出现在练习之后。" + adjustmentInstruction +
                             "根据目标可用时间、确认范围和诊断结果安排任务；不要生成资源文件，不要声称用户已经掌握。\n计划输入：" + json(input),
-                    userId));
+                    LearningOutputSchemas.plan(), new RepairBudget(), value -> validatePlan(value, project.target()),
+                    this::publishJobGenerationPhase);
             ensureList(generated, "tasks", "模型没有返回有效的计划任务。");
             normalizePlanTaskTypes(generated);
             generated.put("inputVersions", input.get("versions"));
@@ -418,7 +433,10 @@ public class SmartLearningApplicationService {
     public SmartLearningDtos.JobAccepted prepareResources(long userId, String projectId) {
         ProjectRecord project = requireProject(userId, projectId);
         expectStageAtOrAfter(project, "READY");
-        List<ResourceRecord> requestedResources = repository.findPendingResources(userId, projectId);
+        List<ResourceRecord> requestedResources = repository.findQueuedResources(userId, projectId);
+        if (requestedResources.isEmpty()) {
+            throw new IllegalStateException("当前没有待生成的学习资源。");
+        }
         Map<String, Object> input = Map.of(
                 "planVersion", project.planVersion(),
                 "resourceConfig", project.resourceConfig(),
@@ -428,24 +446,88 @@ public class SmartLearningApplicationService {
                         "status", item.status(),
                         "updatedAt", item.updatedAt().toString())).toList());
         return startJob(userId, project, "RESOURCE_PREPARATION", input, () -> {
-            List<ResourceRecord> pending = repository.findPendingResources(userId, projectId);
+            List<ResourceRecord> pending = repository.findQueuedResources(userId, projectId);
             int total = Math.max(1, pending.size());
-            int completed = 0;
+            String jobId = currentJobId.get();
+            List<ChunkRecord> chunks = repository.findSourceChunks(userId, project.sources());
+            AtomicInteger completed = new AtomicInteger();
+            AtomicInteger succeeded = new AtomicInteger();
+            List<CompletableFuture<Void>> futures = new ArrayList<>();
             for (ResourceRecord resource : pending) {
-                repository.markResourceGenerating(userId, resource.externalId());
-                try {
-                    TaskRecord task = repository.findTask(userId, projectId, resource.taskExternalId())
-                            .orElseThrow(() -> new IllegalStateException("学习任务不存在。"));
-                    Map<String, Object> content = buildResource(userId, project, task, resource);
-                    repository.markResourceReady(userId, resource.externalId(), json(content));
-                } catch (Exception exception) {
-                    repository.markResourceFailed(userId, resource.externalId(), userMessage(exception));
-                }
-                completed++;
-                repository.updateJobProgress(currentJobId.get(), completed, total);
+                futures.add(CompletableFuture.runAsync(() -> {
+                    if (prepareResource(userId, project, resource, "QUEUED", chunks, jobId)) {
+                        succeeded.incrementAndGet();
+                    }
+                    int current = completed.incrementAndGet();
+                    repository.updateJobProgress(jobId, current, total);
+                    publishJobProgress(jobId, current, total);
+                }, resourceExecutor));
             }
-            return Map.of("prepared", completed, "total", pending.size());
+            CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new)).join();
+            return Map.of(
+                    "prepared", succeeded.get(),
+                    "failed", Math.max(0, pending.size() - succeeded.get()),
+                    "total", pending.size());
         });
+    }
+
+    public SmartLearningDtos.JobAccepted retryResource(long userId, String projectId, String resourceId) {
+        ProjectRecord project = requireProject(userId, projectId);
+        expectStageAtOrAfter(project, "READY");
+        ResourceRecord resource = repository.findResource(userId, projectId, resourceId)
+                .orElseThrow(() -> new IllegalArgumentException("学习资源不存在或无权访问。"));
+        if (!"FAILED".equals(resource.status())) {
+            throw new IllegalStateException("只有准备失败的资源可以重试。");
+        }
+        Map<String, Object> input = Map.of(
+                "mode", "RETRY_ONE",
+                "resourceId", resource.externalId(),
+                "failedAt", resource.updatedAt().toString());
+        return startJob(userId, project, "RESOURCE_PREPARATION", input, () -> {
+            String jobId = currentJobId.get();
+            List<ChunkRecord> chunks = repository.findSourceChunks(userId, project.sources());
+            boolean succeeded = CompletableFuture.supplyAsync(
+                    () -> prepareResource(userId, project, resource, "FAILED", chunks, jobId),
+                    resourceExecutor).join();
+            repository.updateJobProgress(jobId, 1, 1);
+            publishJobProgress(jobId, 1, 1);
+            if (!succeeded) throw new IllegalStateException("资源重试失败，请查看资源卡上的原因后再次重试。");
+            return Map.of("prepared", 1, "total", 1, "resourceId", resource.externalId());
+        });
+    }
+
+    private boolean prepareResource(
+            long userId,
+            ProjectRecord project,
+            ResourceRecord resource,
+            String expectedStatus,
+            List<ChunkRecord> chunks,
+            String jobId) {
+        String projectId = project.externalId();
+        if (!repository.markResourceGenerating(
+                userId, projectId, resource.externalId(), expectedStatus)) {
+            return false;
+        }
+        publishResourceState(jobId, resource, "GENERATING", "PREPARING_SOURCE", 0, null);
+        try {
+            TaskRecord task = repository.findTask(userId, projectId, resource.taskExternalId())
+                    .orElseThrow(() -> new IllegalStateException("学习任务不存在。"));
+            Map<String, Object> content = buildResource(
+                    project, task, resource, chunks,
+                    (stage, progress) -> {
+                        repository.updateResourceGenerationProgress(
+                                userId, projectId, resource.externalId(), stage, progress);
+                        publishResourceState(jobId, resource, "GENERATING", stage, progress, null);
+                    });
+            repository.markResourceReady(userId, resource.externalId(), json(content));
+            publishResourceState(jobId, resource, "READY", "READY", 100, null);
+            return true;
+        } catch (Exception exception) {
+            String message = userMessage(exception);
+            repository.markResourceFailed(userId, resource.externalId(), message);
+            publishResourceState(jobId, resource, "FAILED", "FAILED", 0, message);
+            return false;
+        }
     }
 
     public SmartLearningDtos.Workspace workspace(long userId, String projectId) {
@@ -525,7 +607,7 @@ public class SmartLearningApplicationService {
     }
 
     public SmartLearningDtos.ExecutionView startExecution(long userId, String projectId, String taskId) {
-        requireReadyProject(userId, projectId);
+        ProjectRecord project = requireReadyProject(userId, projectId);
         TaskRecord task = repository.findTask(userId, projectId, taskId)
                 .orElseThrow(() -> new IllegalArgumentException("学习任务不存在或无权访问。"));
         if ("CANCELLED".equals(task.status()) || "SKIPPED".equals(task.status())) {
@@ -533,11 +615,22 @@ public class SmartLearningApplicationService {
         }
         ExecutionRecord execution = repository.findActiveExecution(userId, projectId, taskId).orElse(null);
         if (execution == null) {
-            String id = repository.createExecution(userId, projectId, taskId);
+            Map<String, Object> snapshot = exerciseSnapshot(project, task,
+                    readyExercise(repository.findResourcesForTask(userId, projectId, taskId)));
+            String id = repository.createExecution(userId, projectId, taskId,
+                    snapshot.isEmpty() ? null : json(snapshot));
             execution = repository.findExecution(userId, id).orElseThrow();
         } else if ("PAUSED".equals(execution.status())) {
             repository.updateExecutionStatus(userId, execution.externalId(), "IN_PROGRESS");
             execution = repository.findExecution(userId, execution.externalId()).orElseThrow();
+        }
+        if ("EXERCISE".equals(task.taskType()) && execution.questionSnapshot().isEmpty()) {
+            Map<String, Object> snapshot = exerciseSnapshot(project, task,
+                    readyExercise(repository.findResourcesForTask(userId, projectId, taskId)));
+            if (!snapshot.isEmpty()) {
+                repository.saveExecutionQuestionSnapshot(userId, execution.externalId(), json(snapshot));
+                execution = repository.findExecution(userId, execution.externalId()).orElseThrow();
+            }
         }
         return executionView(execution);
     }
@@ -560,18 +653,19 @@ public class SmartLearningApplicationService {
         TaskRecord task = repository.findTask(userId, execution.projectExternalId(), execution.taskExternalId())
                 .orElseThrow(() -> new IllegalArgumentException("学习任务不存在或无权访问。"));
         List<ResourceRecord> resources = repository.findResourcesForTask(userId, execution.projectExternalId(), execution.taskExternalId());
-        ResourceRecord exercise = resources.stream().filter(item -> "EXERCISE_SET".equals(item.kind()) && "READY".equals(item.status())).findFirst().orElse(null);
+        ResourceRecord exercise = readyExercise(resources);
         SmartLearningDtos.ExerciseGrade grade = null;
         if ("EXERCISE".equals(task.taskType()) && exercise == null) {
             throw new IllegalStateException("练习题还在准备中，生成完成后才能提交判卷。");
         }
         if (exercise != null) {
-            List<Map<String, Object>> items = exerciseItems(exercise, project, task);
-            if (items.isEmpty()) throw new IllegalStateException("当前练习题无有效内容，请返回工作台重试资源准备。");
-            int configuredCount = configuredExerciseCount(project, task);
-            if (configuredCount > 0 && items.size() != configuredCount) {
-                throw new IllegalStateException("练习题数量与当前计划不一致，请返回工作台重新准备资源。");
+            Map<String, Object> effectiveSnapshot = execution.questionSnapshot();
+            if (effectiveSnapshot.isEmpty()) {
+                effectiveSnapshot = exerciseSnapshot(project, task, exercise);
+                repository.saveExecutionQuestionSnapshot(userId, executionId, json(effectiveSnapshot));
             }
+            List<Map<String, Object>> items = snapshotItems(effectiveSnapshot);
+            if (items.isEmpty()) throw new IllegalStateException("当前练习题无有效内容，请返回工作台重试资源准备。");
             Map<String, Object> answers = execution.answers();
             List<Object> values = new ArrayList<>();
             for (int index = 0; index < items.size(); index++) {
@@ -605,7 +699,7 @@ public class SmartLearningApplicationService {
             }
             double accuracy = items.isEmpty() ? 100 : Math.round(correct * 10000d / items.size()) / 100d;
             grade = new SmartLearningDtos.ExerciseGrade(items.size(), answered, correct, accuracy, results);
-            repository.updateExecutionScore(userId, executionId, accuracy);
+            repository.saveExecutionGrading(userId, executionId, accuracy, json(grade));
         } else if (execution.progress() < 100 && "READING".equals(task.taskType())) {
             throw new IllegalStateException("请先完成阅读内容，再提交本次任务。 ");
         } else {
@@ -648,18 +742,35 @@ public class SmartLearningApplicationService {
         List<ResourceRecord> taskResources = allResources.stream()
                 .filter(resource -> resource.taskExternalId().equals(task.externalId())).toList();
         ExecutionRecord execution = repository.findLatestExecution(userId, projectId, task.externalId()).orElse(null);
+        ExecutionRecord completedExecution = execution != null && "COMPLETED".equals(execution.status())
+                ? execution
+                : execution != null || "COMPLETED".equals(task.status())
+                        ? repository.findLatestCompletedExecution(userId, projectId, task.externalId()).orElse(null)
+                        : null;
+        if (execution != null && "EXERCISE".equals(task.taskType())
+                && List.of("IN_PROGRESS", "PAUSED", "COMPLETION_PENDING").contains(execution.status())
+                && execution.questionSnapshot().isEmpty()) {
+            Map<String, Object> snapshot = exerciseSnapshot(project, task, readyExercise(taskResources));
+            if (!snapshot.isEmpty()) {
+                repository.saveExecutionQuestionSnapshot(userId, execution.externalId(), json(snapshot));
+                execution = repository.findExecution(userId, execution.externalId()).orElse(execution);
+            }
+        }
         List<SmartLearningDtos.ResourceView> resources = taskResources.stream().map(this::resourceView).toList();
         SmartLearningDtos.ExerciseGrade grading = execution != null && "COMPLETED".equals(execution.status())
-                ? exerciseGrade(taskResources.stream().filter(item -> "EXERCISE_SET".equals(item.kind()) && "READY".equals(item.status())).findFirst().orElse(null), project, task, execution)
+                ? storedExerciseGrade(execution)
                 : null;
         return new SmartLearningDtos.TaskView(task.externalId(), task.title(), task.taskType(), task.description(),
                 task.completionCriteria(), task.scheduledDate(), task.durationMinutes(), task.status(), task.sortOrder(),
-                task.payload(), resources, execution == null ? null : executionView(execution, grading), task.updatedAt());
+                task.payload(), resources, execution == null ? null : executionView(execution, grading),
+                completedExecution == null ? null : executionView(completedExecution, storedExerciseGrade(completedExecution)),
+                task.updatedAt());
     }
 
     private SmartLearningDtos.ResourceView resourceView(ResourceRecord resource) {
         return new SmartLearningDtos.ResourceView(resource.externalId(), resource.taskExternalId(), resource.kind(),
-                resource.title(), resource.status(), resource.content(), resource.errorMessage(), resource.updatedAt());
+                resource.title(), resource.status(), resource.generationStage(), resource.generationProgress(),
+                resource.content(), resource.errorMessage(), resource.updatedAt());
     }
 
     private SmartLearningDtos.ExecutionView executionView(ExecutionRecord execution) {
@@ -670,7 +781,8 @@ public class SmartLearningApplicationService {
             ExecutionRecord execution, SmartLearningDtos.ExerciseGrade grading) {
         return new SmartLearningDtos.ExecutionView(execution.externalId(), execution.projectExternalId(), execution.taskExternalId(),
                 execution.status(), execution.progress(), execution.accumulatedSeconds(), execution.position(), execution.answers(),
-                execution.score(), execution.lastHeartbeatSeq(), execution.startedAt(), execution.pausedAt(), execution.completedAt(), execution.updatedAt(), grading);
+                publicQuestions(execution.questionSnapshot()), execution.score(), execution.lastHeartbeatSeq(), execution.startedAt(),
+                execution.pausedAt(), execution.completedAt(), execution.updatedAt(), grading == null ? storedExerciseGrade(execution) : grading);
     }
 
     private String planTaskType(Map<String, Object> task, int order) {
@@ -684,10 +796,28 @@ public class SmartLearningApplicationService {
         };
     }
 
-    private List<Map<String, Object>> exerciseItems(
-            ResourceRecord resource, ProjectRecord project, TaskRecord task) {
+    private ResourceRecord readyExercise(List<ResourceRecord> resources) {
+        return resources.stream()
+                .filter(item -> "EXERCISE_SET".equals(item.kind()) && "READY".equals(item.status()))
+                .findFirst().orElse(null);
+    }
+
+    private Map<String, Object> exerciseSnapshot(
+            ProjectRecord project, TaskRecord task, ResourceRecord resource) {
+        if (!"EXERCISE".equals(task.taskType()) || resource == null) return Map.of();
+        List<Map<String, Object>> items = resourceExerciseItems(resource);
+        if (items.isEmpty()) return Map.of();
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("resourceId", resource.externalId());
+        snapshot.put("planVersion", project.planVersion());
+        snapshot.put("items", items);
+        snapshot.put("questionCount", items.size());
+        snapshot.put("capturedAt", LocalDateTime.now(ZoneOffset.UTC).toString());
+        return snapshot;
+    }
+
+    private List<Map<String, Object>> resourceExerciseItems(ResourceRecord resource) {
         if (resource == null || !(resource.content().get("items") instanceof List<?> raw)) return List.of();
-        int expected = expectedExerciseCount(project, task, raw.size());
         List<Map<String, Object>> result = new ArrayList<>();
         for (Object value : raw) {
             if (!(value instanceof Map<?, ?> source)) continue;
@@ -696,22 +826,20 @@ public class SmartLearningApplicationService {
             String id = text(item.get("id"));
             item.put("id", id.isBlank() ? "q" + (result.size() + 1) : id);
             result.add(item);
-            if (result.size() >= expected) break;
         }
         return result;
     }
 
-    private int expectedExerciseCount(ProjectRecord project, TaskRecord task, int available) {
-        int configured = configuredExerciseCount(project, task);
-        return configured > 0 ? Math.min(configured, available) : available;
-    }
-
-    private int configuredExerciseCount(ProjectRecord project, TaskRecord task) {
-        int payloadCount = number(task.payload().get("questionCount"));
-        if (payloadCount > 0) return payloadCount;
-        Matcher matcher = Pattern.compile("(\\d+)\\s*(?:道|题)").matcher(task.completionCriteria());
-        if (matcher.find()) return Math.max(1, Integer.parseInt(matcher.group(1)));
-        return number(project.resourceConfig().get("questionCount"));
+    private List<Map<String, Object>> snapshotItems(Map<String, Object> snapshot) {
+        if (snapshot == null || !(snapshot.get("items") instanceof List<?> raw)) return List.of();
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Object value : raw) {
+            if (!(value instanceof Map<?, ?> source)) continue;
+            Map<String, Object> item = new LinkedHashMap<>();
+            source.forEach((key, itemValue) -> item.put(String.valueOf(key), itemValue));
+            result.add(item);
+        }
+        return result;
     }
 
     private Object answerFor(Map<String, Object> answers, String id, int index) {
@@ -719,97 +847,128 @@ public class SmartLearningApplicationService {
         return value == null ? answers.get(id) : value;
     }
 
-    private SmartLearningDtos.ExerciseGrade exerciseGrade(
-            ResourceRecord resource, ProjectRecord project, TaskRecord task, ExecutionRecord execution) {
-        if (resource == null) return null;
-        // A completed execution is the only state in which this method is exposed.
-        List<Map<String, Object>> items = exerciseItems(resource, project, task);
-        List<SmartLearningDtos.ExerciseQuestionGrade> results = new ArrayList<>();
-        int correct = 0;
-        int answered = 0;
-        for (int index = 0; index < items.size(); index++) {
-            Map<String, Object> item = items.get(index);
-            String id = text(item.get("id"));
-            Object answer = answerFor(execution.answers(), id, index);
-            boolean hasAnswer = answer != null && !text(answer).isBlank();
-            boolean isCorrect = hasAnswer && normalize(answer).equals(normalize(item.get("answer")));
-            if (hasAnswer) answered++;
-            if (isCorrect) correct++;
-            results.add(new SmartLearningDtos.ExerciseQuestionGrade(id, index, hasAnswer, isCorrect,
-                    limit(text(answer), 4000), limit(text(item.get("answer")), 4000),
-                    limit(text(item.get("explanation")), 8000)));
-        }
-        double accuracy = items.isEmpty() ? 100 : Math.round(correct * 10000d / items.size()) / 100d;
-        return new SmartLearningDtos.ExerciseGrade(items.size(), answered, correct, accuracy, results);
+    private List<Map<String, Object>> publicQuestions(Map<String, Object> snapshot) {
+        return snapshotItems(snapshot).stream().map(source -> {
+            Map<String, Object> item = new LinkedHashMap<>(source);
+            item.remove("answer");
+            item.remove("explanation");
+            return item;
+        }).toList();
     }
 
-    private Map<String, Object> buildResource(long userId, ProjectRecord project, TaskRecord task, ResourceRecord resource) {
-        List<ChunkRecord> chunks = repository.findSourceChunks(userId, project.sources());
+    private SmartLearningDtos.ExerciseGrade storedExerciseGrade(ExecutionRecord execution) {
+        if (execution == null || execution.grading() == null || execution.grading().isEmpty()) return null;
+        try {
+            return objectMapper.convertValue(execution.grading(), SmartLearningDtos.ExerciseGrade.class);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
+    private Map<String, Object> buildResource(
+            ProjectRecord project,
+            TaskRecord task,
+            ResourceRecord resource,
+            List<ChunkRecord> chunks,
+            ResourceProgress progress) {
         String source = chunks.stream().limit(8).map(chunk -> "[" + chunk.assetName() + "]\n" + limit(chunk.content(), 1800)).reduce("", (a, b) -> a + "\n" + b);
+        RepairBudget repairBudget = new RepairBudget();
+        // The same repair budget applies to the whole resource, including all question batches.
+        AtomicInteger stageProgress = new AtomicInteger(0);
+        java.util.function.Consumer<String> phase = stage -> progress.update(stage,
+                stageProgress.accumulateAndGet("VALIDATING".equals(stage) ? 50 : 25, Math::max));
         if ("EXERCISE_SET".equals(resource.kind())) {
             int configuredCount = number(task.payload().get("questionCount"));
             if (configuredCount <= 0) configuredCount = number(project.resourceConfig().get("questionCount"));
             int questionCount = Math.max(1, Math.min(200, configuredCount));
-            String prompt = "为学习任务生成恰好 " + questionCount + " 道单选题。只返回 JSON：{\"items\":[{\"id\":\"q1\",\"stem\":\"题干，可包含 Markdown 代码块\",\"options\":[\"A\",\"B\"],\"answer\":\"A\",\"explanation\":\"解析\",\"knowledgeKey\":\"知识点\"}]}。id 必须从 q1 递增且不能重复；每题必须有唯一题干、至少两个选项，answer 必须是 options 中的一个值；代码必须放在 stem 或 explanation 的 Markdown 代码块中。题目必须基于资料，不要编造。任务：" + task.title() + "\n资料：" + limit(source, 16000);
-            Map<String, Object> generated = parseModel(callModel(prompt, userId));
-            List<Map<String, Object>> items = normalizeExerciseItems(generated, questionCount);
+            List<Map<String, Object>> items = new ArrayList<>();
+            Set<String> stems = new HashSet<>();
+            for (int offset = 0; offset < questionCount; offset += 10) {
+                int batchSize = Math.min(10, questionCount - offset);
+                int firstQuestion = offset + 1;
+                String previousStems = items.stream().map(item -> limit(text(item.get("stem")), 280))
+                        .collect(java.util.stream.Collectors.joining("\n"));
+                String prompt = "为学习任务生成这一批恰好 " + batchSize + " 道单选题，整套共 " + questionCount
+                        + " 题。当前批次的 id 必须依次为 q" + firstQuestion + " 到 q" + (offset + batchSize)
+                        + "，不要返回其他批次的题。按指定 JSON Schema 返回 items。"
+                        + "每题必须有不同于已生成题目的唯一题干、2 到 8 个非空且不重复的选项，answer 必须与其中一个选项的完整文本完全一致（不能只写字母）。"
+                        + "必须填写 explanation 和 knowledgeKey。题干不超过 12000 字符，选项与答案不超过 2000 字符，解析不超过 8000 字符，知识点不超过 240 字符。"
+                        + "代码放在 stem 或 explanation 的闭合 Markdown 代码块中。题目及正确答案必须基于资料；先核对答案，再编写干扰项。"
+                        + "\n任务：" + task.title() + "\n难度：" + text(project.resourceConfig().get("difficulty"))
+                        + "\n资料：" + limit(source, 16000) + "\n已生成题干（不要重复）：" + previousStems;
+                Map<String, Object> batch = generation.json(project.userId(), prompt, LearningOutputSchemas.exercises(),
+                        repairBudget, value -> validateExerciseBatch(value, batchSize, firstQuestion, stems), phase);
+                for (Object raw : (List<?>) batch.get("items")) {
+                    Map<?, ?> item = (Map<?, ?>) raw;
+                    Map<String, Object> copy = new LinkedHashMap<>();
+                    item.forEach((key, value) -> copy.put(String.valueOf(key), value));
+                    items.add(copy);
+                    stems.add(text(item.get("stem")));
+                }
+            }
+            progress.update("FINALIZING", 75);
             return Map.of("items", items, "questionCount", items.size());
         }
-        String prompt = "为学习任务生成结构清晰的教学讲义。只返回 JSON：{\"markdown\":\"完整 Markdown\"}。" +
-                "讲义必须包含学习目标、核心讲解、示例、易错点和小结。代码必须使用带语言标识且成对闭合的代码围栏；表格必须是合法 Markdown 表格；不要把整篇讲义包进代码围栏；不要原样拼接资料片段；没有资料证据时要明确说明。" +
-                "\n任务类型：" + task.taskType() + "\n任务：" + task.title() + "\n说明：" + task.description() +
-                "\n完成标准：" + task.completionCriteria() + "\n资料：" + limit(source, 18000);
-        Map<String, Object> generated = parseModel(callModel(prompt, userId));
-        String markdown = sanitizeLearningMarkdown(text(generated.get("markdown")), task.title());
+        String prompt = "为学习任务生成结构清晰的教学讲义，直接返回完整 Markdown，不使用 JSON 包装。"
+                + "讲义必须包含学习目标、核心讲解、示例、易错点和小结。代码必须使用带语言标识且成对闭合的代码围栏；表格必须是合法 Markdown 表格；不要把整篇讲义包进代码围栏；不要原样拼接资料片段；没有资料证据时要明确说明。"
+                + "\n任务类型：" + task.taskType() + "\n任务：" + task.title() + "\n说明：" + task.description()
+                + "\n完成标准：" + task.completionCriteria() + "\n资料：" + limit(source, 18000);
+        String markdown = generation.markdown(project.userId(), prompt, repairBudget, phase);
+        if (!markdown.startsWith("#")) markdown = "# " + task.title() + "\n\n" + markdown;
         Map<String, Object> content = new LinkedHashMap<>();
         content.put("markdown", markdown);
         content.put("citations", chunks.stream().limit(8).map(chunk -> Map.of("assetId", chunk.assetExternalId(), "assetName", chunk.assetName(), "versionId", chunk.versionExternalId(), "chunkId", chunk.chunkExternalId(), "pageFrom", chunk.pageFrom() == null ? 0 : chunk.pageFrom(), "pageTo", chunk.pageTo() == null ? 0 : chunk.pageTo())).toList());
+        progress.update("FINALIZING", 75);
         return content;
     }
 
-    @SuppressWarnings("unchecked")
-    private List<Map<String, Object>> normalizeExerciseItems(Map<String, Object> generated, int expected) {
-        Object rawItems = generated.get("items");
-        if (!(rawItems instanceof List<?> raw) || raw.size() < expected) {
-            throw new IllegalStateException("模型生成的练习题数量不足，请重试。");
+    private void validateExerciseBatch(
+            Map<String, Object> generated, int expected, int firstQuestion, Set<String> previousStems) {
+        if (!(generated.get("items") instanceof List<?> items) || items.size() != expected) {
+            throw new IllegalArgumentException("当前批次必须恰好返回 " + expected + " 道题，不能少题或多题。");
         }
-        List<Map<String, Object>> items = new ArrayList<>();
-        for (Object value : raw) {
-            if (!(value instanceof Map<?, ?> source)) continue;
-            Map<String, Object> item = new LinkedHashMap<>();
-            source.forEach((key, itemValue) -> item.put(String.valueOf(key), itemValue));
-            String stem = text(item.get("stem"));
-            if (stem.isBlank()) continue;
-            List<String> options = new ArrayList<>();
-            if (item.get("options") instanceof List<?> rawOptions) {
-                for (Object option : rawOptions) if (!text(option).isBlank()) options.add(text(option));
+        Set<String> stems = new HashSet<>(previousStems);
+        for (int index = 0; index < items.size(); index++) {
+            if (!(items.get(index) instanceof Map<?, ?> item)) {
+                throw new IllegalArgumentException("题目必须是完整的对象。");
             }
-            String answer = text(item.get("answer"));
-            if (options.size() < 2 || answer.isBlank() || !options.contains(answer)) continue;
-            item.put("id", "q" + (items.size() + 1));
-            item.put("stem", limit(stem, 12000));
-            item.put("options", options.stream().map(option -> limit(option, 2000)).toList());
-            item.put("answer", limit(answer, 2000));
-            item.put("explanation", limit(text(item.get("explanation")), 8000));
-            item.put("knowledgeKey", limit(text(item.get("knowledgeKey")), 240));
-            items.add(item);
-            if (items.size() >= expected) break;
+            String expectedId = "q" + (firstQuestion + index);
+            if (!expectedId.equals(item.get("id"))) {
+                throw new IllegalArgumentException("当前批次第 " + (index + 1) + " 题的 id 必须是 " + expectedId + "。");
+            }
+            validateGeneratedChoice(item, stems);
+            requireGeneratedText(item, "knowledgeKey", 240);
         }
-        if (items.size() < expected) throw new IllegalStateException("模型生成的练习题无法满足题目格式，请重试。");
-        return items;
     }
 
-    private String sanitizeLearningMarkdown(String raw, String title) {
-        String value = raw == null ? "" : raw.replace("\r\n", "\n").replace('\r', '\n').trim();
-        if (value.isBlank()) throw new IllegalStateException("模型没有返回有效的学习讲义，请重试。");
-        if (value.matches("(?s)^```(?:markdown|md)\\s*\\n.*\\n```$")) {
-            value = value.replaceFirst("(?s)^```(?:markdown|md)\\s*\\n", "")
-                    .replaceFirst("(?s)\\n```$", "").trim();
+    private void validateGeneratedChoice(Map<?, ?> item, Set<String> stems) {
+        String stem = requireGeneratedText(item, "stem", 12000);
+        if (!stems.add(stem)) throw new IllegalArgumentException("题干不能重复。");
+        Object rawOptions = item.get("options");
+        if (!(rawOptions instanceof List<?> options) || options.size() < 2 || options.size() > 8) {
+            throw new IllegalArgumentException("每道单选题必须提供 2 到 8 个选项。");
         }
-        long fences = value.lines().filter(line -> line.trim().startsWith("```")).count();
-        if (fences % 2 != 0) value += "\n```";
-        if (!value.matches("(?s)^\\s*#.*")) value = "# " + title + "\n\n" + value;
-        return limit(value, 60_000);
+        Set<String> unique = new HashSet<>();
+        for (Object option : options) {
+            if (!(option instanceof String text) || text.isBlank() || text.length() > 2000 || !unique.add(text.trim())) {
+                throw new IllegalArgumentException("选项必须非空、不能重复且不超过 2000 字符。");
+            }
+        }
+        String answer = requireGeneratedText(item, "answer", 2000);
+        if (!options.contains(item.get("answer")) || !unique.contains(answer)) {
+            throw new IllegalArgumentException("answer 必须与一个选项的完整文本完全一致，不能只写选项字母或编号。");
+        }
+        String explanation = requireGeneratedText(item, "explanation", 8000);
+        generation.validateCodeFences(stem);
+        generation.validateCodeFences(explanation);
+    }
+
+    private String requireGeneratedText(Map<?, ?> value, String field, int maxLength) {
+        String content = text(value.get(field));
+        if (content.isBlank() || content.length() > maxLength) {
+            throw new IllegalArgumentException("字段 " + field + " 必须非空且不超过 " + maxLength + " 字符。");
+        }
+        return content;
     }
 
     @SuppressWarnings("unchecked")
@@ -846,6 +1005,12 @@ public class SmartLearningApplicationService {
         return jobView(job);
     }
 
+    public SseEmitter jobEvents(long userId, String jobId, String lastEventId) {
+        repository.findJob(userId, jobId)
+                .orElseThrow(() -> new IllegalArgumentException("学习任务不存在或无权访问。"));
+        return eventBus.subscribe(jobId, lastEventId);
+    }
+
     private SmartLearningDtos.JobAccepted startJob(
             long userId,
             ProjectRecord project,
@@ -862,39 +1027,68 @@ public class SmartLearningApplicationService {
 
     private void runJob(long userId, String projectId, String kind, String jobId, JobWork work) {
         repository.markJobRunning(jobId, LocalDateTime.now(ZoneOffset.UTC));
+        eventBus.publish(jobId, "job.updated", Map.of(
+                "jobId", jobId,
+                "projectId", projectId,
+                "kind", kind,
+                "status", "RUNNING"));
         currentJobId.set(jobId);
         try {
             Map<String, Object> result = work.run();
             repository.markJobSucceeded(jobId, json(result), LocalDateTime.now(ZoneOffset.UTC));
+            eventBus.publish(jobId, "run.completed", Map.of(
+                    "jobId", jobId,
+                    "projectId", projectId,
+                    "kind", kind,
+                    "status", "SUCCEEDED",
+                    "result", result));
         } catch (Exception exception) {
-            repository.markJobFailed(jobId, exception.getMessage(), LocalDateTime.now(ZoneOffset.UTC));
+            String message = userMessage(exception);
+            repository.markJobFailed(jobId, message, LocalDateTime.now(ZoneOffset.UTC));
+            eventBus.publish(jobId, "run.failed", Map.of(
+                    "jobId", jobId,
+                    "projectId", projectId,
+                    "kind", kind,
+                    "status", "FAILED",
+                    "errorMessage", message));
         } finally {
             currentJobId.remove();
         }
     }
 
-    private String callModel(String prompt, long userId) {
-        List<Map<String, String>> messages = new ArrayList<>();
-        messages.add(Map.of("role", "system", "content", "你必须遵守输出格式，只返回 JSON，不输出 Markdown 代码围栏。"));
-        messages.add(Map.of("role", "user", "content", limit(prompt, 70_000)));
-        List<AiChatMessage> aiMessages = messages.stream()
-                .map(message -> new AiChatMessage(message.get("role"), message.get("content")))
-                .toList();
-        return ai.completeText(aiMessages, userId).value();
+    private void publishJobGenerationPhase(String stage) {
+        String jobId = currentJobId.get();
+        if (jobId == null) return;
+        repository.updateJobGenerationStage(jobId, stage);
+        eventBus.publish(jobId, "job.updated", Map.of(
+                "jobId", jobId, "status", "RUNNING", "generationStage", stage));
     }
 
-    private Map<String, Object> parseModel(String text) {
-        String value = text == null ? "" : text.trim();
-        if (value.startsWith("``")) value = value.replaceFirst("^```(?:json)?\\s*", "").replaceFirst("\\s*```$", "");
-        int start = value.indexOf('{');
-        int end = value.lastIndexOf('}');
-        if (start < 0 || end <= start) throw new IllegalStateException("模型返回格式无法解析，请重试。");
-        try {
-            return objectMapper.readValue(value.substring(start, end + 1), MAP_TYPE);
-        } catch (Exception exception) {
-            throw new IllegalStateException("模型返回格式无法解析，请重试。", exception);
-        }
+    private void publishJobProgress(String jobId, int current, int total) {
+        eventBus.publish(jobId, "job.progress", Map.of(
+                "jobId", jobId,
+                "progressCurrent", current,
+                "progressTotal", total));
     }
+
+    private void publishResourceState(
+            String jobId,
+            ResourceRecord resource,
+            String status,
+            String stage,
+            int progress,
+            String errorMessage) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("jobId", jobId);
+        payload.put("resourceId", resource.externalId());
+        payload.put("taskId", resource.taskExternalId());
+        payload.put("status", status);
+        payload.put("generationStage", stage);
+        payload.put("generationProgress", progress);
+        if (errorMessage != null && !errorMessage.isBlank()) payload.put("errorMessage", errorMessage);
+        eventBus.publish(jobId, "resource.updated", Map.copyOf(payload));
+    }
+
 
     private Map<String, Object> gradeDiagnosis(Map<String, Object> raw, Object rawAnswers) {
         Map<String, Object> answerById = new LinkedHashMap<>();
@@ -1167,6 +1361,25 @@ public class SmartLearningApplicationService {
         return false;
     }
 
+    private void validateGeneratedDiagnosis(Map<String, Object> diagnosis, Map<String, Object> scope) {
+        List<?> questions = (List<?>) diagnosis.get("questions");
+        if (questions.size() > 10) throw new IllegalArgumentException("本轮诊断最多生成 10 道题。");
+        Set<String> conceptIds = new HashSet<>();
+        if (scope.get("nodes") instanceof List<?> nodes) {
+            for (Object raw : nodes) {
+                if (raw instanceof Map<?, ?> node) conceptIds.add(text(node.get("id")));
+            }
+        }
+        Set<String> stems = new HashSet<>();
+        for (Object raw : questions) {
+            Map<?, ?> question = (Map<?, ?>) raw;
+            if (!conceptIds.contains(text(question.get("conceptId")))) {
+                throw new IllegalArgumentException("诊断题 conceptId 必须对应确认范围中已有的知识点编号。");
+            }
+            validateGeneratedChoice(question, stems);
+        }
+    }
+
     private void validateDiagnosisCandidate(Map<String, Object> diagnosis) {
         Object rawQuestions = diagnosis == null ? null : diagnosis.get("questions");
         if (!(rawQuestions instanceof List<?> questions) || questions.isEmpty() || questions.size() > 50) {
@@ -1408,6 +1621,11 @@ public class SmartLearningApplicationService {
 
     private String normalize(Object value) {
         return text(value).replaceAll("\\s+", "").toLowerCase();
+    }
+
+    @FunctionalInterface
+    private interface ResourceProgress {
+        void update(String stage, int progress);
     }
 
     @FunctionalInterface

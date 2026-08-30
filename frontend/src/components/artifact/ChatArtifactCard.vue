@@ -28,6 +28,23 @@ watch(() => props.artifact, (value) => {
 const isDraft = computed(() => ['DRAFT', 'READY'].includes(props.artifact.status))
 const isFailed = computed(() => ['FAILED', 'CANCELLED'].includes(props.artifact.status))
 const isGenerating = computed(() => ['QUEUED', 'GENERATING', 'RUNNING', 'PROCESSING'].includes(props.artifact.status))
+const generationLabel = computed(() => {
+  if (props.artifact.id.startsWith('optimistic-artifact-')) {
+    return props.artifact.type === 'IMAGE' ? '正在准备图片描述' : 'AI 正在组织内容'
+  }
+  return props.artifact.type === 'IMAGE' ? 'AI 正在绘制图片，完成后会自动保存' : '正在保存生成结果'
+})
+const generationError = computed(() => ({
+  IMAGE_QUEUE_FULL: '图片生成任务较多，请稍后重试。本次还未调用图片模型。',
+  IMAGE_TIMEOUT: '图片模型响应超时，请稍后重试。',
+  IMAGE_UNAVAILABLE: '暂时无法连接图片模型服务，请稍后重试。',
+  IMAGE_RATE_LIMITED: '图片模型请求过于频繁，请稍后重试。',
+  IMAGE_QUOTA_EXHAUSTED: '图片模型额度不足，请检查模型服务账户的额度。',
+  IMAGE_AUTHENTICATION: '图片模型的密钥或权限配置异常，请检查服务配置。',
+  IMAGE_CONTENT_SAFETY: '图片描述未通过安全检查，请调整描述。',
+  IMAGE_GENERATION_INTERRUPTED: '图片生成已中断，请手动重新生成。',
+  IMAGE_INTERRUPTED: '图片生成已中断，请手动重新生成。',
+}[props.artifact.errorCode || ''] || '生成任务失败，请重新生成。'))
 const imageStatusLabel = computed(() => {
   if (props.artifact.status === 'GENERATING') return '图片生成中'
   if (props.artifact.status === 'CANCELLED') return '图片生成已取消'
@@ -106,6 +123,7 @@ async function confirmCurrentArtifact() {
       <div class="skeleton-block" :class="`skeleton-block--${artifact.type.toLowerCase()}`">
         <LoaderCircle class="spin" :size="18" />
       </div>
+      <span>{{ generationLabel }}</span>
     </div>
 
     <template v-else-if="artifact.type === 'DOCUMENT'">
@@ -130,7 +148,7 @@ async function confirmCurrentArtifact() {
 
     <div v-else class="artifact-summary">
       <strong>{{ imageStatusLabel }}</strong>
-      <span>{{ isFailed ? (artifact.errorCode || '生成任务失败，请重新生成。') : artifact.content.prompt }}</span>
+      <span>{{ isFailed ? generationError : artifact.content.prompt }}</span>
     </div>
 
     <ChatAttachmentList
@@ -223,10 +241,12 @@ async function confirmCurrentArtifact() {
 .skeleton-line--short { width: 54%; }
 .skeleton-line::after, .skeleton-block::after { position: absolute; inset: 0; background: linear-gradient(100deg, transparent 15%, rgb(255 255 255 / 28%) 48%, transparent 82%); content: ''; animation: artifact-shimmer 1.45s linear infinite; }
 .skeleton-block { display: grid; min-height: 114px; place-items: center; color: var(--color-text-muted); }
+.skeleton-block .spin { position: relative; z-index: 1; transform-origin: center; animation: artifact-spin .9s linear infinite; }
 .skeleton-block--document { min-height: 190px; }
 .skeleton-block--presentation { min-height: 150px; aspect-ratio: 16 / 9; }
 .skeleton-block--mindmap { min-height: 150px; }
 .skeleton-block--image { min-height: 170px; }
 .artifact-skeleton > span { margin-top: 2px; }
 @keyframes artifact-shimmer { to { transform: translateX(100%); } }
+@keyframes artifact-spin { to { transform: rotate(360deg); } }
 </style>

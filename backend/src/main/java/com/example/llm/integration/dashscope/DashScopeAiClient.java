@@ -110,6 +110,23 @@ public class DashScopeAiClient {
         return textCompletion(model, body);
     }
 
+    public AiCallResult<String> completeLearningOutput(
+            List<AiChatMessage> messages, String schemaName, Map<String, Object> schema) {
+        String model = properties.getChat().getModel();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("model", model);
+        body.put("messages", messages.stream().map(this::chatMessage).toList());
+        body.put("stream", false);
+        body.put("enable_thinking", false);
+        if (schema != null) {
+            body.put("response_format", Map.of("type", "json_schema", "json_schema", Map.of(
+                    "name", schemaName, "strict", true, "schema", schema)));
+        }
+        // Do not introduce a low max_tokens cap that can cut a JSON object in half.
+        // Learning bounds output size through small batches and validates finish_reason.
+        return textCompletion(model, body, true);
+    }
+
     public AiCallResult<String> recognize(byte[] image, String mimeType) {
         String model = properties.getOcr().getModel();
         validateImage(image, mimeType, model);
@@ -238,9 +255,26 @@ public class DashScopeAiClient {
     }
 
     private AiCallResult<String> textCompletion(String model, Map<String, Object> body) {
+        return textCompletion(model, body, false);
+    }
+
+    private AiCallResult<String> textCompletion(String model, Map<String, Object> body, boolean requireComplete) {
         ensureConfigured(model);
         long startedAt = System.currentTimeMillis();
         JsonNode response = postJson(properties.openaiEndpoint("chat/completions"), model, body);
+        if (requireComplete) {
+            JsonNode choice = response.path("choices").path(0);
+            String reason = choice.path("finish_reason").asText("");
+            if ("content_filter".equals(reason) || !choice.path("message").path("refusal").asText("").isBlank()) {
+                throw failure(model, "LEARNING_OUTPUT_REFUSED", ProviderCallException.Category.CONTENT_SAFETY,
+                        false, "本次学习内容未通过模型安全检查，请调整内容后重试。", null);
+            }
+            if (!"stop".equals(reason)) {
+                throw failure(model, "length".equals(reason) ? "LEARNING_OUTPUT_TRUNCATED" : "LEARNING_OUTPUT_INCOMPLETE",
+                        ProviderCallException.Category.INVALID_RESPONSE, false,
+                        "length".equals(reason) ? "模型输出被截断，内容尚未完整生成。" : "模型未正常完成本次内容输出。", null);
+            }
+        }
         String content = response.path("choices").path(0).path("message").path("content").asText("").trim();
         if (content.isBlank()) {
             throw failure(model, "DASHSCOPE_EMPTY_RESPONSE",
@@ -387,6 +421,11 @@ public class DashScopeAiClient {
             providerMessage = body == null ? "" : body;
         }
         String normalized = (providerCode + " " + providerMessage).toLowerCase(Locale.ROOT);
+        // Quota errors may also use HTTP 429. They must not trigger a paid fallback.
+        if (normalized.contains("allocationquota.freetieronly") || normalized.contains("quota")) {
+            return failure(model, providerCode(providerCode, "DASHSCOPE_QUOTA_EXHAUSTED"),
+                    ProviderCallException.Category.QUOTA_EXHAUSTED, false, "阿里云模型额度不足", cause);
+        }
         if (status == 429) {
             return failure(model, providerCode(providerCode, "DASHSCOPE_RATE_LIMITED"),
                     ProviderCallException.Category.RATE_LIMITED, true, "阿里云模型请求过于频繁", cause);
@@ -394,10 +433,6 @@ public class DashScopeAiClient {
         if (status >= 500) {
             return failure(model, providerCode(providerCode, "DASHSCOPE_UNAVAILABLE"),
                     ProviderCallException.Category.UNAVAILABLE, true, "阿里云模型服务暂时不可用", cause);
-        }
-        if (normalized.contains("allocationquota.freetieronly") || normalized.contains("quota")) {
-            return failure(model, providerCode(providerCode, "DASHSCOPE_QUOTA_EXHAUSTED"),
-                    ProviderCallException.Category.QUOTA_EXHAUSTED, false, "阿里云模型免费额度已用完", cause);
         }
         if (normalized.contains("datainspection") || normalized.contains("content") && normalized.contains("safety")) {
             return failure(model, providerCode(providerCode, "DASHSCOPE_CONTENT_SAFETY"),

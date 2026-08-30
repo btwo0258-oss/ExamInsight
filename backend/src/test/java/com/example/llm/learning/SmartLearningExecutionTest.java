@@ -2,7 +2,8 @@ package com.example.llm.learning;
 
 import com.example.llm.auth.security.AuthCrypto;
 import com.example.llm.chatv2.repository.ChatV2Repository;
-import com.example.llm.integration.ai.AiCapabilityRouter;
+import com.example.llm.chatv2.stream.AiRunEventBus;
+import com.example.llm.learning.service.LearningGenerationService;
 import com.example.llm.learning.api.SmartLearningDtos;
 import com.example.llm.learning.repository.SmartLearningRepository;
 import com.example.llm.learning.repository.SmartLearningRepository.ExecutionRecord;
@@ -42,8 +43,8 @@ class SmartLearningExecutionTest {
     void setup() {
         repository = mock(SmartLearningRepository.class);
         service = new SmartLearningApplicationService(
-                repository, mock(AiCapabilityRouter.class), new ObjectMapper(),
-                mock(AuthCrypto.class), mock(ChatV2Repository.class));
+                repository, mock(LearningGenerationService.class), new ObjectMapper(),
+                mock(AuthCrypto.class), mock(ChatV2Repository.class), mock(AiRunEventBus.class));
         when(repository.findProject(USER_ID, PROJECT_ID)).thenReturn(Optional.of(project()));
     }
 

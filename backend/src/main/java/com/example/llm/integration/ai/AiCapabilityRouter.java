@@ -68,7 +68,7 @@ public class AiCapabilityRouter {
             logSuccess("chat", result);
             return result;
         } catch (ProviderCallException exception) {
-            if (!exception.retryable() || emittedCharacters.get() > 0) throw exception;
+            if (!exception.retryable() || emittedCharacters.get() > 0 || !spark.isConfigured()) throw exception;
             logFallback("chat", exception);
             return streamWithSpark(messages, userId, onDelta, exception.code());
         }
@@ -83,10 +83,19 @@ public class AiCapabilityRouter {
             logSuccess("text", result);
             return result;
         } catch (ProviderCallException exception) {
-            if (!exception.retryable()) throw exception;
+            if (!exception.retryable() || !spark.isConfigured()) throw exception;
             logFallback("text", exception);
             return streamWithSpark(messages, userId, ignored -> { }, exception.code());
         }
+    }
+
+    public AiCallResult<String> completeLearningOutput(
+            List<AiChatMessage> messages, Long userId, String schemaName, Map<String, Object> schema) {
+        // A fallback without schema/finish-reason support cannot honor this contract.
+        // Keep the primary error instead of silently accepting a weaker response.
+        AiCallResult<String> result = dashScope.completeLearningOutput(messages, schemaName, schema);
+        logSuccess(schema == null ? "learning-markdown" : "learning-json", result);
+        return result;
     }
 
     public AiCallResult<String> recognize(byte[] source, String mimeType) {
@@ -145,7 +154,7 @@ public class AiCapabilityRouter {
             logSuccess("image", result);
             return result;
         } catch (ProviderCallException exception) {
-            if (!exception.retryable()) throw exception;
+            if (!exception.retryable() || !image.isConfigured()) throw exception;
             logFallback("image", exception);
             return generateImageWithXfyun(prompt, width, height, exception.code());
         }

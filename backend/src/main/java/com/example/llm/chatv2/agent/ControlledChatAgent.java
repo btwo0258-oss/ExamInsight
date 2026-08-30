@@ -364,7 +364,12 @@ public class ControlledChatAgent {
 
     private void captureMetadata(AtomicReference<ChatResponseMetadata> target, ChatResponse response) {
         if (response != null && response.getMetadata() != null) {
-            target.set(response.getMetadata());
+            ChatResponseMetadata next = response.getMetadata();
+            // Empty trailing stream chunks must not erase the provider's usage chunk.
+            Usage usage = next.getUsage();
+            if (target.get() == null || usage != null && usage.getTotalTokens() != null && usage.getTotalTokens() > 0) {
+                target.set(next);
+            }
         }
     }
 
@@ -404,14 +409,14 @@ public class ControlledChatAgent {
             category = ProviderCallException.Category.UNAVAILABLE;
             code = "DASHSCOPE_UNAVAILABLE";
             retryable = true;
-        } else if (normalized.contains("429") || normalized.contains("rate limit")) {
-            category = ProviderCallException.Category.RATE_LIMITED;
-            code = "DASHSCOPE_RATE_LIMITED";
-            retryable = true;
         } else if (normalized.contains("quota") || normalized.contains("allocationquotafreetieronly")) {
             category = ProviderCallException.Category.QUOTA_EXHAUSTED;
             code = "DASHSCOPE_QUOTA_EXHAUSTED";
             retryable = false;
+        } else if (normalized.contains("429") || normalized.contains("rate limit")) {
+            category = ProviderCallException.Category.RATE_LIMITED;
+            code = "DASHSCOPE_RATE_LIMITED";
+            retryable = true;
         } else if (normalized.contains("401") || normalized.contains("unauthorized")
                 || normalized.contains("invalid api key")) {
             category = ProviderCallException.Category.AUTHENTICATION;

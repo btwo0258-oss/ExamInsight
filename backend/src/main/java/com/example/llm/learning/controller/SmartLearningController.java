@@ -3,6 +3,7 @@ package com.example.llm.learning.controller;
 import com.example.llm.common.UserContext;
 import com.example.llm.learning.api.SmartLearningDtos;
 import com.example.llm.learning.service.SmartLearningApplicationService;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -10,8 +11,10 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
 import java.util.Map;
@@ -180,6 +183,13 @@ public class SmartLearningController {
         return learning.prepareResources(UserContext.requireSession().userId(), projectId);
     }
 
+    @PostMapping("/projects/{projectId}/resources/{resourceId}/retry")
+    public SmartLearningDtos.JobAccepted retryResource(
+            @PathVariable String projectId,
+            @PathVariable String resourceId) {
+        return learning.retryResource(UserContext.requireSession().userId(), projectId, resourceId);
+    }
+
     @GetMapping("/projects/{projectId}/workspace")
     public SmartLearningDtos.Workspace getWorkspace(@PathVariable String projectId) {
         return learning.workspace(UserContext.requireSession().userId(), projectId);
@@ -277,5 +287,12 @@ public class SmartLearningController {
     @GetMapping("/jobs/{jobId}")
     public SmartLearningDtos.JobView getJob(@PathVariable String jobId) {
         return learning.job(UserContext.requireSession().userId(), jobId);
+    }
+
+    @GetMapping(value = "/jobs/{jobId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter getJobEvents(
+            @PathVariable String jobId,
+            @RequestHeader(name = "Last-Event-ID", required = false) String lastEventId) {
+        return learning.jobEvents(UserContext.requireSession().userId(), jobId, lastEventId);
     }
 }

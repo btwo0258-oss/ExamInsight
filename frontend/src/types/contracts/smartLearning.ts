@@ -69,12 +69,20 @@ export type SmartLearningJobAccepted = {
   status: string
 }
 
+export type SmartLearningJobEvent = {
+  id: string | null
+  event: 'job.updated' | 'job.progress' | 'resource.updated' | 'run.completed' | 'run.failed' | string
+  data: Record<string, unknown>
+}
+
 export type SmartLearningResource = {
   resourceId: string
   taskId: string
   kind: 'READING' | 'EXERCISE_SET' | string
   title: string
   status: 'QUEUED' | 'GENERATING' | 'READY' | 'FAILED' | string
+  generationStage: 'QUEUED' | 'PREPARING_SOURCE' | 'GENERATING_CONTENT' | 'REPAIRING_FORMAT' | 'VALIDATING' | 'FINALIZING' | 'READY' | 'FAILED' | string
+  generationProgress: number
   content: Record<string, unknown>
   errorMessage: string | null
   updatedAt: string
@@ -89,6 +97,7 @@ export type SmartLearningExecution = {
   accumulatedSeconds: number
   position: Record<string, unknown>
   answers: Record<string, unknown>
+  questions: Array<Record<string, unknown>>
   score: number | null
   lastHeartbeatSeq: number
   startedAt: string
@@ -129,6 +138,7 @@ export type SmartLearningTask = {
   payload: Record<string, unknown>
   resources: SmartLearningResource[]
   execution: SmartLearningExecution | null
+  completedExecution: SmartLearningExecution | null
   updatedAt: string
 }
 

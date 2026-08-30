@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.NoSuchFileException;
 import java.util.Map;
 
 @Slf4j
@@ -36,6 +37,10 @@ public class AssetContentService {
             String objectKey = objectKeyCipher.decrypt(content.encryptedObjectKey());
             return new OpenedAssetContent(
                     content.name(), content.mimeType(), content.sizeBytes(), storage.open(objectKey));
+        } catch (NoSuchFileException exception) {
+            log.warn("V2 asset source file is missing, assetId={}", assetExternalId);
+            throw new AssetApiException(HttpStatus.GONE, "STORAGE_OBJECT_MISSING",
+                    "原始文件已不存在，请恢复原文件或重新上传。", Map.of());
         } catch (IOException exception) {
             log.error("Unable to open V2 asset content, assetId={}", assetExternalId, exception);
             throw new AssetApiException(

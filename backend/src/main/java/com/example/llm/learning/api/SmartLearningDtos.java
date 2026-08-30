@@ -169,6 +169,7 @@ public final class SmartLearningDtos {
             Map<String, Object> payload,
             List<ResourceView> resources,
             ExecutionView execution,
+            ExecutionView completedExecution,
             LocalDateTime updatedAt) {
     }
 
@@ -178,6 +179,8 @@ public final class SmartLearningDtos {
             String kind,
             String title,
             String status,
+            String generationStage,
+            int generationProgress,
             Map<String, Object> content,
             String errorMessage,
             LocalDateTime updatedAt) {
@@ -210,6 +213,7 @@ public final class SmartLearningDtos {
             int accumulatedSeconds,
             Map<String, Object> position,
             Map<String, Object> answers,
+            List<Map<String, Object>> questions,
             Double score,
             long lastHeartbeatSeq,
             LocalDateTime startedAt,
@@ -227,6 +231,7 @@ public final class SmartLearningDtos {
                 int accumulatedSeconds,
                 Map<String, Object> position,
                 Map<String, Object> answers,
+                List<Map<String, Object>> questions,
                 Double score,
                 long lastHeartbeatSeq,
                 LocalDateTime startedAt,
@@ -234,7 +239,7 @@ public final class SmartLearningDtos {
                 LocalDateTime completedAt,
                 LocalDateTime updatedAt) {
             this(executionId, projectId, taskId, status, progress, accumulatedSeconds,
-                    position, answers, score, lastHeartbeatSeq, startedAt, pausedAt,
+                    position, answers, questions, score, lastHeartbeatSeq, startedAt, pausedAt,
                     completedAt, updatedAt, null);
         }
     }

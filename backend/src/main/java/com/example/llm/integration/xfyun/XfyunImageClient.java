@@ -27,6 +27,10 @@ public class XfyunImageClient {
         this.objectMapper = objectMapper;
     }
 
+    public boolean isConfigured() {
+        return config.hasApiCredentials();
+    }
+
     public byte[] generate(String prompt, int width, int height) {
         config.requireApiCredentials();
         if (prompt == null || prompt.isBlank()) throw new IllegalArgumentException("图片描述不能为空");
