@@ -1,18 +1,18 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import StudentShell from '@/components/layout/StudentShell.vue'
 import AppIcon from '@/components/common/AppIcon.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import SmartLearningTutorDrawer from '@/components/learning/SmartLearningTutorDrawer.vue'
-import { getSmartLearningJob, prepareSmartLearningResources } from '@/api/smartLearning'
+import { getSmartLearningJob, getSmartLearningProject, getSmartLearningWorkspace, prepareSmartLearningResources } from '@/api/smartLearning'
 import { useSmartLearningStore } from '@/stores/smartLearning'
 import type { SmartLearningTask } from '@/types/contracts/smartLearning'
 
 const route = useRoute()
 const router = useRouter()
 const store = useSmartLearningStore()
-const projectId = String(route.params.id)
+const projectId = computed(() => String(route.params.id || ''))
 const loading = ref(true)
 const tutorOpen = ref(false)
 const tutorQuestion = ref('')
@@ -24,6 +24,7 @@ const resourceNoticeOpen = ref(false)
 const resourceNotice = ref('')
 let disposed = false
 let pollTimer: number | undefined
+let loadSequence = 0
 
 const workspace = computed(() => store.workspace)
 const tasks = computed(() => workspace.value?.tasks ?? [])
@@ -81,7 +82,7 @@ const taskTypeLabel = (type: string) => ({ READING: '阅读', EXERCISE: '练习'
 const taskIcon = (type: string) => ({ READING: 'file', EXERCISE: 'check', REVIEW: 'refresh-single', EXPLANATION: 'message-square' }[type] ?? 'file')
 
 function openTask(task?: SmartLearningTask) {
-  if (task) void router.push(`/learning/${projectId}/task/${task.taskId}`)
+  if (task) void router.push(`/learning/${projectId.value}/task/${task.taskId}`)
 }
 
 function continueLearning() {
@@ -92,15 +93,15 @@ function continueLearning() {
 function chooseFutureLearning() {
   continueChoiceOpen.value = false
   if (nextFutureTask.value) {
-    void router.push({ path: `/learning/${projectId}/task/${nextFutureTask.value.taskId}`, query: { early: '1' } })
+    void router.push({ path: `/learning/${projectId.value}/task/${nextFutureTask.value.taskId}`, query: { early: '1' } })
     return
   }
-  void router.push({ path: `/learning/${projectId}/setup`, query: { step: '4', extend: '1', returnTo: `/learning/${projectId}` } })
+  void router.push({ path: `/learning/${projectId.value}/setup`, query: { step: '4', extend: '1', returnTo: `/learning/${projectId.value}` } })
 }
 
 function chooseReview() {
   continueChoiceOpen.value = false
-  if (reviewTask.value) void router.push({ path: `/learning/${projectId}/task/${reviewTask.value.taskId}`, query: { review: '1' } })
+  if (reviewTask.value) void router.push({ path: `/learning/${projectId.value}/task/${reviewTask.value.taskId}`, query: { review: '1' } })
 }
 
 function openResourceGroup(type: string) {
@@ -112,7 +113,7 @@ function openResourceGroup(type: string) {
     resourceNoticeOpen.value = true
     return
   }
-  void router.push({ path: `/learning/${projectId}/resources`, query: { group: type } })
+  void router.push({ path: `/learning/${projectId.value}/resources`, query: { group: type } })
 }
 
 function openResourceHub() {
@@ -145,66 +146,104 @@ function askTutor(question = '') {
   tutorOpen.value = true
 }
 
-async function refreshWorkspace() {
-  await store.fetchWorkspace(projectId)
+function isActiveLoad(targetProjectId: string, sequence: number) {
+  return !disposed && sequence === loadSequence && targetProjectId === projectId.value
 }
 
-function schedulePoll(jobId: string) {
+async function refreshWorkspace(targetProjectId = projectId.value, sequence = loadSequence) {
+  const nextWorkspace = await getSmartLearningWorkspace(targetProjectId)
+  if (!isActiveLoad(targetProjectId, sequence)) return null
+  store.workspace = nextWorkspace
+  return nextWorkspace
+}
+
+function schedulePoll(jobId: string, targetProjectId: string, sequence: number) {
+  if (!isActiveLoad(targetProjectId, sequence)) return
   if (pollTimer) window.clearTimeout(pollTimer)
   pollTimer = window.setTimeout(async () => {
-    if (disposed) return
+    if (!isActiveLoad(targetProjectId, sequence)) return
     try {
       const job = await getSmartLearningJob(jobId)
-      await refreshWorkspace()
-      if (['QUEUED', 'RUNNING'].includes(job.status)) return schedulePoll(jobId)
+      if (!isActiveLoad(targetProjectId, sequence)) return
+      await refreshWorkspace(targetProjectId, sequence)
+      if (!isActiveLoad(targetProjectId, sequence)) return
+      if (['QUEUED', 'RUNNING'].includes(job.status)) return schedulePoll(jobId, targetProjectId, sequence)
       preparing.value = false
       if (job.status === 'FAILED') actionError.value = job.errorMessage || '学习资源准备失败，可以重新尝试。'
     } catch (error) {
+      if (!isActiveLoad(targetProjectId, sequence)) return
       preparing.value = false
       actionError.value = error instanceof Error ? error.message : '资源状态同步失败，请刷新后重试。'
     }
   }, 1200)
 }
 
-async function ensureResourcePreparation() {
-  if (!store.current || store.current.stage !== 'READY' || preparing.value) return
+async function ensureResourcePreparation(targetProjectId = projectId.value, sequence = loadSequence) {
+  if (!isActiveLoad(targetProjectId, sequence) || !store.current || store.current.stage !== 'READY' || preparing.value) return
   const active = store.current.activeJob
   if (active?.kind === 'RESOURCE_PREPARATION' && ['QUEUED', 'RUNNING'].includes(active.status)) {
     preparing.value = true
-    schedulePoll(active.jobId)
+    schedulePoll(active.jobId, targetProjectId, sequence)
     return
   }
   if (!resources.value.length || pendingResources.value.length || failedResources.value.length) {
     try {
       preparing.value = true
-      const accepted = await prepareSmartLearningResources(projectId)
-      schedulePoll(accepted.jobId)
+      const accepted = await prepareSmartLearningResources(targetProjectId)
+      if (!isActiveLoad(targetProjectId, sequence)) return
+      schedulePoll(accepted.jobId, targetProjectId, sequence)
     } catch (error) {
+      if (!isActiveLoad(targetProjectId, sequence)) return
       preparing.value = false
       actionError.value = error instanceof Error ? error.message : '资源准备没有启动，请重试。'
     }
   }
 }
 
-async function load() {
+function resetWorkbenchState() {
+  if (pollTimer) window.clearTimeout(pollTimer)
+  pollTimer = undefined
   loading.value = true
   actionError.value = ''
-  try {
-    await store.fetchProject(projectId)
-    if (store.current?.stage !== 'READY') {
-      await router.replace(`/learning/${projectId}/setup`)
-      return
-    }
-    await refreshWorkspace()
-    await ensureResourcePreparation()
-  } catch (error) {
-    actionError.value = error instanceof Error ? error.message : '学习工作台加载失败。'
-  } finally { loading.value = false }
+  preparing.value = false
+  tutorOpen.value = false
+  tutorQuestion.value = ''
+  continueChoiceOpen.value = false
+  resourceNoticeOpen.value = false
+  resourceNotice.value = ''
+  store.current = null
+  store.workspace = null
 }
 
-onMounted(load)
+async function load(targetProjectId: string) {
+  const sequence = ++loadSequence
+  resetWorkbenchState()
+  try {
+    const project = await getSmartLearningProject(targetProjectId)
+    if (!isActiveLoad(targetProjectId, sequence)) return
+    store.current = project
+    if (project.stage !== 'READY') {
+      await router.replace(`/learning/${targetProjectId}/setup`)
+      return
+    }
+    const nextWorkspace = await refreshWorkspace(targetProjectId, sequence)
+    if (!nextWorkspace) return
+    await ensureResourcePreparation(targetProjectId, sequence)
+  } catch (error) {
+    if (!isActiveLoad(targetProjectId, sequence)) return
+    actionError.value = error instanceof Error ? error.message : '学习工作台加载失败。'
+  } finally {
+    if (isActiveLoad(targetProjectId, sequence)) loading.value = false
+  }
+}
+
+watch(projectId, nextProjectId => {
+  if (nextProjectId) void load(nextProjectId)
+}, { immediate: true })
+
 onBeforeUnmount(() => {
   disposed = true
+  loadSequence += 1
   if (pollTimer) window.clearTimeout(pollTimer)
 })
 </script>
@@ -282,7 +321,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .workbench-page, .workbench-page * { box-sizing: border-box; }
-.workbench-page { min-height: 100%; padding: 28px 34px 90px; background: var(--color-bg); color: var(--color-text); }
+.workbench-page { min-height: 100%; padding: 28px 34px 90px; background: var(--ui-page-canvas-bg); color: var(--color-text); }
 .workbench-header, .workspace-grid, .workbench-error { width: min(1460px, 100%); margin-inline: auto; }
 .workbench-header { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: 14px; margin-bottom: 22px; }
 .icon-button { width: 40px; height: 40px; display: grid; place-items: center; border: 1px solid var(--color-border); border-radius: 10px; color: inherit; background: var(--color-surface); cursor: pointer; }

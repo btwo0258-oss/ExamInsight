@@ -917,7 +917,7 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
 </template>
 
 <style scoped>
-.chat-page { position: relative; height: 100%; min-height: 0; overflow: hidden; background: color-mix(in srgb, var(--color-text) 3.5%, var(--color-bg)); }
+.chat-page { position: relative; height: 100%; min-height: 0; overflow: hidden; background: var(--ui-page-canvas-bg); }
 .chat-scroll {
   height: 100%; box-sizing: border-box; overflow: auto; padding: 36px 28px var(--composer-reserve, 260px);
   background: color-mix(in srgb, var(--color-text) 3.5%, var(--color-bg));
@@ -946,7 +946,7 @@ watch(() => chatStore.messages.map(message => message.content.length).join(','),
 .artifact-list { display: grid; gap: 12px; width: 100%; margin-top: 16px; }
 .chat-error { display: flex; justify-content: space-between; gap: 12px; padding: 12px 14px; border-radius: 12px; color: #b42318; background: #fef3f2; }
 .chat-error button { display: inline-flex; align-items: center; gap: 5px; border: 0; color: inherit; background: transparent; cursor: pointer; }
-.composer-dock { position: absolute; right: 0; bottom: 0; left: 0; z-index: 30; padding: 18px 24px 14px; background: linear-gradient(transparent, color-mix(in srgb, var(--color-text) 3.5%, var(--color-bg)) 25%); }
+.composer-dock { position: absolute; right: 0; bottom: 0; left: 0; z-index: 30; padding: 18px 24px 14px; background: linear-gradient(transparent, var(--ui-page-canvas-bg) 25%); }
 .composer-context-shell {
   width: min(820px, 100%); margin: 0 auto; padding: 4px 8px 0; border-radius: 26px;
   background: color-mix(in srgb, var(--color-text) 9%, var(--color-bg));

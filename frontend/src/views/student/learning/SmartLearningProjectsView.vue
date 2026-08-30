@@ -225,7 +225,7 @@ onMounted(() => void load())
 <style scoped>
 .learning-projects-page,
 .learning-projects-page * { box-sizing: border-box; }
-.learning-projects-page { min-height: 100%; padding: 34px 36px 70px; background: var(--color-bg); color: var(--color-text); }
+.learning-projects-page { min-height: 100%; padding: 34px 36px 70px; background: var(--ui-page-canvas-bg); color: var(--color-text); }
 .page-header, .project-section { width: min(1320px, 100%); margin: 0 auto; }
 .page-header { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
 .eyebrow { display: block; color: var(--color-primary); font-size: 12px; font-weight: 800; letter-spacing: .08em; }

@@ -336,4 +336,5 @@ onBeforeUnmount(() => {
 @media (max-width: 780px) { .task-page { padding-inline: 16px; }.task-header { grid-template-columns: 42px 1fr; }.task-header-actions { grid-column: 1 / -1; }.task-layout { grid-template-columns: 1fr; }.task-aside { position: static; }.task-content { max-height: none; padding: 22px 18px; } }
 .question-index-grid button.answered { border-color: var(--color-text); color: var(--color-bg); background: var(--color-text); }
 .tutor-side-card { grid-template-columns: 1fr; }
+.task-page { background: var(--ui-page-canvas-bg); }
 </style>

@@ -41,6 +41,7 @@
 
   --ui-hover-bg: var(--color-hover-strong);
   --ui-hover-strong-bg: color-mix(in srgb, var(--color-text) 16%, transparent);
+  --ui-page-canvas-bg: color-mix(in srgb, var(--color-text) 3.5%, var(--color-bg));
   --ui-hover-radius: 8px;
   --ui-menu-bg: var(--color-surface);
   --ui-menu-border: var(--color-border);

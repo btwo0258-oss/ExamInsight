@@ -2,6 +2,7 @@ import { expect, test, type Page, type Route } from '@playwright/test'
 
 const baseUrl = 'http://localhost:5173'
 const projectId = 'smart-project'
+const otherProjectId = 'other-smart-project'
 const taskId = 'exercise-task'
 const executionId = 'exercise-execution'
 const conversationId = '01SMARTTUTOR00000000000000'
@@ -59,6 +60,30 @@ async function fixture(page: Page) {
     tasks: [completedTask, exerciseTask], resources: [resource], activeExecution: execution,
     updatedAt: project.updatedAt,
   }
+  const otherProject: Json = {
+    ...project,
+    projectId: otherProjectId,
+    name: 'JavaScript 学习',
+    icon: 'code',
+    iconColor: '#2563eb',
+    target: { ...project.target, examName: '掌握 JavaScript' },
+  }
+  const otherWorkspace: Json = {
+    ...workspace,
+    projectId: otherProjectId,
+    projectName: otherProject.name,
+    profile: { ...workspace.profile, target: otherProject.target },
+  }
+  const sidebarProjects = [project, otherProject].map(item => ({
+    projectId: item.projectId,
+    name: item.name,
+    icon: item.icon,
+    iconColor: item.iconColor,
+    stage: item.stage,
+    pinnedAt: null,
+    conversations: [],
+    updatedAt: item.updatedAt,
+  }))
   const wrongItems: Json[] = []
   const control = { pauseCount: 0, resumeCount: 0, submissionCount: 0 }
   const conversation = {
@@ -79,7 +104,7 @@ async function fixture(page: Page) {
       idleExpiresAt: '2099-01-01T00:00:00Z', absoluteExpiresAt: '2099-01-01T00:00:00Z',
     })
     if (path === '/api/v2/conversations' && method === 'GET') return json(route, { items: [], nextCursor: null, hasMore: false })
-    if (path === '/api/v2/learning/sidebar') return json(route, [])
+    if (path === '/api/v2/learning/sidebar') return json(route, sidebarProjects)
     if (path === '/api/v2/knowledge-bases') return json(route, { items: [], nextCursor: null })
     if (path === '/api/v2/artifacts') return json(route, [])
     if (path === `/api/v2/conversations/${conversationId}/messages`) return json(route, {
@@ -90,6 +115,8 @@ async function fixture(page: Page) {
     })
     if (path === `/api/v2/learning/projects/${projectId}`) return json(route, project)
     if (path === `/api/v2/learning/projects/${projectId}/workspace`) return json(route, workspace)
+    if (path === `/api/v2/learning/projects/${otherProjectId}`) return json(route, otherProject)
+    if (path === `/api/v2/learning/projects/${otherProjectId}/workspace`) return json(route, otherWorkspace)
     if (path === `/api/v2/learning/projects/${projectId}/tasks/${taskId}`) return json(route, exerciseTask)
     if (path === `/api/v2/learning/projects/${projectId}/wrong-items`) return json(route, wrongItems)
     if (path === `/api/v2/learning/projects/${projectId}/tasks/${taskId}/executions` && method === 'POST') {
@@ -154,6 +181,17 @@ test('workbench exposes grouped resources and an initialized project tutor', asy
   await expect(page).toHaveURL(new RegExp(`/learning/${projectId}/resources\\?group=EXERCISE`))
   await expect(page.locator('.resource-question')).toHaveCount(2)
   await expect(page.getByText('正确答案', { exact: true })).toHaveCount(2)
+})
+
+test('sidebar switches directly between ready project workbenches', async ({ page }) => {
+  await fixture(page)
+  await page.goto(`${baseUrl}/learning/${projectId}`)
+  await expect(page.locator('.workbench-header h1')).toHaveText('CSS 学习')
+
+  await page.getByRole('button', { name: 'JavaScript 学习', exact: true }).click()
+
+  await expect(page).toHaveURL(`${baseUrl}/learning/${otherProjectId}`)
+  await expect(page.locator('.workbench-header h1')).toHaveText('JavaScript 学习')
 })
 
 test('task navigation pauses and resumes internally, then grades once and fills the wrong book', async ({ page }) => {

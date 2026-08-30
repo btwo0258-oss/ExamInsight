@@ -85,4 +85,5 @@ watch(() => active.value?.wrongItemId, () => { answerDraft.value = ''; reviewMes
 .mistake-layout > aside button > span,
 .mistake-layout > aside button > div,
 .mistake-layout > aside button > em { position: relative; z-index: 1; }
+.mistakes-page { background: var(--ui-page-canvas-bg); }
 </style>
