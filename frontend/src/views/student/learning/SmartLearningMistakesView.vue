@@ -86,4 +86,10 @@ watch(() => active.value?.wrongItemId, () => { answerDraft.value = ''; reviewMes
 .mistake-layout > aside button > div,
 .mistake-layout > aside button > em { position: relative; z-index: 1; }
 .mistakes-page { background: var(--ui-page-canvas-bg); }
+.mistake-layout { grid-template-columns: 330px minmax(0, 1fr); align-items: start; }
+.mistake-layout > aside { height: max-content; align-self: start; }
+@media (max-width: 760px) {
+  .mistake-layout { grid-template-columns: 1fr; }
+  .mistake-layout > aside { width: 100%; }
+}
 </style>
